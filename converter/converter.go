@@ -64,7 +64,7 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 		maxTokens = *openaiReq.MaxTokens
 	}
 
-	stream := false
+	stream := true
 	if openaiReq.Stream != nil {
 		stream = *openaiReq.Stream
 	}
