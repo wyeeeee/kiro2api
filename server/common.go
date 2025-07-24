@@ -49,8 +49,12 @@ func handleCodeWhispererError(ctx *fasthttp.RequestCtx, resp *fasthttp.Response)
 
 	if resp.StatusCode() == 403 {
 		logger.Warn("Token过期，正在刷新")
-		auth.RefreshToken()
-		ctx.Error("CodeWhisperer Token 已刷新，请重试", fasthttp.StatusUnauthorized)
+		if err := auth.RefreshTokenForServer(); err != nil {
+			logger.Error("Token刷新失败", logger.Err(err))
+			ctx.Error(fmt.Sprintf("Token刷新失败: %v", err), fasthttp.StatusInternalServerError)
+		} else {
+			ctx.Error("CodeWhisperer Token 已刷新，请重试", fasthttp.StatusUnauthorized)
+		}
 	} else {
 		ctx.Error(fmt.Sprintf("CodeWhisperer Error: %s", string(body)), fasthttp.StatusInternalServerError)
 	}

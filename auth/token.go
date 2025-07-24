@@ -50,21 +50,21 @@ func ReadToken() {
 	}
 }
 
-// RefreshToken 刷新token
-func RefreshToken() {
+// RefreshTokenForServer 刷新token，用于服务器模式，返回错误而不是退出程序
+func RefreshTokenForServer() error {
 	tokenPath := getTokenFilePath()
 
 	// 读取当前token
 	data, err := os.ReadFile(tokenPath)
 	if err != nil {
 		logger.Error("读取token文件失败", logger.Err(err), logger.String("path", tokenPath))
-		os.Exit(1)
+		return fmt.Errorf("读取token文件失败: %v", err)
 	}
 
 	var currentToken types.TokenData
 	if err := sonic.Unmarshal(data, &currentToken); err != nil {
 		logger.Error("解析token文件失败", logger.Err(err))
-		os.Exit(1)
+		return fmt.Errorf("解析token文件失败: %v", err)
 	}
 
 	// 准备刷新请求
@@ -75,7 +75,7 @@ func RefreshToken() {
 	reqBody, err := sonic.Marshal(refreshReq)
 	if err != nil {
 		logger.Error("序列化请求失败", logger.Err(err))
-		os.Exit(1)
+		return fmt.Errorf("序列化请求失败: %v", err)
 	}
 
 	logger.Debug("发送token刷新请求", logger.String("url", "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"))
@@ -93,21 +93,21 @@ func RefreshToken() {
 
 	if err := fasthttpClient.Do(req, resp); err != nil {
 		logger.Error("刷新token请求失败", logger.Err(err))
-		os.Exit(1)
+		return fmt.Errorf("刷新token请求失败: %v", err)
 	}
 
 	if resp.StatusCode() != fasthttp.StatusOK {
 		logger.Error("刷新token失败",
 			logger.Int("status_code", resp.StatusCode()),
 			logger.String("response", string(resp.Body())))
-		os.Exit(1)
+		return fmt.Errorf("刷新token失败: 状态码 %d, 响应: %s", resp.StatusCode(), string(resp.Body()))
 	}
 
 	// 解析响应
 	var refreshResp types.RefreshResponse
 	if err := sonic.Unmarshal(resp.Body(), &refreshResp); err != nil {
 		logger.Error("解析刷新响应失败", logger.Err(err))
-		os.Exit(1)
+		return fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 
 	// 更新token文件
@@ -116,16 +116,25 @@ func RefreshToken() {
 	newData, err := sonic.MarshalIndent(newToken, "", "  ")
 	if err != nil {
 		logger.Error("序列化新token失败", logger.Err(err))
-		os.Exit(1)
+		return fmt.Errorf("序列化新token失败: %v", err)
 	}
 
 	if err := os.WriteFile(tokenPath, newData, 0600); err != nil {
 		logger.Error("写入token文件失败", logger.Err(err), logger.String("path", tokenPath))
-		os.Exit(1)
+		return fmt.Errorf("写入token文件失败: %v", err)
 	}
 
 	logger.Info("Token刷新成功")
 	logger.Debug("新的Access Token", logger.String("access_token", newToken.AccessToken))
+	return nil
+}
+
+// RefreshToken 刷新token，用于命令行模式，失败时退出程序
+func RefreshToken() {
+	if err := RefreshTokenForServer(); err != nil {
+		logger.Error("Token刷新失败", logger.Err(err))
+		os.Exit(1)
+	}
 }
 
 // GetToken 获取当前token
