@@ -78,12 +78,12 @@ func RefreshTokenForServer() error {
 		return fmt.Errorf("序列化请求失败: %v", err)
 	}
 
-	logger.Debug("发送token刷新请求", logger.String("url", "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"))
+	logger.Debug("发送token刷新请求", logger.String("url", config.RefreshTokenURL))
 
 	// 发送刷新请求
 	req := fasthttp.AcquireRequest()
 	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI("https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken")
+	req.SetRequestURI(config.RefreshTokenURL)
 	req.Header.SetMethod(fasthttp.MethodPost)
 	req.Header.SetContentType("application/json")
 	req.SetBody(reqBody)

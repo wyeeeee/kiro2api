@@ -8,3 +8,6 @@ var ModelMap = map[string]string{
 
 // DefaultAuthToken 默认的 AuthToken
 const DefaultAuthToken = "123456"
+
+// RefreshTokenURL 刷新token的URL
+const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
