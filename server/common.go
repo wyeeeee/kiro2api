@@ -1,7 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
 	"kiro2api/auth"
@@ -10,69 +13,76 @@ import (
 	"kiro2api/types"
 
 	"github.com/bytedance/sonic"
-	"github.com/valyala/fasthttp"
+	"github.com/gin-gonic/gin"
 )
 
 const codeWhispererURL = "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
 
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
-func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken string, isStream bool) (*fasthttp.Request, error) {
+func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken string, isStream bool) (*http.Request, error) {
 	cwReq := converter.BuildCodeWhispererRequest(anthropicReq)
 	cwReqBody, err := sonic.Marshal(cwReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化请求失败: %v", err)
 	}
 
-	req := fasthttp.AcquireRequest()
-	req.SetRequestURI(codeWhispererURL)
-	req.Header.SetMethod(fasthttp.MethodPost)
+	req, err := http.NewRequest("POST", codeWhispererURL, bytes.NewReader(cwReqBody))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %v", err)
+	}
+
 	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.SetContentType("application/json")
+	req.Header.Set("Content-Type", "application/json")
 	if isStream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	req.SetBody(cwReqBody)
 
 	return req, nil
 }
 
 // handleCodeWhispererError 处理CodeWhisperer API错误响应
-func handleCodeWhispererError(ctx *fasthttp.RequestCtx, resp *fasthttp.Response) bool {
-	if resp.StatusCode() == fasthttp.StatusOK {
+func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
+	if resp.StatusCode == http.StatusOK {
 		return false
 	}
 
-	body := resp.Body()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error("读取错误响应失败", logger.Err(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取响应失败"})
+		return true
+	}
+
 	logger.Error("CodeWhisperer响应错误",
-		logger.Int("status_code", resp.StatusCode()),
+		logger.Int("status_code", resp.StatusCode),
 		logger.String("response", string(body)))
 
-	if resp.StatusCode() == 403 {
+	if resp.StatusCode == 403 {
 		logger.Warn("Token过期，正在刷新")
 		if err := auth.RefreshTokenForServer(); err != nil {
 			logger.Error("Token刷新失败", logger.Err(err))
-			ctx.Error(fmt.Sprintf("Token刷新失败: %v", err), fasthttp.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Token刷新失败: %v", err)})
 		} else {
-			ctx.Error("CodeWhisperer Token 已刷新，请重试", fasthttp.StatusUnauthorized)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "CodeWhisperer Token 已刷新，请重试"})
 		}
 	} else {
-		ctx.Error(fmt.Sprintf("CodeWhisperer Error: %s", string(body)), fasthttp.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("CodeWhisperer Error: %s", string(body))})
 	}
 	return true
 }
 
 // validateAPIKey 验证API密钥
-func validateAPIKey(ctx *fasthttp.RequestCtx, authToken string) bool {
-	providedApiKey := string(ctx.Request.Header.Peek("Authorization"))
+func validateAPIKey(c *gin.Context, authToken string) bool {
+	providedApiKey := c.GetHeader("Authorization")
 	if providedApiKey == "" {
-		providedApiKey = string(ctx.Request.Header.Peek("x-api-key"))
+		providedApiKey = c.GetHeader("x-api-key")
 	} else {
 		providedApiKey = strings.TrimPrefix(providedApiKey, "Bearer ")
 	}
 
 	if providedApiKey == "" {
 		logger.Warn("请求缺少Authorization或x-api-key头")
-		ctx.Error("401", fasthttp.StatusUnauthorized)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 		return false
 	}
 
@@ -80,18 +90,11 @@ func validateAPIKey(ctx *fasthttp.RequestCtx, authToken string) bool {
 		logger.Error("authToken验证失败",
 			logger.String("expected", "***"),
 			logger.String("provided", "***"))
-		ctx.Error("401", fasthttp.StatusUnauthorized)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 		return false
 	}
 
 	return true
-}
-
-// setCORSHeaders 设置CORS头
-func setCORSHeaders(ctx *fasthttp.RequestCtx) {
-	ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
-	ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
 }
 
 // getMessageContent 从消息中提取文本内容的辅助函数

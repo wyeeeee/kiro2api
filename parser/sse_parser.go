@@ -183,3 +183,49 @@ func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
 
 	return SSEEvent{}
 }
+
+// StreamParser 处理流式EventStream数据
+type StreamParser struct {
+	buffer []byte
+}
+
+// NewStreamParser 创建新的流式解析器
+func NewStreamParser() *StreamParser {
+	return &StreamParser{
+		buffer: make([]byte, 0),
+	}
+}
+
+// ParseStream 解析流式数据，返回解析出的事件
+func (sp *StreamParser) ParseStream(data []byte) []SSEEvent {
+	// 将新数据添加到缓冲区
+	sp.buffer = append(sp.buffer, data...)
+
+	events := []SSEEvent{}
+
+	for {
+		if len(sp.buffer) < 12 {
+			// 需要更多数据才能读取头部
+			break
+		}
+
+		// 读取总长度和头部长度
+		totalLen := binary.BigEndian.Uint32(sp.buffer[0:4])
+		_ = binary.BigEndian.Uint32(sp.buffer[4:8]) // headerLen unused but needed for offset
+
+		if totalLen > uint32(len(sp.buffer)) {
+			// 需要更多数据才能读取完整消息
+			break
+		}
+
+		// 提取单个消息
+		messageData := sp.buffer[:totalLen]
+		sp.buffer = sp.buffer[totalLen:]
+
+		// 解析这个消息
+		messageEvents := ParseEvents(messageData)
+		events = append(events, messageEvents...)
+	}
+
+	return events
+}

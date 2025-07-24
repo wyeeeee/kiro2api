@@ -2,9 +2,9 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"kiro2api/auth"
 	"kiro2api/config"
@@ -13,29 +13,35 @@ import (
 	"kiro2api/types"
 
 	"github.com/bytedance/sonic"
-	"github.com/fasthttp/router"
-	"github.com/valyala/fasthttp"
+	"github.com/gin-gonic/gin"
 )
 
-var fasthttpClient = &fasthttp.Client{}
+var httpClient = &http.Client{}
 
 // StartServer 启动HTTP代理服务器
 func StartServer(port string, authToken string) {
-	r := router.New()
+	// 设置 gin 模式
+	gin.SetMode(gin.ReleaseMode)
+	r := gin.New()
+
+	// 添加中间件
+	r.Use(gin.Logger())
+	r.Use(gin.Recovery())
+	r.Use(corsMiddleware())
 
 	// GET /v1/models 端点
-	r.GET("/v1/models", logMiddleware(func(ctx *fasthttp.RequestCtx) {
+	r.GET("/v1/models", func(c *gin.Context) {
 		// 认证检查
-		providedApiKey := string(ctx.Request.Header.Peek("Authorization"))
+		providedApiKey := c.GetHeader("Authorization")
 		if providedApiKey == "" {
-			providedApiKey = string(ctx.Request.Header.Peek("x-api-key"))
+			providedApiKey = c.GetHeader("x-api-key")
 		} else {
 			providedApiKey = strings.TrimPrefix(providedApiKey, "Bearer ")
 		}
 
 		if providedApiKey == "" {
 			logger.Warn("请求缺少Authorization或x-api-key头")
-			ctx.Error("401", fasthttp.StatusUnauthorized)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 			return
 		}
 
@@ -43,15 +49,9 @@ func StartServer(port string, authToken string) {
 			logger.Error("authToken验证失败",
 				logger.String("expected", "***"),
 				logger.String("provided", "***"))
-			ctx.Error("401", fasthttp.StatusUnauthorized)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 			return
 		}
-
-		// 设置响应头
-		ctx.Response.Header.Set("Content-Type", "application/json")
-		ctx.Response.Header.Set("Access-Control-Allow-Origin", "*")
-		ctx.Response.Header.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		ctx.Response.Header.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
 
 		// 构建模型列表
 		models := []types.Model{}
@@ -73,35 +73,22 @@ func StartServer(port string, authToken string) {
 			Data:   models,
 		}
 
-		jsonData, err := sonic.Marshal(response)
-		if err != nil {
-			logger.Error("序列化模型列表失败", logger.Err(err))
-			ctx.Error("内部服务器错误", fasthttp.StatusInternalServerError)
-			return
-		}
+		c.JSON(http.StatusOK, response)
+	})
 
-		ctx.Write(jsonData)
-	}))
-
-	r.POST("/v1/messages", logMiddleware(func(ctx *fasthttp.RequestCtx) {
-		if !ctx.IsPost() {
-			logger.Error("不支持的请求方法", logger.String("method", string(ctx.Method())))
-			ctx.Error("只支持POST请求", fasthttp.StatusMethodNotAllowed)
-			return
-		}
-
+	r.POST("/v1/messages", func(c *gin.Context) {
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
-			ctx.Error(fmt.Sprintf("获取token失败: %v", err), fasthttp.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
 			return
 		}
 
-		if strings.HasPrefix(string(ctx.Path()), "/v1") {
+		if strings.HasPrefix(c.Request.URL.Path, "/v1") {
 			// 尝试从Authorization或x-api-key头获取API密钥
-			providedApiKey := string(ctx.Request.Header.Peek("Authorization"))
+			providedApiKey := c.GetHeader("Authorization")
 			if providedApiKey == "" {
-				providedApiKey = string(ctx.Request.Header.Peek("x-api-key"))
+				providedApiKey = c.GetHeader("x-api-key")
 			} else {
 				// 如果是Authorization头，移除Bearer前缀
 				providedApiKey = strings.TrimPrefix(providedApiKey, "Bearer ")
@@ -109,7 +96,7 @@ func StartServer(port string, authToken string) {
 
 			if providedApiKey == "" {
 				logger.Warn("请求缺少Authorization或x-api-key头")
-				ctx.Error("401", fasthttp.StatusUnauthorized)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 				return
 			}
 
@@ -117,12 +104,18 @@ func StartServer(port string, authToken string) {
 				logger.Error("authToken验证失败",
 					logger.String("expected", "***"),
 					logger.String("provided", "***"))
-				ctx.Error("401", fasthttp.StatusUnauthorized)
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
 				return
 			}
 		}
 
-		body := ctx.PostBody()
+		body, err := c.GetRawData()
+		if err != nil {
+			logger.Error("读取请求体失败", logger.Err(err))
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("读取请求体失败: %v", err)})
+			return
+		}
+
 		logger.Debug("收到Anthropic请求",
 			logger.String("body", string(body)),
 			logger.Int("body_size", len(body)))
@@ -130,7 +123,7 @@ func StartServer(port string, authToken string) {
 		var anthropicReq types.AnthropicRequest
 		if err := sonic.Unmarshal(body, &anthropicReq); err != nil {
 			logger.Error("解析请求体失败", logger.Err(err))
-			ctx.Error(fmt.Sprintf("解析请求体失败: %v", err), fasthttp.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
 			return
 		}
 
@@ -140,33 +133,33 @@ func StartServer(port string, authToken string) {
 			logger.Int("max_tokens", anthropicReq.MaxTokens))
 
 		if anthropicReq.Stream {
-			handleStreamRequest(ctx, anthropicReq, token.AccessToken)
+			handleStreamRequest(c, anthropicReq, token.AccessToken)
 			return
 		}
 
-		handleNonStreamRequest(ctx, anthropicReq, token.AccessToken)
-	}))
+		handleNonStreamRequest(c, anthropicReq, token.AccessToken)
+	})
 
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
-	r.POST("/v1/chat/completions", logMiddleware(func(ctx *fasthttp.RequestCtx) {
-		if !ctx.IsPost() {
-			logger.Error("不支持的请求方法", logger.String("method", string(ctx.Method())))
-			ctx.Error("只支持POST请求", fasthttp.StatusMethodNotAllowed)
-			return
-		}
-
+	r.POST("/v1/chat/completions", func(c *gin.Context) {
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
-			ctx.Error(fmt.Sprintf("获取token失败: %v", err), fasthttp.StatusInternalServerError)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
 			return
 		}
 
-		if !validateAPIKey(ctx, authToken) {
+		if !validateAPIKey(c, authToken) {
 			return
 		}
 
-		body := ctx.PostBody()
+		body, err := c.GetRawData()
+		if err != nil {
+			logger.Error("读取请求体失败", logger.Err(err))
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("读取请求体失败: %v", err)})
+			return
+		}
+
 		logger.Debug("收到OpenAI请求",
 			logger.String("body", string(body)),
 			logger.Int("body_size", len(body)))
@@ -174,7 +167,7 @@ func StartServer(port string, authToken string) {
 		var openaiReq types.OpenAIRequest
 		if err := sonic.Unmarshal(body, &openaiReq); err != nil {
 			logger.Error("解析OpenAI请求体失败", logger.Err(err))
-			ctx.Error(fmt.Sprintf("解析请求体失败: %v", err), fasthttp.StatusBadRequest)
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
 			return
 		}
 
@@ -192,23 +185,22 @@ func StartServer(port string, authToken string) {
 		anthropicReq := converter.ConvertOpenAIToAnthropic(openaiReq)
 
 		if anthropicReq.Stream {
-			handleOpenAIStreamRequest(ctx, anthropicReq, token.AccessToken)
+			handleOpenAIStreamRequest(c, anthropicReq, token.AccessToken)
 			return
 		}
 
-		handleOpenAINonStreamRequest(ctx, anthropicReq, token.AccessToken)
-	}))
+		handleOpenAINonStreamRequest(c, anthropicReq, token.AccessToken)
+	})
 
-	r.GET("/health", logMiddleware(func(ctx *fasthttp.RequestCtx) {
-		ctx.SetStatusCode(fasthttp.StatusOK)
-		ctx.SetBodyString("OK")
-	}))
+	r.GET("/health", func(c *gin.Context) {
+		c.String(http.StatusOK, "OK")
+	})
 
-	r.NotFound = logMiddleware(func(ctx *fasthttp.RequestCtx) {
+	r.NoRoute(func(c *gin.Context) {
 		logger.Warn("访问未知端点",
-			logger.String("path", string(ctx.Path())),
-			logger.String("method", string(ctx.Method())))
-		ctx.Error("404 未找到", fasthttp.StatusNotFound)
+			logger.String("path", c.Request.URL.Path),
+			logger.String("method", c.Request.Method))
+		c.JSON(http.StatusNotFound, gin.H{"error": "404 未找到"})
 	})
 
 	logger.Info("启动Anthropic API代理服务器",
@@ -222,27 +214,24 @@ func StartServer(port string, authToken string) {
 	logger.Println("  GET  /health              - 健康检查")
 	logger.Println("按Ctrl+C停止服务器")
 
-	if err := fasthttp.ListenAndServe(":"+port, r.Handler); err != nil {
+	if err := r.Run(":" + port); err != nil {
 		logger.Error("启动服务器失败", logger.Err(err), logger.String("port", port))
 		os.Exit(1)
 	}
 }
 
-// logMiddleware 记录所有HTTP请求的中间件
-func logMiddleware(next fasthttp.RequestHandler) fasthttp.RequestHandler {
-	return func(ctx *fasthttp.RequestCtx) {
-		startTime := time.Now()
+// corsMiddleware CORS中间件
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key")
 
-		logger.Debug("开始处理请求",
-			logger.String("method", string(ctx.Method())),
-			logger.String("path", string(ctx.Path())),
-			logger.String("remote_addr", ctx.RemoteAddr().String()))
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusOK)
+			return
+		}
 
-		next(ctx)
-
-		duration := time.Since(startTime)
-		logger.Debug("请求处理完成",
-			logger.Duration("duration", duration),
-			logger.Int("status_code", ctx.Response.StatusCode()))
+		c.Next()
 	}
 }

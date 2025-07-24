@@ -1,19 +1,21 @@
 package auth
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 
 	"github.com/bytedance/sonic"
-	"github.com/valyala/fasthttp"
 )
 
-var fasthttpClient = &fasthttp.Client{}
+var httpClient = &http.Client{}
 
 // getTokenFilePath 获取跨平台的token文件路径
 func getTokenFilePath() string {
@@ -81,31 +83,37 @@ func RefreshTokenForServer() error {
 	logger.Debug("发送token刷新请求", logger.String("url", config.RefreshTokenURL))
 
 	// 发送刷新请求
-	req := fasthttp.AcquireRequest()
-	defer fasthttp.ReleaseRequest(req)
-	req.SetRequestURI(config.RefreshTokenURL)
-	req.Header.SetMethod(fasthttp.MethodPost)
-	req.Header.SetContentType("application/json")
-	req.SetBody(reqBody)
+	req, err := http.NewRequest("POST", config.RefreshTokenURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		logger.Error("创建请求失败", logger.Err(err))
+		return fmt.Errorf("创建请求失败: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
 
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseResponse(resp)
-
-	if err := fasthttpClient.Do(req, resp); err != nil {
+	resp, err := httpClient.Do(req)
+	if err != nil {
 		logger.Error("刷新token请求失败", logger.Err(err))
 		return fmt.Errorf("刷新token请求失败: %v", err)
 	}
+	defer resp.Body.Close()
 
-	if resp.StatusCode() != fasthttp.StatusOK {
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
 		logger.Error("刷新token失败",
-			logger.Int("status_code", resp.StatusCode()),
-			logger.String("response", string(resp.Body())))
-		return fmt.Errorf("刷新token失败: 状态码 %d, 响应: %s", resp.StatusCode(), string(resp.Body()))
+			logger.Int("status_code", resp.StatusCode),
+			logger.String("response", string(body)))
+		return fmt.Errorf("刷新token失败: 状态码 %d, 响应: %s", resp.StatusCode, string(body))
 	}
 
 	// 解析响应
 	var refreshResp types.RefreshResponse
-	if err := sonic.Unmarshal(resp.Body(), &refreshResp); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Error("读取响应失败", logger.Err(err))
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	if err := sonic.Unmarshal(body, &refreshResp); err != nil {
 		logger.Error("解析刷新响应失败", logger.Err(err))
 		return fmt.Errorf("解析刷新响应失败: %v", err)
 	}
