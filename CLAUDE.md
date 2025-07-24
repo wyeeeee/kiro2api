@@ -29,7 +29,6 @@ rm -f kiro2api && go build -o kiro2api main.go
 - `./kiro2api refresh` - 使用刷新令牌刷新访问令牌
 - `./kiro2api export` - 为其他工具导出环境变量（使用实际令牌，不是硬编码值）
 - `./kiro2api authToken` - 显示当前认证令牌
-- `./kiro2api claude` - 设置 Claude 地区绕过配置
 - `./kiro2api server [port] [authToken]` - 启动 HTTP 代理服务器（默认端口 8080）
 
 ## 架构

@@ -33,8 +33,6 @@ func main() {
 		auth.ExportEnvVars()
 	case "authToken":
 		auth.GenerateAuthToken()
-	case "claude":
-		auth.SetClaude()
 	case "server":
 		port := "8080"                       // 默认端口
 		authToken := config.DefaultAuthToken // 默认使用 DefaultAuthToken
@@ -57,7 +55,5 @@ func printUsage() {
 	logger.Println("  kiro2api refresh - 刷新token")
 	logger.Println("  kiro2api export  - 导出环境变量")
 	logger.Println("  kiro2api authToken - 显示认证令牌")
-	logger.Println("  kiro2api claude  - 跳过 claude 地区限制")
 	logger.Println("  kiro2api server [port] [authToken] - 启动Anthropic API代理服务器")
-	logger.Println("  author https://github.com/bestK/kiro2api")
 }
