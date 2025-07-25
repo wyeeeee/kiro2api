@@ -15,14 +15,14 @@ func main() {
 	}
 	defer logger.Close()
 
-	port := "8080"        // 默认端口
-	authToken := "123456" // 默认使用 123456
+	port := "8080"          // 默认端口
+	clientToken := "123456" // 默认使用 123456
 	if len(os.Args) > 2 {
 		port = os.Args[2]
 	}
 	if len(os.Args) > 3 {
-		authToken = os.Args[3]
+		clientToken = os.Args[3]
 	}
-	server.StartServer(port, authToken)
+	server.StartServer(port, clientToken)
 
 }
