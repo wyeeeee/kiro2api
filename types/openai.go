@@ -3,7 +3,7 @@ package types
 // OpenAI兼容的数据结构
 type OpenAIMessage struct {
 	Role      string           `json:"role"`
-	Content   string           `json:"content"`
+	Content   any              `json:"content"` // 可以是 string 或 []ContentBlock
 	ToolCalls []OpenAIToolCall `json:"tool_calls,omitempty"`
 }
 
