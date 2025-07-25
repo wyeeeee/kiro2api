@@ -11,40 +11,6 @@ import (
 	"github.com/bytedance/sonic"
 )
 
-// getMessageContent 从消息中提取文本内容
-func getMessageContent(content any) string {
-	switch v := content.(type) {
-	case string:
-		if len(v) == 0 {
-			return "answer for user question"
-		}
-		return v
-	case []any:
-		var texts []string
-		for _, block := range v {
-			if m, ok := block.(map[string]any); ok {
-				var cb types.ContentBlock
-				if data, err := sonic.Marshal(m); err == nil {
-					if err := sonic.Unmarshal(data, &cb); err == nil {
-						switch cb.Type {
-						case "tool_result":
-							texts = append(texts, *cb.Content)
-						case "text":
-							texts = append(texts, *cb.Text)
-						}
-					}
-				}
-			}
-		}
-		if len(texts) == 0 {
-			return "answer for user question"
-		}
-		return strings.Join(texts, "\n")
-	default:
-		return "answer for user question"
-	}
-}
-
 // ConvertOpenAIToAnthropic 将OpenAI请求转换为Anthropic请求
 func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequest {
 	var anthropicMessages []types.AnthropicRequestMessage
@@ -232,7 +198,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
-	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = getMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR"
 
@@ -258,7 +224,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 
 		// 首先添加每个 system 消息作为独立的历史记录项
 		assistantDefaultMsg := types.HistoryAssistantMessage{}
-		assistantDefaultMsg.AssistantResponseMessage.Content = getMessageContent("I will follow these instructions")
+		assistantDefaultMsg.AssistantResponseMessage.Content = utils.GetMessageContent("I will follow these instructions")
 		assistantDefaultMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
 
 		if len(anthropicReq.System) > 0 {
@@ -276,7 +242,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 		for i := 0; i < len(anthropicReq.Messages)-1; i++ {
 			if anthropicReq.Messages[i].Role == "user" {
 				userMsg := types.HistoryUserMessage{}
-				userMsg.UserInputMessage.Content = getMessageContent(anthropicReq.Messages[i].Content)
+				userMsg.UserInputMessage.Content = utils.GetMessageContent(anthropicReq.Messages[i].Content)
 				userMsg.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
 				userMsg.UserInputMessage.Origin = "AI_EDITOR"
 				history = append(history, userMsg)
@@ -284,7 +250,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 				// 检查下一条消息是否是助手回复
 				if i+1 < len(anthropicReq.Messages)-1 && anthropicReq.Messages[i+1].Role == "assistant" {
 					assistantMsg := types.HistoryAssistantMessage{}
-					assistantMsg.AssistantResponseMessage.Content = getMessageContent(anthropicReq.Messages[i+1].Content)
+					assistantMsg.AssistantResponseMessage.Content = utils.GetMessageContent(anthropicReq.Messages[i+1].Content)
 					assistantMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
 					history = append(history, assistantMsg)
 					i++ // 跳过已处理的助手消息

@@ -1,32 +1,45 @@
 # CLAUDE.md
 
-此文件为 Claude Code (claude.ai/code) 在此代码库中工作提供指导。
+此文件为 Claude Code (claude.ai/code) 在此代码库中工作时提供指导。
 
 ## 项目概述
 
-这是一个名为 `kiro2api` 的 Go 命令行工具，用于管理 Kiro 认证令牌，并提供 Anthropic API 和 OpenAI 兼容的 API 代理服务。该工具充当 API 请求与 AWS CodeWhisperer 之间的桥梁，在不同格式之间转换请求和响应。
+这是 `kiro2api`，一个 Go 命令行工具和 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它管理 Kiro 认证令牌并提供实时流式响应功能。
 
-**版本 v2.0.0** 已完成从 fasthttp 到 gin-gonic/gin 框架的重大升级，并实现了真正的实时流式响应。
+**当前版本**: v2.1.0 - 最近进行了重构，采用统一工具和中间件架构。
 
-## 技术栈
+## 快速开始
 
-- **Web框架**: gin-gonic/gin (v1.10.0)
-- **JSON处理**: bytedance/sonic (高性能)
-- **HTTP客户端**: 标准 net/http
-- **流式处理**: 自定义 StreamParser 实现
+```bash
+# 编译程序
+go build -o kiro2api main.go
 
-## 构建和开发命令
+# 启动默认服务器 (端口 8080, 认证令牌 "123456")
+./kiro2api
+
+# 测试 API (使用默认认证)
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 100, "messages": [{"role": "user", "content": "你好"}]}'
+```
+
+## 开发命令
 
 ```bash
 # 构建应用程序
 go build -o kiro2api main.go
 
-# 运行测试
+# 运行测试（当前无测试文件）
 go test ./...
 
 # 运行特定包的详细测试
 go test ./parser -v
 go test ./auth -v
+
+# 代码质量检查
+go vet ./...
+go fmt ./...
 
 # 清理构建
 rm -f kiro2api && go build -o kiro2api main.go
@@ -34,124 +47,171 @@ rm -f kiro2api && go build -o kiro2api main.go
 
 ## 应用程序命令
 
-- `./kiro2api read` - 从缓存中读取并显示令牌信息
-- `./kiro2api refresh` - 使用刷新令牌刷新访问令牌
-- `./kiro2api export` - 为其他工具导出环境变量（使用实际令牌，不是硬编码值）
-- `./kiro2api authToken` - 显示当前认证令牌
-- `./kiro2api server [port] [authToken]` - 启动 HTTP 代理服务器（默认端口 8080）
+```bash
+# 启动代理服务器（默认端口 8080，默认认证令牌 "123456"）
+./kiro2api [端口] [认证令牌]
 
-## 架构
+# 示例：
+./kiro2api                    # 使用默认配置
+./kiro2api 9000              # 指定端口
+./kiro2api 8080 my-token     # 指定端口和令牌
+```
 
-代码库采用模块化包结构，职责分离清晰：
+## 架构概述
 
-### 包结构
+这是一个**双API代理服务器**，在三种格式之间进行转换：
+- **输入**: Anthropic Claude API 或 OpenAI ChatCompletion API 
+- **输出**: AWS CodeWhisperer EventStream 格式
+- **响应**: 实时流式或标准 JSON 响应
 
-1. **`auth/`** - 令牌管理
-   - `token.go`：令牌 CRUD 操作、文件 I/O、刷新逻辑
-   - `claude.go`：Claude 特定的认证设置
-   - 从 `~/.aws/sso/cache/kiro-auth-token.json` 读取
-   - 通过 Kiro 认证服务处理自动令牌刷新
+### 核心请求流程
+1. **认证**: `AuthMiddleware` 验证来自 `Authorization` 或 `x-api-key` 头的 API 密钥
+2. **格式转换**: `converter/` 包将请求转换为 CodeWhisperer 格式
+3. **代理**: 将请求路由到硬编码代理 `127.0.0.1:9000` 
+4. **流处理**: `StreamParser` 处理实时 AWS EventStream 二进制解析
+5. **响应转换**: 转换回客户端请求的格式（Anthropic SSE 或 OpenAI 流式）
 
-2. **`server/`** - 基于 gin 的 HTTP 服务器和 API 处理
-   - `server.go`：gin 服务器初始化、路由配置和中间件
-   - `handlers.go`：Anthropic API 端点（`/v1/messages`）使用 gin.Context
-   - `openai_handlers.go`：OpenAI 兼容端点（`/v1/chat/completions`、`/v1/models`）
-   - `common.go`：共享的 HTTP 工具、错误处理和请求构建（基于 net/http）
-   - **流式特性**: 使用 StreamParser 实现真正的实时流式响应
+### 关键架构模式
 
-3. **`converter/`** - API 转换层
-   - `converter.go`：在 Anthropic、OpenAI 和 CodeWhisperer 格式之间转换
-   - 处理模型名称映射、消息格式转换和工具调用
+**统一工具模式**: 重构后，通用函数集中化：
+- `utils.GetMessageContent()` - 消息内容提取（消除了跨文件重复）
+- `utils.ReadHTTPResponse()` - 标准 HTTP 响应读取
+- `utils.SharedHTTPClient` - 60秒超时的单一 HTTP 客户端实例
 
-4. **`parser/`** - 响应处理和流式解析
-   - `sse_parser.go`：将二进制 AWS EventStream 响应解析为 SSE 事件
-   - **StreamParser**: 新增的实时流式解析器，支持部分 EventStream 数据处理
-   - 转换为 Anthropic/OpenAI 兼容的流式响应
-   - 处理工具使用和文本内容块
-   - **性能优化**: 零延迟首字响应，真正的实时流式处理
+**中间件链**: gin-gonic 服务器使用：
+- `gin.Logger()` 和 `gin.Recovery()` 提供基本功能  
+- `corsMiddleware()` 处理 CORS
+- `AuthMiddleware(authToken)` 对除 `/health` 外的所有端点进行 API 密钥验证
 
-5. **`types/`** - 数据结构
-   - `anthropic.go`：Anthropic API 请求/响应类型
-   - `openai.go`：OpenAI API 请求/响应类型
-   - `codewhisperer.go`：AWS CodeWhisperer 集成类型
-   - `token.go`：认证令牌数据结构
-   - `model.go`：模型信息和列表类型
+**流处理架构**: 
+- 使用滑动窗口缓冲区的 `StreamParser` 进行实时 EventStream 解析
+- 立即客户端流式传输（零首字符延迟）
+- 使用 `binary.BigEndian` 进行 AWS EventStream 协议的二进制格式解析
 
-6. **`config/`** - 配置管理
-   - `config.go`：不同 API 格式之间的模型映射，默认常量
-   - 包含用于在提供商之间转换模型名称的 `ModelMap`
+## 包结构
 
-7. **`logger/`** - 日志系统
-   - 具有可配置级别和格式化器的结构化日志
-   - 支持 JSON 和控制台输出格式
+**`server/`** - HTTP 服务器和 API 处理器
+- `server.go`: 路由配置、服务器启动、中间件链
+- `handlers.go`: Anthropic API 端点 (`/v1/messages`) 
+- `openai_handlers.go`: OpenAI 兼容性 (`/v1/chat/completions`, `/v1/models`)
+- `middleware.go`: **[重构后]** 统一 API 密钥验证中间件
+- `common.go`: 共享 HTTP 工具和 CodeWhisperer 错误处理
 
-8. **`utils/`** - 工具函数
-   - `file.go`：文件系统操作
-   - `uuid.go`：UUID 生成工具
+**`converter/`** - 格式转换层
+- 处理 Anthropic ↔ OpenAI ↔ CodeWhisperer 请求/响应转换
+- 通过 `config.ModelMap` 进行模型名称映射
+- 工具调用格式转换
 
-### API 端点
+**`parser/`** - 流处理
+- `sse_parser.go`: AWS EventStream 二进制协议解析器
+- `StreamParser`: 实时流式处理，支持部分数据处理
+- 将 EventStream 事件转换为客户端的 SSE 格式
 
-- **Anthropic 兼容**：`/v1/messages` - 直接 Anthropic API 代理，支持真正的实时流式响应
-- **OpenAI 兼容**：`/v1/chat/completions` - OpenAI 格式转换为 Claude，完全流式兼容
-- **模型**：`/v1/models` - 返回可用模型列表
-- **健康检查**：`/health` - 服务器健康检查端点
+**`auth/`** - 令牌管理  
+- 从 `~/.aws/sso/cache/kiro-auth-token.json` 读取
+- 通过 `RefreshTokenForServer()` 在 403 错误时自动刷新
+- 文件不可用时回退到默认令牌 "123456"
 
-### 请求流程
+**`utils/`** - **[最近重构]** 集中化工具
+- `message.go`: `GetMessageContent()` 函数（消除重复）
+- `http.go`: `ReadHTTPResponse()` 标准响应读取
+- `client.go`: 配置超时的 `SharedHTTPClient`
+- `file.go`, `uuid.go`: 文件操作和 UUID 生成
 
-#### 非流式请求流程
-1. 客户端向适当的端点发送 API 请求（`/v1/messages` 或 `/v1/chat/completions`）
-2. gin 服务器使用来自文件系统的令牌或提供的认证头进行请求认证
-3. 转换器将请求格式转换为 CodeWhisperer 兼容结构
-4. 请求通过硬编码代理 `127.0.0.1:9000` 代理到 AWS CodeWhisperer API
-5. 解析器处理完整二进制响应并转换为适当格式
-6. 响应以请求的格式返回给客户端
+**`types/`** - 数据结构定义
+- `anthropic.go`: Anthropic API 请求/响应结构
+- `openai.go`: OpenAI API 格式结构  
+- `codewhisperer.go`: AWS CodeWhisperer API 结构
+- `model.go`: 模型映射和配置类型
+- `token.go`: 令牌管理结构
 
-#### 流式请求流程 (v2.0.0 新特性)
-1. 客户端向流式端点发送请求
-2. gin 服务器立即建立 SSE 连接并发送响应头
-3. 请求被转发到 AWS CodeWhisperer API
-4. **StreamParser 实时解析** AWS EventStream 二进制数据
-5. 每个解析出的事件立即转换为客户端格式
-6. 实时推送给客户端，确保零延迟流式体验
+**`logger/`** - 结构化日志系统
+- `logger.go`: 主日志接口
+- `config.go`, `level.go`: 配置和日志级别管理
+- `formatter.go`, `writer.go`: 输出格式化和写入器
 
-### 令牌管理流程
+**`config/`** - 配置常量
+- `ModelMap`: 将公开模型名称映射到内部 CodeWhisperer 模型 ID
+- `DefaultAuthToken`: "123456" 回退值
+- `RefreshTokenURL`: Kiro 令牌刷新端点
 
-- 令牌存储在 `~/.aws/sso/cache/kiro-auth-token.json`
-- `GetToken()` 读取当前令牌并进行错误处理
-- 在 403 认证错误时自动刷新
-- 当令牌文件不可用时回退到默认令牌 "123456"
-- 跨平台环境变量导出（Windows vs Unix 格式）
+## API 端点
 
-## 开发注意事项
+- `POST /v1/messages` - Anthropic Claude API 代理（流式 + 非流式）
+- `POST /v1/chat/completions` - OpenAI ChatCompletion API 代理（流式 + 非流式）  
+- `GET /v1/models` - 返回可用模型列表
+- `GET /health` - 健康检查（绕过认证）
 
-### v2.0.0 架构变更
-- **框架迁移**: 从 fasthttp 升级到 gin-gonic/gin，提供更好的性能和生态系统
-- **流式优化**: 实现 StreamParser 用于真正的实时 AWS EventStream 解析
-- **JSON性能**: 使用 bytedance/sonic 替代标准 JSON 库
-- **HTTP客户端**: 从 fasthttp.Client 迁移到标准 net/http.Client
+## Docker 支持
 
-### 重要实现细节
-- 使用硬编码代理 `127.0.0.1:9000` 进行 AWS CodeWhisperer 请求
-- 不同 API 提供商之间需要模型映射（参见 `config/config.go`）
-- GitHub Actions 处理跨平台构建（Windows、Linux、macOS）并使用 UPX 压缩
-- 所有令牌操作首先尝试读取实际令牌，优雅地回退到默认值
-- 日志系统完全可通过环境变量和配置进行配置
-- **新增**: StreamParser 实现了零拷贝的实时 EventStream 解析
+项目包含 Dockerfile，支持容器化部署：
 
-### 流式处理架构
-- **缓冲策略**: StreamParser 使用滑动窗口缓冲器处理部分 EventStream 数据
-- **实时解析**: 每个网络数据包到达时立即解析，不等待完整响应
-- **错误处理**: 优雅处理部分数据和网络中断
-- **性能**: 最小化内存分配，使用 binary.BigEndian 高效解析二进制格式
+```bash
+# 构建 Docker 镜像
+docker build -t kiro2api .
 
-### 测试和质量保证
-- 当前没有测试文件 - 应该为关键组件添加测试
-- **建议**: 为 StreamParser、gin 处理器和格式转换器添加单元测试
-- 性能测试应验证流式响应的延迟改进
+# 运行容器（默认端口 8080）
+docker run -p 8080:8080 kiro2api
 
-### v2.0.0 重要实现细节
-- `ExportEnvVars()` 和 `GenerateAuthToken()` 现在通过 `GetToken()` 使用真实令牌，而不是硬编码值
-- 服务器支持基于文件的令牌和传递的认证令牌两种认证方式
-- StreamParser 处理流式响应中的文本和工具使用内容，支持部分数据解析
-- 跨格式兼容性层允许 OpenAI 客户端无缝使用 Claude 模型
-- gin.Context 替代 fasthttp.RequestCtx，提供更标准的 Go HTTP 处理
+# 运行容器并指定自定义配置
+docker run -p 9000:8080 -e AUTH_TOKEN=custom-token kiro2api
+```
+
+## 重要实现细节
+
+**认证**: 除 `/health` 外的所有端点都需要在 `Authorization: Bearer <token>` 或 `x-api-key: <token>` 头中提供 API 密钥
+
+**模型映射**: 公开模型名称（如 "claude-sonnet-4-20250514"）通过 `config.ModelMap` 映射到内部 CodeWhisperer ID
+
+**代理配置**: 所有 CodeWhisperer 请求都通过硬编码代理 `127.0.0.1:9000` 路由
+
+**流式传输**: 使用自定义二进制 EventStream 解析器进行实时响应处理，而非缓冲解析
+
+**令牌文件位置**: 从 `~/.aws/sso/cache/kiro-auth-token.json` 读取，JSON 格式：
+```json
+{
+    "accessToken": "your-access-token", 
+    "refreshToken": "your-refresh-token",
+    "expiresAt": "2024-01-01T00:00:00Z"
+}
+```
+
+**错误处理**: 403 响应触发通过 `auth.RefreshTokenForServer()` 自动令牌刷新
+
+## 技术栈
+
+- **框架**: gin-gonic/gin v1.10.1
+- **JSON**: bytedance/sonic（高性能）
+- **HTTP**: 标准 net/http 与共享客户端
+- **流式传输**: 自定义 EventStream 解析器
+- **Go 版本**: 1.23.3
+
+## 最近重构 (v2.1.0)
+
+代码库经历了重大重构以消除代码重复：
+- 将三个 `getMessageContent` 副本整合为 `utils.GetMessageContent`
+- 用统一的 `AuthMiddleware` 替换重复的 API 验证
+- 集中化 HTTP 响应读取和客户端管理
+- 改善了可维护性并减少了技术债务
+
+## 常见开发任务
+
+### 添加新的模型支持
+1. 在 `config/config.go` 的 `ModelMap` 中添加模型映射
+2. 确保 `types/model.go` 中的结构支持新模型
+3. 测试新模型的请求和响应转换
+
+### 修改认证逻辑
+1. 主要逻辑在 `server/middleware.go` 的 `AuthMiddleware`
+2. 令牌刷新逻辑在 `auth/token.go`
+3. 确保所有端点（除 `/health`）都使用中间件
+
+### 调试流式响应
+1. 检查 `parser/sse_parser.go` 中的 `StreamParser`
+2. 确认二进制 EventStream 解析逻辑
+3. 验证客户端格式转换（Anthropic SSE vs OpenAI 流式）
+
+### 性能优化
+1. 利用 `utils.SharedHTTPClient` 复用连接
+2. 确保使用 `bytedance/sonic` 进行 JSON 操作
+3. 监控 `StreamParser` 的内存使用情况

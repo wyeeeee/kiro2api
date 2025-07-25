@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"kiro2api/auth"
 	"kiro2api/converter"
@@ -69,64 +68,4 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("CodeWhisperer Error: %s", string(body))})
 	}
 	return true
-}
-
-// validateAPIKey 验证API密钥
-func validateAPIKey(c *gin.Context, authToken string) bool {
-	providedApiKey := c.GetHeader("Authorization")
-	if providedApiKey == "" {
-		providedApiKey = c.GetHeader("x-api-key")
-	} else {
-		providedApiKey = strings.TrimPrefix(providedApiKey, "Bearer ")
-	}
-
-	if providedApiKey == "" {
-		logger.Warn("请求缺少Authorization或x-api-key头")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
-		return false
-	}
-
-	if providedApiKey != authToken {
-		logger.Error("authToken验证失败",
-			logger.String("expected", "***"),
-			logger.String("provided", "***"))
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
-		return false
-	}
-
-	return true
-}
-
-// getMessageContent 从消息中提取文本内容的辅助函数
-func getMessageContent(content any) string {
-	switch v := content.(type) {
-	case string:
-		if len(v) == 0 {
-			return "answer for user question"
-		}
-		return v
-	case []any:
-		var texts []string
-		for _, block := range v {
-			if m, ok := block.(map[string]any); ok {
-				var cb types.ContentBlock
-				if data, err := sonic.Marshal(m); err == nil {
-					if err := sonic.Unmarshal(data, &cb); err == nil {
-						switch cb.Type {
-						case "tool_result":
-							texts = append(texts, *cb.Content)
-						case "text":
-							texts = append(texts, *cb.Text)
-						}
-					}
-				}
-			}
-		}
-		if len(texts) == 0 {
-			return "answer for user question"
-		}
-		return strings.Join(texts, "\n")
-	default:
-		return "answer for user question"
-	}
 }

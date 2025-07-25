@@ -1,274 +1,252 @@
-
 # kiro2api
 
-这是一个名为 `kiro2api` 的 Go 命令行工具，用于管理 Kiro 认证令牌，并提供 Anthropic API 和 OpenAI 兼容的 API 代理服务。该工具充当 API 请求与 AWS CodeWhisperer 之间的桥梁，在不同格式之间转换请求和响应。
+一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持实时流式响应和多种认证方式。
 
-## 功能
+## 功能特性
 
-- **令牌管理**：从 `~/.aws/sso/cache/kiro-auth-token.json` 读取和刷新访问令牌
-- **API 代理**：在 Anthropic、OpenAI 和 AWS CodeWhisperer API 格式之间转换
-- **环境变量导出**：为其他工具导出环境变量（使用实际令牌，不是硬编码值）
-- **Claude 地区绕过**：配置 Claude 认证设置
-- **优化的流式响应支持**：支持真正实时的流式和非流式请求处理
-- **高性能框架**：基于 gin-gonic/gin 框架构建，提供卓越的性能和稳定性
+- **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
+- **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
+- **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
+- **智能认证管理**：支持文件令牌和运行时令牌，自动刷新过期令牌
+- **完善的中间件**：统一的认证、CORS 和日志处理
+- **容器化支持**：提供 Dockerfile，支持 Docker 部署
 
-## 技术架构
+## 技术栈
 
-- **Web框架**：基于 [gin-gonic/gin](https://github.com/gin-gonic/gin) 构建，提供高性能HTTP服务
-- **流式解析**：自定义 StreamParser 实现真正的实时AWS EventStream解析
-- **JSON处理**：使用 [bytedance/sonic](https://github.com/bytedance/sonic) 高性能JSON库
-- **并发安全**：全面支持并发请求处理
+- **Web框架**: gin-gonic/gin v1.10.1
+- **JSON处理**: bytedance/sonic v1.14.0
+- **Go版本**: 1.23.3
+- **流式解析**: 自定义 AWS EventStream 二进制协议解析器
 
-## 编译
+## 快速开始
+
+### 编译和运行
 
 ```bash
+# 克隆项目
+git clone <repository-url>
+cd kiro2api
+
+# 编译
 go build -o kiro2api main.go
+
+# 启动服务器（默认端口 8080，默认认证令牌 "123456"）
+./kiro2api
+
+# 指定端口和认证令牌
+./kiro2api 9000 your-auth-token
 ```
 
-## 开发和测试
+### 使用 Docker
 
 ```bash
+# 构建镜像
+docker build -t kiro2api .
+
+# 运行容器
+docker run -p 8080:8080 kiro2api
+
+# 指定环境变量
+docker run -p 8080:8080 -e AUTH_TOKEN=custom-token kiro2api
+```
+
+## API 接口
+
+### 支持的端点
+
+- `POST /v1/messages` - Anthropic Claude API 兼容接口（支持流式和非流式）
+- `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流式和非流式）
+- `GET /v1/models` - 获取可用模型列表
+- `GET /health` - 健康检查（无需认证）
+
+### 认证方式
+
+所有 API 端点（除 `/health`）都需要在请求头中提供认证信息：
+
+```bash
+# 使用 Authorization Bearer 认证
+Authorization: Bearer your-auth-token
+
+# 或使用 x-api-key 认证
+x-api-key: your-auth-token
+```
+
+### 请求示例
+
+#### Anthropic API 格式
+
+```bash
+# 非流式请求
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1000,
+    "messages": [
+      {"role": "user", "content": "你好，请介绍一下你自己"}
+    ]
+  }'
+
+# 流式请求
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1000,
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "请写一篇关于人工智能的文章"}
+    ]
+  }'
+```
+
+#### OpenAI API 格式
+
+```bash
+# 非流式请求
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "messages": [
+      {"role": "user", "content": "解释一下机器学习的基本概念"}
+    ]
+  }'
+
+# 流式请求
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "请详细介绍深度学习"}
+    ]
+  }'
+```
+
+## 支持的模型
+
+当前支持的模型映射：
+
+- `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
+- `claude-3-5-haiku-20241022` → `CLAUDE_3_7_SONNET_20250219_V1_0`
+
+## 令牌管理
+
+### 令牌文件位置
+
+程序会从以下位置读取认证令牌：
+- 文件路径：`~/.aws/sso/cache/kiro-auth-token.json`
+
+令牌文件格式：
+```json
+{
+    "accessToken": "your-access-token",
+    "refreshToken": "your-refresh-token", 
+    "expiresAt": "2024-01-01T00:00:00Z"
+}
+```
+
+### 自动令牌刷新
+
+- 当收到 403 错误时，程序会自动尝试刷新令牌
+- 刷新 URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
+- 如果令牌文件不可用，会使用默认令牌 "123456"
+
+## 开发指南
+
+### 本地开发
+
+```bash
+# 安装依赖
+go mod download
+
 # 运行测试
 go test ./...
 
-# 运行特定包的详细测试
+# 运行特定包的测试
 go test ./parser -v
 go test ./auth -v
+
+# 代码质量检查
+go vet ./...
+go fmt ./...
 
 # 清理构建
 rm -f kiro2api && go build -o kiro2api main.go
 ```
 
-## 自动构建
+### 项目结构
 
-本项目使用GitHub Actions进行自动构建：
-
--   当创建新的GitHub Release时，会自动构建Windows、Linux和macOS版本的可执行文件并上传到Release页面
--   当推送代码到main分支或创建Pull Request时，会自动运行测试
-
-## 使用方法
-
-### 1. 读取令牌信息
-
-```bash
-./kiro2api read
 ```
-
-### 2. 刷新访问令牌
-
-```bash
-./kiro2api refresh
-```
-
-### 3. 导出环境变量
-
-```bash
-# Linux/macOS
-eval $(./kiro2api export)
-
-# Windows
-./kiro2api export
-```
-
-### 4. 显示认证令牌
-
-```bash
-./kiro2api authToken
-```
-
-### 5. 设置 Claude 地区绕过
-
-```bash
-./kiro2api claude
-```
-
-### 6. 启动 API 代理服务器
-
-```bash
-# 使用默认端口 8080
-./kiro2api server
-
-# 指定自定义端口
-./kiro2api server 9000
-
-# 指定端口和认证令牌
-./kiro2api server 8080 your-auth-token
-```
-
-## 流式响应特性
-
-### 真正的实时流式处理
-
-- **零延迟首字**：优化的流式解析器确保最小的首字延迟
-- **实时数据流**：使用自定义 StreamParser 实现真正的实时 AWS EventStream 解析
-- **支持两种格式**：
-  - Anthropic 原生SSE格式 (`/v1/messages`)
-  - OpenAI兼容流式格式 (`/v1/chat/completions`)
-
-### 流式请求示例
-
-**Anthropic格式流式请求：**
-```bash
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-auth-token" \
-  -d '{
-    "model": "claude-sonnet-4-20250514",
-    "max_tokens": 1000,
-    "stream": true,
-    "messages": [
-      {"role": "user", "content": "Hello, please write a longer response"}
-    ]
-  }'
-```
-
-**OpenAI格式流式请求：**
-```bash
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-auth-token" \
-  -d '{
-    "model": "claude-sonnet-4-20250514",
-    "stream": true,
-    "messages": [
-      {"role": "user", "content": "Hello, please write a longer response"}
-    ]
-  }'
-```
-
-## 代理服务器功能
-
-启动服务器后支持以下 API 端点：
-
-- **Anthropic 兼容**：`/v1/messages` - 直接 Anthropic API 代理，支持真正的实时流式响应
-- **OpenAI 兼容**：`/v1/chat/completions` - OpenAI 格式转换为 Claude，完全兼容流式和非流式
-- **模型列表**：`/v1/models` - 返回可用模型列表
-- **健康检查**：`/health` - 服务器健康检查端点
-
-### API 格式示例
-
-### Anthropic API 格式 (非流式)
-
-```bash
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-auth-token" \
-  -d '{
-    "model": "claude-sonnet-4-20250514",
-    "max_tokens": 1000,
-    "messages": [
-      {"role": "user", "content": "Hello, Claude!"}
-    ]
-  }'
-```
-
-### OpenAI 兼容 API 格式 (非流式)
-
-```bash
-curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-auth-token" \
-  -d '{
-    "model": "claude-sonnet-4-20250514",
-    "messages": [
-      {"role": "user", "content": "Hello, Claude!"}
-    ]
-  }'
-```
-
-### 获取模型列表
-
-```bash
-curl -X GET http://localhost:8080/v1/models \
-  -H "Authorization: Bearer your-auth-token"
+kiro2api/
+├── main.go              # 程序入口
+├── auth/                # 认证和令牌管理
+├── config/              # 配置和常量定义
+├── converter/           # API 格式转换
+├── logger/              # 结构化日志系统
+├── parser/              # 流式响应解析
+├── server/              # HTTP 服务器和处理器
+├── types/               # 数据结构定义
+└── utils/               # 工具函数
 ```
 
 ## 架构说明
 
-项目采用模块化包结构，基于 gin-gonic/gin 高性能Web框架：
+### 请求处理流程
 
-- **`auth/`** - 令牌管理和认证逻辑
-- **`server/`** - 基于 gin 的HTTP 服务器和 API 处理器
-  - `server.go` - 主服务器配置和路由
-  - `handlers.go` - Anthropic API 处理器  
-  - `openai_handlers.go` - OpenAI 兼容 API 处理器
-  - `common.go` - 共享工具和错误处理
-- **`converter/`** - API 格式转换层
-- **`parser/`** - 响应解析和流式 EventStream 处理
-  - `sse_parser.go` - AWS EventStream 二进制格式解析
-  - `StreamParser` - 实时流式解析器
-- **`types/`** - 数据结构定义
-- **`config/`** - 配置管理和模型映射
-- **`logger/`** - 结构化日志系统
-- **`utils/`** - 工具函数
+1. **接收请求** - gin 路由器接收 HTTP 请求
+2. **认证验证** - AuthMiddleware 验证 API 密钥
+3. **格式转换** - converter 包将请求转换为 CodeWhisperer 格式
+4. **代理转发** - 通过 `127.0.0.1:9000` 代理转发到 AWS CodeWhisperer
+5. **响应解析** - StreamParser 实时解析 AWS EventStream 二进制数据
+6. **格式转换** - 将响应转换回客户端请求的格式
+7. **返回响应** - 以流式或非流式方式返回给客户端
 
-### 流式处理架构
+### 核心特性
 
-1. **接收流式请求** - gin 处理器接收客户端流式请求
-2. **实时解析** - StreamParser 实时解析 AWS EventStream 二进制数据
-3. **格式转换** - 将 EventStream 事件转换为 Anthropic SSE 或 OpenAI 流式格式
-4. **实时推送** - 立即将解析的内容推送给客户端，确保零延迟体验
-
-## 令牌文件格式
-
-令牌存储在 `~/.aws/sso/cache/kiro-auth-token.json`：
-
-```json
-{
-    "accessToken": "your-access-token",
-    "refreshToken": "your-refresh-token",
-    "expiresAt": "2024-01-01T00:00:00Z"
-}
-```
+- **零延迟流式**: 使用滑动窗口缓冲区的自定义 EventStream 解析器
+- **统一中间件**: 集中式的认证、CORS 和错误处理
+- **高性能处理**: 共享 HTTP 客户端和优化的 JSON 序列化
+- **容错设计**: 自动令牌刷新和优雅的错误处理
 
 ## 环境变量
 
-工具会设置以下环境变量：
+可以通过环境变量配置部分行为：
 
-- `ANTHROPIC_BASE_URL`: http://localhost:8080
-- `ANTHROPIC_AUTH_TOKEN`: 当前的访问令牌
+```bash
+# Docker 环境中的认证令牌
+export AUTH_TOKEN=your-custom-token
 
-## 请求流程
-
-### 非流式请求流程
-1. 客户端向 API 端点发送请求
-2. gin 服务器使用令牌或认证头进行认证
-3. 转换器将请求格式转换为 CodeWhisperer 兼容结构
-4. 通过代理 `127.0.0.1:9000` 转发到 AWS CodeWhisperer API
-5. 解析器处理完整响应并转换为适当格式
-6. 以请求的格式返回给客户端
-
-### 流式请求流程
-1. 客户端向流式 API 端点发送请求
-2. gin 服务器立即建立 SSE 连接并发送响应头
-3. 请求被转发到 AWS CodeWhisperer API
-4. **StreamParser 实时解析** AWS EventStream 二进制数据
-5. 每个解析出的事件立即转换为客户端格式 
-6. 实时推送给客户端，确保真正的流式体验
-
-## 性能优化
-
-- **高性能框架**：基于 gin-gonic/gin，提供出色的并发性能
-- **实时流式解析**：自定义 StreamParser 避免缓冲延迟
-- **高效JSON处理**：使用 bytedance/sonic 提升JSON序列化性能
-- **零拷贝优化**：流式数据处理中最小化内存拷贝
+# 日志级别（可选）
+export LOG_LEVEL=info
+```
 
 ## 版本历史
 
-### v2.0.0 (最新版本)
-- 🚀 **框架升级**：从 fasthttp 迁移到 gin-gonic/gin 框架
-- ⚡ **流式优化**：实现真正的实时流式响应，零首字延迟
-- 🔧 **StreamParser**：自定义 AWS EventStream 实时解析器
-- 🎯 **性能提升**：使用 bytedance/sonic 高性能JSON库
-- 🛡️ **稳定性**：全面的错误处理和并发安全
-- 📊 **监控改进**：更好的日志记录和调试信息
+### v2.1.0 (当前版本)
+- 🔧 **重构优化**: 统一工具函数，消除代码重复
+- 🏗️ **架构改进**: 集中式中间件和共享 HTTP 客户端
+- 📈 **性能提升**: 优化内存使用和响应速度
 
-### v1.x.x (历史版本)
-- 基于 fasthttp 的基础实现
-- 基本的流式响应支持
+### v2.0.0
+- 🚀 **框架迁移**: 从 fasthttp 迁移到 gin-gonic/gin
+- ⚡ **流式优化**: 实现真正的实时流式响应处理
+- 🎯 **JSON 优化**: 集成 bytedance/sonic 高性能 JSON 库
+- 🔒 **安全增强**: 统一的认证中间件和 CORS 处理
 
-## 跨平台支持
+## 注意事项
 
--   Windows: 使用 `set` 命令格式
--   Linux/macOS: 使用 `export` 命令格式
--   自动检测用户目录路径
+- 所有请求都会通过硬编码的代理 `127.0.0.1:9000` 转发
+- 流式响应使用自定义的二进制 EventStream 解析，不是缓冲解析
+- 程序启动时会初始化结构化日志系统
+- 健康检查端点 `/health` 不需要认证
+
+## 许可证
+
+本项目遵循相应的开源许可证。详情请查看 LICENSE 文件。

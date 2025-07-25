@@ -9,6 +9,7 @@ import (
 	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
+	"kiro2api/utils"
 
 	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
@@ -28,7 +29,7 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 		return
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := utils.SharedHTTPClient.Do(req)
 	if err != nil {
 		sendErrorEvent(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
 		return
@@ -54,7 +55,7 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage": map[string]any{
-				"input_tokens":  len(getMessageContent(anthropicReq.Messages[0].Content)),
+				"input_tokens":  len(utils.GetMessageContent(anthropicReq.Messages[0].Content)),
 				"output_tokens": 1,
 			},
 		},
@@ -89,7 +90,7 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 				sendSSEEvent(c, event.Event, event.Data)
 
 				if event.Event == "content_block_delta" {
-					outputTokens = len(getMessageContent(event.Data))
+					outputTokens = len(utils.GetMessageContent(event.Data))
 				}
 
 				// 立即刷新以确保实时性
@@ -134,7 +135,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		return
 	}
 
-	resp, err := httpClient.Do(req)
+	resp, err := utils.SharedHTTPClient.Do(req)
 	if err != nil {
 		logger.Error("发送请求失败", logger.Err(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("发送请求失败: %v", err)})
@@ -147,16 +148,11 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 
 	// 读取响应体
-	body := make([]byte, 0)
-	buf := make([]byte, 1024)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			body = append(body, buf[:n]...)
-		}
-		if err != nil {
-			break
-		}
+	body, err := utils.ReadHTTPResponse(resp.Body)
+	if err != nil {
+		logger.Error("读取响应体失败", logger.Err(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取响应体失败: %v", err)})
+		return
 	}
 
 	respBodyStr := string(body)
@@ -266,7 +262,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		"stop_sequence": nil,
 		"type":          "message",
 		"usage": map[string]any{
-			"input_tokens":  len(getMessageContent(anthropicReq.Messages[0].Content)),
+			"input_tokens":  len(utils.GetMessageContent(anthropicReq.Messages[0].Content)),
 			"output_tokens": len(context),
 		},
 	}

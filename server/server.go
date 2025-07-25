@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 
 	"kiro2api/auth"
 	"kiro2api/config"
@@ -16,7 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-var httpClient = &http.Client{}
+// 移除全局httpClient，使用utils包中的共享客户端
 
 // StartServer 启动HTTP代理服务器
 func StartServer(port string, authToken string) {
@@ -28,31 +27,10 @@ func StartServer(port string, authToken string) {
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware())
+	r.Use(AuthMiddleware(authToken))
 
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
-		// 认证检查
-		providedApiKey := c.GetHeader("Authorization")
-		if providedApiKey == "" {
-			providedApiKey = c.GetHeader("x-api-key")
-		} else {
-			providedApiKey = strings.TrimPrefix(providedApiKey, "Bearer ")
-		}
-
-		if providedApiKey == "" {
-			logger.Warn("请求缺少Authorization或x-api-key头")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
-			return
-		}
-
-		if providedApiKey != authToken {
-			logger.Error("authToken验证失败",
-				logger.String("expected", "***"),
-				logger.String("provided", "***"))
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
-			return
-		}
-
 		// 构建模型列表
 		models := []types.Model{}
 		for anthropicModel := range config.ModelMap {
@@ -82,31 +60,6 @@ func StartServer(port string, authToken string) {
 			logger.Error("获取token失败", logger.Err(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
 			return
-		}
-
-		if strings.HasPrefix(c.Request.URL.Path, "/v1") {
-			// 尝试从Authorization或x-api-key头获取API密钥
-			providedApiKey := c.GetHeader("Authorization")
-			if providedApiKey == "" {
-				providedApiKey = c.GetHeader("x-api-key")
-			} else {
-				// 如果是Authorization头，移除Bearer前缀
-				providedApiKey = strings.TrimPrefix(providedApiKey, "Bearer ")
-			}
-
-			if providedApiKey == "" {
-				logger.Warn("请求缺少Authorization或x-api-key头")
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
-				return
-			}
-
-			if providedApiKey != authToken {
-				logger.Error("authToken验证失败",
-					logger.String("expected", "***"),
-					logger.String("provided", "***"))
-				c.JSON(http.StatusUnauthorized, gin.H{"error": "401"})
-				return
-			}
 		}
 
 		body, err := c.GetRawData()
@@ -146,10 +99,6 @@ func StartServer(port string, authToken string) {
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
-			return
-		}
-
-		if !validateAPIKey(c, authToken) {
 			return
 		}
 
