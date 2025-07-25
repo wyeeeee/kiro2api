@@ -119,6 +119,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	}
 
 	// 构建Anthropic响应
+    inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
@@ -127,7 +128,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 		"stop_sequence": nil,
 		"type":          "message",
 		"usage": map[string]any{
-			"input_tokens":  len(utils.GetMessageContent(anthropicReq.Messages[0].Content)),
+			"input_tokens":  len(inputContent),
 			"output_tokens": len(content),
 		},
 	}

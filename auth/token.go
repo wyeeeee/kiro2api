@@ -151,6 +151,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 		return types.TokenInfo{}, fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 
+
 	logger.Debug("新的Access Token", logger.String("access_token", refreshResp.AccessToken))
 	
 	// 返回包含有效AccessToken的TokenInfo

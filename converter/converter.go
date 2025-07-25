@@ -192,8 +192,19 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
-	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
-	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
+		content, err := utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
+	if err != nil {
+		// 错误处理: 可以选择记录日志、返回错误或设置默认内容
+		content = ""
+	}
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = content
+
+	// 确保ModelId不为空，如果映射不存在则使用默认模型
+	modelId := config.ModelMap[anthropicReq.Model]
+	if modelId == "" {
+		modelId = "CLAUDE_3_7_SONNET_20250219_V1_0" // 使用默认模型
+	}
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = modelId
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR"
 
 	// 处理 tools 信息
@@ -220,13 +231,16 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 		if len(anthropicReq.System) > 0 {
 			var systemContentBuilder strings.Builder
 			for _, sysMsg := range anthropicReq.System {
-				systemContentBuilder.WriteString(sysMsg.Text)
-				systemContentBuilder.WriteString("\n")
+				content, err := utils.GetMessageContent(sysMsg)
+				if err == nil {
+					systemContentBuilder.WriteString(content)
+					systemContentBuilder.WriteString("\n")
+				}
 			}
 
 			userMsg := types.HistoryUserMessage{}
 			userMsg.UserInputMessage.Content = strings.TrimSpace(systemContentBuilder.String())
-			userMsg.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
+			userMsg.UserInputMessage.ModelId = modelId // 使用验证后的modelId
 			userMsg.UserInputMessage.Origin = "AI_EDITOR"
 			history = append(history, userMsg)
 
@@ -247,15 +261,21 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 		for i := startIndex; i < len(anthropicReq.Messages)-1; i++ {
 			if anthropicReq.Messages[i].Role == "user" {
 				userMsg := types.HistoryUserMessage{}
-				userMsg.UserInputMessage.Content = utils.GetMessageContent(anthropicReq.Messages[i].Content)
-				userMsg.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
+								content, err := utils.GetMessageContent(anthropicReq.Messages[i].Content)
+				if err == nil {
+					userMsg.UserInputMessage.Content = content
+				}
+				userMsg.UserInputMessage.ModelId = modelId // 使用验证后的modelId
 				userMsg.UserInputMessage.Origin = "AI_EDITOR"
 				history = append(history, userMsg)
 
 				// 检查下一条消息是否是助手回复
 				if i+1 < len(anthropicReq.Messages)-1 && anthropicReq.Messages[i+1].Role == "assistant" {
 					assistantMsg := types.HistoryAssistantMessage{}
-					assistantMsg.AssistantResponseMessage.Content = utils.GetMessageContent(anthropicReq.Messages[i+1].Content)
+										assistantContent, err := utils.GetMessageContent(anthropicReq.Messages[i+1].Content)
+					if err == nil {
+						assistantMsg.AssistantResponseMessage.Content = assistantContent
+					}
 					assistantMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
 					history = append(history, assistantMsg)
 					i++ // 跳过已处理的助手消息

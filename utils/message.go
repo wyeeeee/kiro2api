@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"strings"
 
 	"kiro2api/types"
@@ -9,13 +10,15 @@ import (
 )
 
 // GetMessageContent 从消息中提取文本内容的辅助函数
-func GetMessageContent(content any) string {
+func GetMessageContent(content any) (string, error) {
 	switch v := content.(type) {
+	case types.AnthropicSystemMessage:
+		return v.Text, nil
 	case string:
 		if len(v) == 0 {
-			return "answer for user question"
+			return "answer for user question", nil
 		}
-		return v
+		return v, nil
 	case []any:
 		var texts []string
 		for _, block := range v {
@@ -25,19 +28,23 @@ func GetMessageContent(content any) string {
 					if err := sonic.Unmarshal(data, &cb); err == nil {
 						switch cb.Type {
 						case "tool_result":
-							texts = append(texts, *cb.Content)
+							if cb.Content != nil {
+								texts = append(texts, *cb.Content)
+							}
 						case "text":
-							texts = append(texts, *cb.Text)
+							if cb.Text != nil {
+								texts = append(texts, *cb.Text)
+							}
 						}
 					}
 				}
 			}
 		}
 		if len(texts) == 0 {
-			return "answer for user question"
+			return "answer for user question", nil
 		}
-		return strings.Join(texts, "\n")
+		return strings.Join(texts, "\n"), nil
 	default:
-		return "answer for user question"
+		return "", fmt.Errorf("unsupported content type: %T", v)
 	}
 }

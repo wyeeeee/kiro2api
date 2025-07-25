@@ -9,8 +9,7 @@ import (
 type TokenInfo struct {
 	AccessToken  string    `json:"accessToken"`
 	RefreshToken string    `json:"refreshToken"`
-	ExpiresAt    string    `json:"expiresAt,omitempty"`
-	CachedAt     time.Time `json:"-"` // 缓存时间，不序列化
+	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
 }
 
 // RefreshRequest 刷新token的请求结构
@@ -118,12 +117,7 @@ func (tc *TokenCache) Get() (TokenInfo, bool) {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
 	
-	if tc.cachedToken == nil {
-		return TokenInfo{}, false
-	}
-	
-	// 检查是否过期，使用token自身的ExpiresAt时间
-	if tc.isTokenExpired(*tc.cachedToken) {
+	if tc.cachedToken == nil || time.Now().After(tc.cachedToken.ExpiresAt) {
 		return TokenInfo{}, false
 	}
 	
@@ -135,7 +129,6 @@ func (tc *TokenCache) Set(token TokenInfo) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
 	
-	token.CachedAt = time.Now()
 	tc.cachedToken = &token
 }
 
@@ -155,23 +148,6 @@ func (tc *TokenCache) IsExpired() bool {
 		return true
 	}
 	
-	return tc.isTokenExpired(*tc.cachedToken)
+	return time.Now().After(tc.cachedToken.ExpiresAt)
 }
 
-// isTokenExpired 检查token是否过期（基于ExpiresAt字段）
-func (tc *TokenCache) isTokenExpired(token TokenInfo) bool {
-	if token.ExpiresAt == "" {
-		// 如果没有过期时间，回退到基于缓存时间的检查（50分钟）
-		return time.Since(token.CachedAt) > 50*time.Minute
-	}
-	
-	// 解析ExpiresAt时间
-	expireTime, err := time.Parse(time.RFC3339, token.ExpiresAt)
-	if err != nil {
-		// 如果解析失败，回退到基于缓存时间的检查
-		return time.Since(token.CachedAt) > 50*time.Minute
-	}
-	
-	// 检查是否已过期
-	return time.Now().After(expireTime)
-}

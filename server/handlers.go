@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,6 +45,7 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 	c.Writer.Flush()
 
 	// 发送开始事件
+	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
 	messageStart := map[string]any{
 		"type": "message_start",
 		"message": map[string]any{
@@ -55,7 +57,7 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 			"stop_reason":   nil,
 			"stop_sequence": nil,
 			"usage": map[string]any{
-				"input_tokens":  len(utils.GetMessageContent(anthropicReq.Messages[0].Content)),
+				"input_tokens":  len(inputContent),
 				"output_tokens": 1,
 			},
 		},
@@ -90,7 +92,8 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 				sendSSEEvent(c, event.Event, event.Data)
 
 				if event.Event == "content_block_delta" {
-					outputTokens = len(utils.GetMessageContent(event.Data))
+					content, _ := utils.GetMessageContent(event.Data)
+					outputTokens = len(content)
 				}
 
 				// 立即刷新以确保实时性
@@ -250,17 +253,20 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 			}
 		}
 	}
-	if strings.Contains(string(body), "Improperly formed request.") {
-		// 增强错误日志记录，包含原始请求信息
+		if strings.Contains(string(body), "Improperly formed request.") {
+		// 增强错误日志记录
 		reqBodyBytes, _ := sonic.Marshal(anthropicReq)
-		logger.Error("CodeWhisperer返回格式错误", 
+		hash := sha256.Sum256(reqBodyBytes)
+		logger.Error("CodeWhisperer返回格式错误",
 			logger.String("response", respBodyStr),
-			logger.String("original_request", string(reqBodyBytes)),
+			logger.Int("request_len", len(reqBodyBytes)),
+			logger.String("request_sha256", fmt.Sprintf("%x", hash)),
 			logger.Bool("stream", anthropicReq.Stream),
 			logger.Int("tools_count", len(anthropicReq.Tools)))
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求格式错误: %s", respBodyStr)})
 		return
 	}
+    inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
@@ -269,7 +275,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		"stop_sequence": nil,
 		"type":          "message",
 		"usage": map[string]any{
-			"input_tokens":  len(utils.GetMessageContent(anthropicReq.Messages[0].Content)),
+			"input_tokens":  len(inputContent),
 			"output_tokens": len(context),
 		},
 	}
