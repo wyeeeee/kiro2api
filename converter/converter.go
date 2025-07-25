@@ -30,7 +30,9 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 		maxTokens = *openaiReq.MaxTokens
 	}
 
-	stream := true
+	// 为了增强兼容性，当stream未设置时默认为false（非流式响应）
+	// 这样可以避免客户端在处理函数调用时的解析问题
+	stream := false
 	if openaiReq.Stream != nil {
 		stream = *openaiReq.Stream
 	}
