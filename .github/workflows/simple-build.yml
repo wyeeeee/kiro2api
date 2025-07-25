@@ -1,0 +1,38 @@
+name: Simple Build
+
+# 触发条件：push到主分支
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    
+    steps:
+    # 检出代码
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+    
+    # 设置Go环境
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.3'
+    
+    # 下载依赖
+    - name: Install Dependencies
+      run: go mod download
+    
+    # 编译程序
+    - name: Build Binary
+      run: go build -v -o kiro2api .
+    
+    # 验证编译结果
+    - name: Verify Build
+      run: |
+        ls -la kiro2api
+        ./kiro2api --help || echo "Binary built successfully"
