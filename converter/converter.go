@@ -192,7 +192,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
-		content, err := utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
+	content, err := utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
 	if err != nil {
 		// 错误处理: 可以选择记录日志、返回错误或设置默认内容
 		content = ""
@@ -223,12 +223,13 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 
 	// 构建历史消息
-	// 先处理 system 消息或者常规历史消息
 	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 {
 		var history []any
 
-		// 简化 system 消息处理
+		// 正确处理 system 消息
 		if len(anthropicReq.System) > 0 {
+			// 将 system prompt 作为独立的 user/assistant 消息对添加到历史记录
+			// AWS Q 的后端会将其识别为 system prompt
 			var systemContentBuilder strings.Builder
 			for _, sysMsg := range anthropicReq.System {
 				content, err := utils.GetMessageContent(sysMsg)
@@ -240,7 +241,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 
 			userMsg := types.HistoryUserMessage{}
 			userMsg.UserInputMessage.Content = strings.TrimSpace(systemContentBuilder.String())
-			userMsg.UserInputMessage.ModelId = modelId // 使用验证后的modelId
+			userMsg.UserInputMessage.ModelId = modelId
 			userMsg.UserInputMessage.Origin = "AI_EDITOR"
 			history = append(history, userMsg)
 
@@ -250,20 +251,15 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 			history = append(history, assistantMsg)
 		}
 
-		// 计算历史消息的起始索引
-		messageCount := len(anthropicReq.Messages) - 1
-		startIndex := 0
-		if messageCount > config.MaxHistoryMessages {
-			startIndex = messageCount - config.MaxHistoryMessages
-		}
-
 		// 然后处理常规消息历史
-		for i := startIndex; i < len(anthropicReq.Messages)-1; i++ {
+		for i := 0; i < len(anthropicReq.Messages)-1; i++ {
 			if anthropicReq.Messages[i].Role == "user" {
 				userMsg := types.HistoryUserMessage{}
-								content, err := utils.GetMessageContent(anthropicReq.Messages[i].Content)
+				content, err := utils.GetMessageContent(anthropicReq.Messages[i].Content)
 				if err == nil {
 					userMsg.UserInputMessage.Content = content
+				} else {
+					userMsg.UserInputMessage.Content = ""
 				}
 				userMsg.UserInputMessage.ModelId = modelId // 使用验证后的modelId
 				userMsg.UserInputMessage.Origin = "AI_EDITOR"
@@ -272,9 +268,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 				// 检查下一条消息是否是助手回复
 				if i+1 < len(anthropicReq.Messages)-1 && anthropicReq.Messages[i+1].Role == "assistant" {
 					assistantMsg := types.HistoryAssistantMessage{}
-										assistantContent, err := utils.GetMessageContent(anthropicReq.Messages[i+1].Content)
+					assistantContent, err := utils.GetMessageContent(anthropicReq.Messages[i+1].Content)
 					if err == nil {
 						assistantMsg.AssistantResponseMessage.Content = assistantContent
+					} else {
+						assistantMsg.AssistantResponseMessage.Content = ""
 					}
 					assistantMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
 					history = append(history, assistantMsg)

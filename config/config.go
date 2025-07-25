@@ -13,7 +13,3 @@ const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshTok
 
 // CodeWhispererURL CodeWhisperer API的URL
 const CodeWhispererURL = "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
-
-// MaxHistoryMessages 定义保留的最大历史消息数量
-const MaxHistoryMessages = 10
-
