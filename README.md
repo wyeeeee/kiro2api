@@ -147,26 +147,46 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 - `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
 - `claude-3-5-haiku-20241022` → `CLAUDE_3_7_SONNET_20250219_V1_0`
 
-## 令牌管理
+## 配置管理
 
-### 令牌文件位置
+### 环境变量配置
 
-程序会从以下位置读取认证令牌：
-- 文件路径：`~/.aws/sso/cache/kiro-auth-token.json`
+程序完全基于环境变量进行配置，支持以下变量：
 
-令牌文件格式：
-```json
-{
-    "accessToken": "your-access-token",
-    "refreshToken": "your-refresh-token", 
-    "expiresAt": "2024-01-01T00:00:00Z"
-}
+```bash
+# 必需配置
+export AWS_REFRESHTOKEN="your_refresh_token"  # 必需设置，支持多个token用逗号分隔
+
+# 可选配置
+export KIRO_CLIENT_TOKEN="your_token"         # 客户端认证token（默认：123456）
+export PORT="8080"                            # 服务端口（默认：8080）
+export LOG_LEVEL="info"                       # 日志级别（默认：info）
 ```
 
-### 自动令牌刷新
+### .env 文件支持
 
-- 当收到 403 错误时，程序会自动尝试刷新令牌
-- 刷新 URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
+可以在项目根目录创建 `.env` 文件进行配置：
+
+```bash
+# 复制示例配置文件
+cp .env.example .env
+
+# 编辑配置文件
+KIRO_CLIENT_TOKEN=123456
+PORT=8080
+AWS_REFRESHTOKEN=your_refresh_token_here
+LOG_LEVEL=info
+```
+
+### Token 池管理
+
+- **多Token支持**：支持多个refresh token，用逗号分隔
+- **自动轮换**：当一个token失败时自动切换到下一个
+- **失败重试**：每个token最多重试3次，超过后自动跳过
+- **智能缓存**：基于token自身过期时间进行缓存管理
+- **自动刷新**：当收到403错误时自动刷新token
+
+刷新URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
 
 ## 开发指南
 

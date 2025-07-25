@@ -8,3 +8,6 @@ var ModelMap = map[string]string{
 
 // RefreshTokenURL 刷新token的URL
 const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
+
+// CodeWhispererURL CodeWhisperer API的URL
+const CodeWhispererURL = "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"

@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 
+	"kiro2api/auth"
+	"kiro2api/config"
 	"kiro2api/converter"
 	"kiro2api/logger"
 	"kiro2api/types"
@@ -14,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const codeWhispererURL = "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"
 
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
 func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken string, isStream bool) (*http.Request, error) {
@@ -24,7 +25,7 @@ func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken 
 		return nil, fmt.Errorf("序列化请求失败: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", codeWhispererURL, bytes.NewReader(cwReqBody))
+	req, err := http.NewRequest("POST", config.CodeWhispererURL, bytes.NewReader(cwReqBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -55,8 +56,14 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 		logger.Int("status_code", resp.StatusCode),
 		logger.String("response", string(body)))
 
-	// 由于GetToken已经刷新了token，403错误在这里不应该发生
-	// 如果仍然发生403，说明刷新后的token也无效
+	// 如果是403错误，清理token缓存并提示刷新
+	if resp.StatusCode == http.StatusForbidden {
+		logger.Warn("收到403错误，清理token缓存")
+		auth.ClearTokenCache()
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token已失效，请重试"})
+		return true
+	}
+	
 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("CodeWhisperer Error: %s", string(body))})
 	return true
 }
