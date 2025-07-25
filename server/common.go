@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 
-	"kiro2api/auth"
 	"kiro2api/converter"
 	"kiro2api/logger"
 	"kiro2api/types"
@@ -56,16 +55,8 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 		logger.Int("status_code", resp.StatusCode),
 		logger.String("response", string(body)))
 
-	if resp.StatusCode == 403 {
-		logger.Warn("Token过期，正在刷新")
-		if err := auth.RefreshTokenForServer(); err != nil {
-			logger.Error("Token刷新失败", logger.Err(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Token刷新失败: %v", err)})
-		} else {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "CodeWhisperer Token 已刷新，请重试"})
-		}
-	} else {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("CodeWhisperer Error: %s", string(body))})
-	}
+	// 由于GetToken已经刷新了token，403错误在这里不应该发生
+	// 如果仍然发生403，说明刷新后的token也无效
+	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("CodeWhisperer Error: %s", string(body))})
 	return true
 }

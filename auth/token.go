@@ -10,39 +10,30 @@ import (
 	"kiro2api/utils"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/bytedance/sonic"
 )
 
 // 移除全局httpClient，使用utils包中的共享客户端
 
-// getTokenFilePath 获取跨平台的token文件路径
-func getTokenFilePath() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		logger.Error("获取用户目录失败", logger.Err(err))
-		os.Exit(1)
-	}
-
-	return filepath.Join(homeDir, ".aws", "sso", "cache", "kiro-auth-token.json")
-}
-
 // RefreshTokenForServer 刷新token，用于服务器模式，返回错误而不是退出程序
 func RefreshTokenForServer() error {
-	tokenPath := getTokenFilePath()
+	_, err := refreshTokenAndReturn()
+	return err
+}
 
-	// 读取当前token
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		logger.Error("读取token文件失败", logger.Err(err), logger.String("path", tokenPath))
-		return fmt.Errorf("读取token文件失败: %v", err)
+// refreshTokenAndReturn 刷新token并返回TokenInfo
+func refreshTokenAndReturn() (types.TokenInfo, error) {
+	// 仅从环境变量获取refreshToken
+	refreshToken := os.Getenv("AWS_REFRESHTOKEN")
+	if refreshToken == "" {
+		logger.Error("AWS_REFRESHTOKEN环境变量未设置")
+		return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置，请设置后重新启动服务")
 	}
 
-	var currentToken types.TokenInfo
-	if err := sonic.Unmarshal(data, &currentToken); err != nil {
-		logger.Error("解析token文件失败", logger.Err(err))
-		return fmt.Errorf("解析token文件失败: %v", err)
+	logger.Debug("使用环境变量AWS_REFRESHTOKEN进行token刷新")
+	currentToken := types.TokenInfo{
+		RefreshToken: refreshToken,
 	}
 
 	// 准备刷新请求
@@ -53,7 +44,7 @@ func RefreshTokenForServer() error {
 	reqBody, err := sonic.Marshal(refreshReq)
 	if err != nil {
 		logger.Error("序列化请求失败", logger.Err(err))
-		return fmt.Errorf("序列化请求失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("序列化请求失败: %v", err)
 	}
 
 	logger.Debug("发送token刷新请求", logger.String("url", config.RefreshTokenURL))
@@ -62,14 +53,14 @@ func RefreshTokenForServer() error {
 	req, err := http.NewRequest("POST", config.RefreshTokenURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		logger.Error("创建请求失败", logger.Err(err))
-		return fmt.Errorf("创建请求失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("创建请求失败: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := utils.SharedHTTPClient.Do(req)
 	if err != nil {
 		logger.Error("刷新token请求失败", logger.Err(err))
-		return fmt.Errorf("刷新token请求失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("刷新token请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
@@ -78,7 +69,7 @@ func RefreshTokenForServer() error {
 		logger.Error("刷新token失败",
 			logger.Int("status_code", resp.StatusCode),
 			logger.String("response", string(body)))
-		return fmt.Errorf("刷新token失败: 状态码 %d, 响应: %s", resp.StatusCode, string(body))
+		return types.TokenInfo{}, fmt.Errorf("刷新token失败: 状态码 %d, 响应: %s", resp.StatusCode, string(body))
 	}
 
 	// 解析响应
@@ -86,51 +77,25 @@ func RefreshTokenForServer() error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Error("读取响应失败", logger.Err(err))
-		return fmt.Errorf("读取响应失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("读取响应失败: %v", err)
 	}
 
 	if err := sonic.Unmarshal(body, &refreshResp); err != nil {
 		logger.Error("解析刷新响应失败", logger.Err(err))
-		return fmt.Errorf("解析刷新响应失败: %v", err)
-	}
-
-	// 更新token文件
-	newToken := refreshResp
-
-	newData, err := sonic.MarshalIndent(newToken, "", "  ")
-	if err != nil {
-		logger.Error("序列化新token失败", logger.Err(err))
-		return fmt.Errorf("序列化新token失败: %v", err)
-	}
-
-	if err := os.WriteFile(tokenPath, newData, 0600); err != nil {
-		logger.Error("写入token文件失败", logger.Err(err), logger.String("path", tokenPath))
-		return fmt.Errorf("写入token文件失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 
 	logger.Info("Token刷新成功")
-	logger.Debug("新的Access Token", logger.String("access_token", newToken.AccessToken))
-	return nil
+	logger.Debug("新的Access Token", logger.String("access_token", refreshResp.AccessToken))
+	
+	// 返回包含有效AccessToken的TokenInfo
+	return types.TokenInfo{
+		RefreshToken: refreshToken,
+		AccessToken:  refreshResp.AccessToken,
+	}, nil
 }
 
-// GetToken 获取当前token
+// GetToken 获取当前token，仅从环境变量获取，如果AccessToken为空则自动刷新
 func GetToken() (types.TokenInfo, error) {
-	tokenPath := getTokenFilePath()
-
-	logger.Debug("读取token文件", logger.String("path", tokenPath))
-
-	data, err := os.ReadFile(tokenPath)
-	if err != nil {
-		logger.Error("读取token文件失败", logger.Err(err), logger.String("path", tokenPath))
-		return types.TokenInfo{}, fmt.Errorf("读取token文件失败: %v", err)
-	}
-
-	var token types.TokenInfo
-	if err := sonic.Unmarshal(data, &token); err != nil {
-		logger.Error("解析token文件失败", logger.Err(err))
-		return types.TokenInfo{}, fmt.Errorf("解析token文件失败: %v", err)
-	}
-
-	logger.Debug("Token读取成功")
-	return token, nil
+	return refreshTokenAndReturn()
 }

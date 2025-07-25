@@ -1,13 +1,13 @@
 # kiro2api
 
-一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持实时流式响应和多种认证方式。
+一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持实时流式响应、多种认证方式和环境变量配置。
 
 ## 功能特性
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
 - **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
-- **智能认证管理**：支持文件令牌和运行时令牌，自动刷新过期令牌
+- **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期令牌
 - **完善的中间件**：统一的认证、CORS 和日志处理
 - **容器化支持**：提供 Dockerfile，支持 Docker 部署
 
@@ -33,8 +33,16 @@ go build -o kiro2api main.go
 # 启动服务器（默认端口 8080，默认认证令牌 "123456"）
 ./kiro2api
 
-# 指定端口和认证令牌
-./kiro2api 9000 your-auth-token
+# 使用环境变量配置
+export KIRO_CLIENT_TOKEN="your_token"
+export AWS_REFRESHTOKEN="your_refresh_token"  # 必需设置
+export PORT="9000"
+./kiro2api
+
+# 使用 .env 文件配置
+cp .env.example .env
+# 编辑 .env 文件设置你的配置
+./kiro2api
 ```
 
 ### 使用 Docker
