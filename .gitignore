@@ -1,3 +1,16 @@
 .claude/settings.local.json
 kiro2api
 .env
+
+# Docker 相关文件
+.env.local
+.env.*.local
+
+# 日志文件
+logs/
+*.log
+
+# 临时文件
+tmp/
+temp/
+*.tmp

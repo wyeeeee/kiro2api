@@ -1,5 +1,6 @@
+# 多平台构建 Dockerfile
 # 使用官方 Go 镜像作为构建环境
-FROM golang:1.23.3-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23.3-alpine AS builder
 
 # 设置工作目录
 WORKDIR /app
@@ -16,14 +17,18 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
+# 设置目标平台变量
+ARG TARGETOS
+ARG TARGETARCH
+
 # 构建应用程序
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o kiro2api main.go
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -a -installsuffix cgo -o kiro2api main.go
 
 # 使用轻量级的 alpine 镜像作为运行环境
-FROM alpine:latest
+FROM alpine:3.19
 
 # 安装 ca-certificates 用于 HTTPS 请求
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 
 # 创建非 root 用户
 RUN addgroup -g 1001 -S appgroup && \
@@ -44,6 +49,10 @@ USER appuser
 
 # 暴露默认端口
 EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
 
 # 设置默认命令
 CMD ["./kiro2api", "server"]
