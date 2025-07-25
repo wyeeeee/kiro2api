@@ -1,6 +1,8 @@
-name: Release Build and Push
+name: Build and Push Docker Image
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
@@ -15,7 +17,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,14 +45,16 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
+          type=ref,event=branch
           type=ref,event=tag
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
           type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+          type=sha,prefix={{branch}}-
 
-    - name: Build and push release Docker image
+    - name: Build and push Docker image
       id: push
       uses: docker/build-push-action@v5
       with:
@@ -70,9 +74,9 @@ jobs:
         subject-digest: ${{ steps.push.outputs.digest }}
         push-to-registry: true
 
-    - name: Update README with new release info
+    - name: Update summary with build info
       run: |
-        echo "## Latest Release" >> $GITHUB_STEP_SUMMARY
+        echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
         echo "🎉 Successfully built and pushed Docker image:" >> $GITHUB_STEP_SUMMARY
         echo "- **Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Image:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
