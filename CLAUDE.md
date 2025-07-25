@@ -180,7 +180,10 @@ docker run -p 8080:8080 kiro2api
 
 **认证**: 除 `/health` 外的所有端点都需要在 `Authorization: Bearer <token>` 或 `x-api-key: <token>` 头中提供 API 密钥
 
-**模型映射**: 公开模型名称（如 "claude-sonnet-4-20250514"）通过 `config.ModelMap` 映射到内部 CodeWhisperer ID
+**模型映射**: 公开模型名称通过 `config.ModelMap` 映射到内部 CodeWhisperer ID：
+- `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
+- `claude-3-7-sonnet-20250219` → `CLAUDE_3_7_SONNET_20250219_V1_0`
+- `claude-3-5-haiku-20241022` → `CLAUDE_3_5_HAIKU_20241022_V1_0`
 
 **代理配置**: 所有 CodeWhisperer 请求都通过代理 `127.0.0.1:8080` 路由
 
