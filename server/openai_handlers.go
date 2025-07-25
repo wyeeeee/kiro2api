@@ -24,7 +24,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 		return
 	}
 
-	resp, err := utils.SharedHTTPClient.Do(req)
+	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
 	if err != nil {
 		logger.Error("发送请求失败", logger.Err(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("发送请求失败: %v", err)})
@@ -154,7 +154,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 		return
 	}
 
-	resp, err := utils.SharedHTTPClient.Do(req)
+	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
 	if err != nil {
 		sendOpenAIErrorEvent(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
 		return

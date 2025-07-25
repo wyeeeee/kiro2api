@@ -30,7 +30,7 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 		return
 	}
 
-	resp, err := utils.SharedHTTPClient.Do(req)
+	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
 	if err != nil {
 		sendErrorEvent(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
 		return
@@ -138,7 +138,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		return
 	}
 
-	resp, err := utils.SharedHTTPClient.Do(req)
+	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
 	if err != nil {
 		logger.Error("发送请求失败", logger.Err(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("发送请求失败: %v", err)})

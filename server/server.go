@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"kiro2api/auth"
 	"kiro2api/config"
 	"kiro2api/converter"
 	"kiro2api/logger"
 	"kiro2api/types"
+	"kiro2api/utils"
 
 	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
@@ -27,7 +30,8 @@ func StartServer(port string, authToken string) {
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 	r.Use(corsMiddleware())
-	r.Use(AuthMiddleware(authToken))
+	// 只对 /v1 开头的端点进行认证
+	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
 
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
@@ -145,6 +149,24 @@ func StartServer(port string, authToken string) {
 		c.String(http.StatusOK, "OK")
 	})
 
+	// 性能指标端点
+	r.GET("/metrics", func(c *gin.Context) {
+		metrics := utils.GetMetrics()
+		c.JSON(http.StatusOK, gin.H{
+			"requests": gin.H{
+				"total":        metrics.RequestCount,
+				"success":      metrics.SuccessCount,
+				"errors":       metrics.ErrorCount,
+				"success_rate": metrics.SuccessRate(),
+			},
+			"latency": gin.H{
+				"avg_ms": float64(metrics.AvgLatency().Nanoseconds()) / 1e6,
+				"max_ms": float64(metrics.MaxLatency) / 1e6,
+				"min_ms": float64(metrics.MinLatency) / 1e6,
+			},
+		})
+	})
+
 	r.NoRoute(func(c *gin.Context) {
 		logger.Warn("访问未知端点",
 			logger.String("path", c.Request.URL.Path),
@@ -161,12 +183,42 @@ func StartServer(port string, authToken string) {
 	logger.Println("  POST /v1/messages         - Anthropic API代理")
 	logger.Println("  POST /v1/chat/completions - OpenAI API代理")
 	logger.Println("  GET  /health              - 健康检查")
+	logger.Println("  GET  /metrics             - 性能指标")
 	logger.Println("按Ctrl+C停止服务器")
 
-	if err := r.Run(":" + port); err != nil {
+	// 获取服务器超时配置
+	readTimeout := getServerTimeoutFromEnv("SERVER_READ_TIMEOUT_MINUTES", 16) * time.Minute
+	writeTimeout := getServerTimeoutFromEnv("SERVER_WRITE_TIMEOUT_MINUTES", 16) * time.Minute
+	
+	// 创建自定义HTTP服务器以支持长时间请求
+	server := &http.Server{
+		Addr:           ":" + port,
+		Handler:        r,
+		ReadTimeout:    readTimeout,  // 读取超时
+		WriteTimeout:   writeTimeout, // 写入超时
+		IdleTimeout:    120 * time.Second, // 空闲连接超时
+		MaxHeaderBytes: 1 << 20, // 1MB
+	}
+
+	logger.Info("启动HTTP服务器",
+		logger.String("port", port),
+		logger.Duration("read_timeout", readTimeout),
+		logger.Duration("write_timeout", writeTimeout))
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		logger.Error("启动服务器失败", logger.Err(err), logger.String("port", port))
 		os.Exit(1)
 	}
+}
+
+// getServerTimeoutFromEnv 从环境变量获取服务器超时配置（分钟）
+func getServerTimeoutFromEnv(envVar string, defaultMinutes int) time.Duration {
+	if env := os.Getenv(envVar); env != "" {
+		if minutes, err := strconv.Atoi(env); err == nil && minutes > 0 {
+			return time.Duration(minutes)
+		}
+	}
+	return time.Duration(defaultMinutes)
 }
 
 // corsMiddleware CORS中间件

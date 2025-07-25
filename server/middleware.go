@@ -9,15 +9,24 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthMiddleware 创建API密钥验证中间件
+// AuthMiddleware 创建API密钥验证中间件（已废弃，使用PathBasedAuthMiddleware）
 func AuthMiddleware(authToken string) gin.HandlerFunc {
+	return PathBasedAuthMiddleware(authToken, []string{"/v1"})
+}
+
+// PathBasedAuthMiddleware 创建基于路径的API密钥验证中间件
+func PathBasedAuthMiddleware(authToken string, protectedPrefixes []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 跳过健康检查端点的认证
-		if c.Request.URL.Path == "/health" {
+		path := c.Request.URL.Path
+		
+		// 检查是否需要认证
+		if !requiresAuth(path, protectedPrefixes) {
+			logger.Debug("跳过认证", logger.String("path", path))
 			c.Next()
 			return
 		}
 
+		logger.Debug("需要认证", logger.String("path", path))
 		if !validateAPIKey(c, authToken) {
 			c.Abort()
 			return
@@ -25,6 +34,16 @@ func AuthMiddleware(authToken string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// requiresAuth 检查指定路径是否需要认证
+func requiresAuth(path string, protectedPrefixes []string) bool {
+	for _, prefix := range protectedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractAPIKey 提取API密钥的通用逻辑

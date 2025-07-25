@@ -178,7 +178,9 @@ docker run -p 8080:8080 kiro2api
 
 ## 重要实现细节
 
-**认证**: 除 `/health` 外的所有端点都需要在 `Authorization: Bearer <token>` 或 `x-api-key: <token>` 头中提供 API 密钥
+**认证**: 采用基于路径的认证策略
+- **需要认证**: `/v1/*` 开头的所有端点，需要在 `Authorization: Bearer <token>` 或 `x-api-key: <token>` 头中提供 API 密钥
+- **无需认证**: `/health`、`/metrics` 等非API端点
 
 **模型映射**: 公开模型名称通过 `config.ModelMap` 映射到内部 CodeWhisperer ID：
 - `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
