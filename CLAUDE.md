@@ -20,7 +20,7 @@ go build -o kiro2api main.go
 # 使用环境变量配置启动
 export KIRO_CLIENT_TOKEN="your_token"
 export AWS_REFRESHTOKEN="your_refresh_token"  # 必需设置
-export PORT="9000"
+export PORT="8080"
 ./kiro2api
 
 # 或使用 .env 文件配置
@@ -64,7 +64,7 @@ rm -f kiro2api && go build -o kiro2api main.go
 
 # 示例：
 ./kiro2api                    # 使用默认配置或.env文件配置
-./kiro2api 9000              # 指定端口（环境变量PORT优先级更高）
+./kiro2api 8080              # 指定端口（环境变量PORT优先级更高）
 
 # 环境变量配置：
 export KIRO_CLIENT_TOKEN="your_token"  # 客户端认证token (默认: 123456)
@@ -88,7 +88,7 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 ### 核心请求流程
 1. **认证**: `AuthMiddleware` 验证来自 `Authorization` 或 `x-api-key` 头的 API 密钥
 2. **格式转换**: `converter/` 包将请求转换为 CodeWhisperer 格式
-3. **代理**: 将请求路由到硬编码代理 `127.0.0.1:9000` 
+3. **代理**:  通过 `127.0.0.1:8080` 代理转发到 AWS CodeWhisperer
 4. **流处理**: `StreamParser` 处理实时 AWS EventStream 二进制解析
 5. **响应转换**: 转换回客户端请求的格式（Anthropic SSE 或 OpenAI 流式）
 
@@ -182,7 +182,7 @@ docker run -p 8080:8080 kiro2api
 
 **模型映射**: 公开模型名称（如 "claude-sonnet-4-20250514"）通过 `config.ModelMap` 映射到内部 CodeWhisperer ID
 
-**代理配置**: 所有 CodeWhisperer 请求都通过硬编码代理 `127.0.0.1:9000` 路由
+**代理配置**: 所有 CodeWhisperer 请求都通过代理 `127.0.0.1:8080` 路由
 
 **流式传输**: 使用自定义二进制 EventStream 解析器进行实时响应处理，而非缓冲解析
 

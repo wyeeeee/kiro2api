@@ -36,7 +36,7 @@ go build -o kiro2api main.go
 # 使用环境变量配置
 export KIRO_CLIENT_TOKEN="your_token"
 export AWS_REFRESHTOKEN="your_refresh_token"  # 必需设置
-export PORT="9000"
+export PORT="8080"
 ./kiro2api
 
 # 使用 .env 文件配置
@@ -76,7 +76,12 @@ Authorization: Bearer your-auth-token
 # 或使用 x-api-key 认证
 x-api-key: your-auth-token
 ```
+### 在Claude Code中使用
 
+```bash
+export ANTHROPIC_AUTH_TOKEN=123456 
+export ANTHROPIC_BASE_URL=http://localhost:8080
+```
 ### 请求示例
 
 #### Anthropic API 格式
@@ -208,7 +213,7 @@ kiro2api/
 1. **接收请求** - gin 路由器接收 HTTP 请求
 2. **认证验证** - AuthMiddleware 验证 API 密钥
 3. **格式转换** - converter 包将请求转换为 CodeWhisperer 格式
-4. **代理转发** - 通过 `127.0.0.1:9000` 代理转发到 AWS CodeWhisperer
+4. **代理转发** - 通过 `127.0.0.1:8080` 代理转发到 AWS CodeWhisperer
 5. **响应解析** - StreamParser 实时解析 AWS EventStream 二进制数据
 6. **格式转换** - 将响应转换回客户端请求的格式
 7. **返回响应** - 以流式或非流式方式返回给客户端
