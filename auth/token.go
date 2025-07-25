@@ -157,6 +157,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 	return types.TokenInfo{
 		RefreshToken: refreshToken,
 		AccessToken:  refreshResp.AccessToken,
+		ExpiresAt:    refreshResp.ExpiresAt, // 确保ExpiresAt字段被传递
 	}, nil
 }
 

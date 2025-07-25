@@ -52,13 +52,7 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 		for _, tool := range openaiReq.Tools {
 			if tool.Type == "function" {
 				// 清理 OpenAI 特有的字段，避免 CodeWhisperer 拒绝请求
-				cleanedParams := make(map[string]any)
-				for k, v := range tool.Function.Parameters {
-					// 过滤掉 OpenAI 特有的字段
-					if k != "additionalProperties" && k != "strict" {
-						cleanedParams[k] = v
-					}
-				}
+				cleanedParams := cleanToolParameters(tool.Function.Parameters)
 
 				anthropicTool := types.AnthropicTool{
 					Name:        tool.Function.Name,
@@ -222,24 +216,35 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 {
 		var history []any
 
-		// 首先添加每个 system 消息作为独立的历史记录项
-		assistantDefaultMsg := types.HistoryAssistantMessage{}
-		assistantDefaultMsg.AssistantResponseMessage.Content = utils.GetMessageContent("I will follow these instructions")
-		assistantDefaultMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
-
+		// 简化 system 消息处理
 		if len(anthropicReq.System) > 0 {
+			var systemContentBuilder strings.Builder
 			for _, sysMsg := range anthropicReq.System {
-				userMsg := types.HistoryUserMessage{}
-				userMsg.UserInputMessage.Content = sysMsg.Text
-				userMsg.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
-				userMsg.UserInputMessage.Origin = "AI_EDITOR"
-				history = append(history, userMsg)
-				history = append(history, assistantDefaultMsg)
+				systemContentBuilder.WriteString(sysMsg.Text)
+				systemContentBuilder.WriteString("\n")
 			}
+
+			userMsg := types.HistoryUserMessage{}
+			userMsg.UserInputMessage.Content = strings.TrimSpace(systemContentBuilder.String())
+			userMsg.UserInputMessage.ModelId = config.ModelMap[anthropicReq.Model]
+			userMsg.UserInputMessage.Origin = "AI_EDITOR"
+			history = append(history, userMsg)
+
+			assistantMsg := types.HistoryAssistantMessage{}
+			assistantMsg.AssistantResponseMessage.Content = "OK"
+			assistantMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
+			history = append(history, assistantMsg)
+		}
+
+		// 计算历史消息的起始索引
+		messageCount := len(anthropicReq.Messages) - 1
+		startIndex := 0
+		if messageCount > config.MaxHistoryMessages {
+			startIndex = messageCount - config.MaxHistoryMessages
 		}
 
 		// 然后处理常规消息历史
-		for i := 0; i < len(anthropicReq.Messages)-1; i++ {
+		for i := startIndex; i < len(anthropicReq.Messages)-1; i++ {
 			if anthropicReq.Messages[i].Role == "user" {
 				userMsg := types.HistoryUserMessage{}
 				userMsg.UserInputMessage.Content = utils.GetMessageContent(anthropicReq.Messages[i].Content)
@@ -262,4 +267,25 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 
 	return cwReq
+}
+
+func cleanToolParameters(params map[string]any) map[string]any {
+	if params == nil {
+		return nil
+	}
+
+	cleanedParams, _ := sonic.Marshal(params)
+	var tempParams map[string]any
+	sonic.Unmarshal(cleanedParams, &tempParams)
+
+	// 移除不支持的顶级字段
+	delete(tempParams, "additionalProperties")
+	delete(tempParams, "strict")
+	delete(tempParams, "$schema")
+	delete(tempParams, "$id")
+	delete(tempParams, "$ref")
+	delete(tempParams, "definitions")
+	delete(tempParams, "$defs")
+
+	return tempParams
 }

@@ -218,6 +218,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									logger.String("tool_use_id", toolUseId))
 								break
 							}
+							logger.Debug("Attempting to parse tool call JSON", logger.String("json_data", partialJsonStr))
 							toolInput := map[string]any{}
 							if err := sonic.Unmarshal([]byte(partialJsonStr), &toolInput); err != nil {
 								logger.Error("JSON解析失败",
@@ -250,7 +251,13 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		}
 	}
 	if strings.Contains(string(body), "Improperly formed request.") {
-		logger.Error("CodeWhisperer返回格式错误", logger.String("response", respBodyStr))
+		// 增强错误日志记录，包含原始请求信息
+		reqBodyBytes, _ := sonic.Marshal(anthropicReq)
+		logger.Error("CodeWhisperer返回格式错误", 
+			logger.String("response", respBodyStr),
+			logger.String("original_request", string(reqBodyBytes)),
+			logger.Bool("stream", anthropicReq.Stream),
+			logger.Int("tools_count", len(anthropicReq.Tools)))
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求格式错误: %s", respBodyStr)})
 		return
 	}
