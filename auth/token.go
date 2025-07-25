@@ -39,7 +39,7 @@ func RefreshTokenForServer() error {
 		return fmt.Errorf("读取token文件失败: %v", err)
 	}
 
-	var currentToken types.TokenData
+	var currentToken types.TokenInfo
 	if err := sonic.Unmarshal(data, &currentToken); err != nil {
 		logger.Error("解析token文件失败", logger.Err(err))
 		return fmt.Errorf("解析token文件失败: %v", err)
@@ -82,7 +82,7 @@ func RefreshTokenForServer() error {
 	}
 
 	// 解析响应
-	var refreshResp types.RefreshResponse
+	var refreshResp types.TokenInfo
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Error("读取响应失败", logger.Err(err))
@@ -95,7 +95,7 @@ func RefreshTokenForServer() error {
 	}
 
 	// 更新token文件
-	newToken := types.TokenData(refreshResp)
+	newToken := refreshResp
 
 	newData, err := sonic.MarshalIndent(newToken, "", "  ")
 	if err != nil {
@@ -114,7 +114,7 @@ func RefreshTokenForServer() error {
 }
 
 // GetToken 获取当前token
-func GetToken() (types.TokenData, error) {
+func GetToken() (types.TokenInfo, error) {
 	tokenPath := getTokenFilePath()
 
 	logger.Debug("读取token文件", logger.String("path", tokenPath))
@@ -122,13 +122,13 @@ func GetToken() (types.TokenData, error) {
 	data, err := os.ReadFile(tokenPath)
 	if err != nil {
 		logger.Error("读取token文件失败", logger.Err(err), logger.String("path", tokenPath))
-		return types.TokenData{}, fmt.Errorf("读取token文件失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("读取token文件失败: %v", err)
 	}
 
-	var token types.TokenData
+	var token types.TokenInfo
 	if err := sonic.Unmarshal(data, &token); err != nil {
 		logger.Error("解析token文件失败", logger.Err(err))
-		return types.TokenData{}, fmt.Errorf("解析token文件失败: %v", err)
+		return types.TokenInfo{}, fmt.Errorf("解析token文件失败: %v", err)
 	}
 
 	logger.Debug("Token读取成功")

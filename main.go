@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/server"
 )
@@ -16,8 +15,8 @@ func main() {
 	}
 	defer logger.Close()
 
-	port := "8080"                       // 默认端口
-	authToken := config.DefaultAuthToken // 默认使用 DefaultAuthToken
+	port := "8080"        // 默认端口
+	authToken := "123456" // 默认使用 123456
 	if len(os.Args) > 2 {
 		port = os.Args[2]
 	}

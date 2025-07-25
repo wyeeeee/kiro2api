@@ -46,8 +46,6 @@ docker build -t kiro2api .
 # 运行容器
 docker run -p 8080:8080 kiro2api
 
-# 指定环境变量
-docker run -p 8080:8080 -e AUTH_TOKEN=custom-token kiro2api
 ```
 
 ## API 接口
@@ -156,7 +154,6 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 
 - 当收到 403 错误时，程序会自动尝试刷新令牌
 - 刷新 URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
-- 如果令牌文件不可用，会使用默认令牌 "123456"
 
 ## 开发指南
 
@@ -220,29 +217,12 @@ kiro2api/
 可以通过环境变量配置部分行为：
 
 ```bash
-# Docker 环境中的认证令牌
-export AUTH_TOKEN=your-custom-token
-
 # 日志级别（可选）
 export LOG_LEVEL=info
 ```
 
-## 版本历史
-
-### v2.1.0 (当前版本)
-- 🔧 **重构优化**: 统一工具函数，消除代码重复
-- 🏗️ **架构改进**: 集中式中间件和共享 HTTP 客户端
-- 📈 **性能提升**: 优化内存使用和响应速度
-
-### v2.0.0
-- 🚀 **框架迁移**: 从 fasthttp 迁移到 gin-gonic/gin
-- ⚡ **流式优化**: 实现真正的实时流式响应处理
-- 🎯 **JSON 优化**: 集成 bytedance/sonic 高性能 JSON 库
-- 🔒 **安全增强**: 统一的认证中间件和 CORS 处理
-
 ## 注意事项
 
-- 所有请求都会通过硬编码的代理 `127.0.0.1:9000` 转发
 - 流式响应使用自定义的二进制 EventStream 解析，不是缓冲解析
 - 程序启动时会初始化结构化日志系统
 - 健康检查端点 `/health` 不需要认证

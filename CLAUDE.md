@@ -118,12 +118,13 @@ rm -f kiro2api && go build -o kiro2api main.go
 - `client.go`: 配置超时的 `SharedHTTPClient`
 - `file.go`, `uuid.go`: 文件操作和 UUID 生成
 
-**`types/`** - 数据结构定义
+**`types/`** - **[最近重构]** 数据结构定义
 - `anthropic.go`: Anthropic API 请求/响应结构
 - `openai.go`: OpenAI API 格式结构  
 - `codewhisperer.go`: AWS CodeWhisperer API 结构
 - `model.go`: 模型映射和配置类型
-- `token.go`: 令牌管理结构
+- `token.go`: 统一token管理结构（`TokenInfo`）
+- `common.go`: 通用结构定义（`Usage`统计，`BaseTool`工具抽象）
 
 **`logger/`** - 结构化日志系统
 - `logger.go`: 主日志接口
@@ -132,7 +133,6 @@ rm -f kiro2api && go build -o kiro2api main.go
 
 **`config/`** - 配置常量
 - `ModelMap`: 将公开模型名称映射到内部 CodeWhisperer 模型 ID
-- `DefaultAuthToken`: "123456" 回退值
 - `RefreshTokenURL`: Kiro 令牌刷新端点
 
 ## API 端点
@@ -153,8 +153,6 @@ docker build -t kiro2api .
 # 运行容器（默认端口 8080）
 docker run -p 8080:8080 kiro2api
 
-# 运行容器并指定自定义配置
-docker run -p 9000:8080 -e AUTH_TOKEN=custom-token kiro2api
 ```
 
 ## 重要实现细节
@@ -186,12 +184,18 @@ docker run -p 9000:8080 -e AUTH_TOKEN=custom-token kiro2api
 - **流式传输**: 自定义 EventStream 解析器
 - **Go 版本**: 1.23.3
 
-## 最近重构 (v2.1.0)
+## 最近重构 (v2.2.0)
 
-代码库经历了重大重构以消除代码重复：
-- 将三个 `getMessageContent` 副本整合为 `utils.GetMessageContent`
-- 用统一的 `AuthMiddleware` 替换重复的 API 验证
-- 集中化 HTTP 响应读取和客户端管理
+代码库经历了结构优化重构：
+- **struct合并优化**: 消除了相似结构的重复定义
+  - 合并 `TokenData` 和 `RefreshResponse` 为统一的 `TokenInfo`
+  - 统一 `Usage` 结构支持Anthropic和OpenAI格式转换
+  - 创建 `BaseTool` 工具抽象和 `ToolSpec` 接口
+- **类型别名清理**: 移除了临时兼容性别名，简化类型系统
+- **代码重复消除**: 
+  - 将三个 `getMessageContent` 副本整合为 `utils.GetMessageContent`
+  - 用统一的 `AuthMiddleware` 替换重复的 API 验证
+  - 集中化 HTTP 响应读取和客户端管理
 - 改善了可维护性并减少了技术债务
 
 ## 常见开发任务

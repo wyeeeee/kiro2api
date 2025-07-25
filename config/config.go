@@ -6,8 +6,5 @@ var ModelMap = map[string]string{
 	"claude-3-5-haiku-20241022": "CLAUDE_3_7_SONNET_20250219_V1_0",
 }
 
-// DefaultAuthToken 默认的 AuthToken
-const DefaultAuthToken = "123456"
-
 // RefreshTokenURL 刷新token的URL
 const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"

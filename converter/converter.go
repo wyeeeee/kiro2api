@@ -183,7 +183,7 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 				FinishReason: finishReason,
 			},
 		},
-		Usage: types.OpenAIUsage{
+		Usage: types.Usage{
 			PromptTokens:     promptTokens,
 			CompletionTokens: completionTokens,
 			TotalTokens:      promptTokens + completionTokens,

@@ -33,10 +33,7 @@ type AnthropicStreamResponse struct {
 	} `json:"content,omitempty"`
 	StopReason   string `json:"stop_reason,omitempty"`
 	StopSequence string `json:"stop_sequence,omitempty"`
-	Usage        struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
-	} `json:"usage,omitempty"`
+	Usage        *Usage `json:"usage,omitempty"`
 }
 
 // AnthropicRequestMessage 表示 Anthropic API 的消息结构
