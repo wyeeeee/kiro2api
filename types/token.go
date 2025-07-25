@@ -53,7 +53,7 @@ func (tp *TokenPool) GetNextToken() (string, int, bool) {
 
 		// 移动到下一个token
 		tp.currentIdx = (tp.currentIdx + 1) % len(tp.tokens)
-		
+
 		// 如果回到起始位置，说明所有token都不可用
 		if tp.currentIdx == startIdx {
 			return "", -1, false
@@ -86,18 +86,18 @@ func (tp *TokenPool) ResetFailedCounts() {
 func (tp *TokenPool) GetStats() map[string]interface{} {
 	tp.mutex.RLock()
 	defer tp.mutex.RUnlock()
-	
+
 	stats := map[string]interface{}{
-		"total_tokens":   len(tp.tokens),
-		"current_index":  tp.currentIdx,
-		"max_retries":    tp.maxRetries,
-		"failed_counts":  make(map[int]int),
+		"total_tokens":  len(tp.tokens),
+		"current_index": tp.currentIdx,
+		"max_retries":   tp.maxRetries,
+		"failed_counts": make(map[int]int),
 	}
-	
+
 	for idx, count := range tp.failedCount {
 		stats["failed_counts"].(map[int]int)[idx] = count
 	}
-	
+
 	return stats
 }
 
@@ -116,11 +116,11 @@ func NewTokenCache() *TokenCache {
 func (tc *TokenCache) Get() (TokenInfo, bool) {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
-	
+
 	if tc.cachedToken == nil || time.Now().After(tc.cachedToken.ExpiresAt) {
 		return TokenInfo{}, false
 	}
-	
+
 	return *tc.cachedToken, true
 }
 
@@ -128,7 +128,7 @@ func (tc *TokenCache) Get() (TokenInfo, bool) {
 func (tc *TokenCache) Set(token TokenInfo) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
-	
+
 	tc.cachedToken = &token
 }
 
@@ -143,11 +143,10 @@ func (tc *TokenCache) Clear() {
 func (tc *TokenCache) IsExpired() bool {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
-	
+
 	if tc.cachedToken == nil {
 		return true
 	}
-	
+
 	return time.Now().After(tc.cachedToken.ExpiresAt)
 }
-

@@ -151,9 +151,8 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 		return types.TokenInfo{}, fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 
-
 	logger.Debug("新的Access Token", logger.String("access_token", refreshResp.AccessToken))
-	
+
 	// 返回包含有效AccessToken的TokenInfo
 	return types.TokenInfo{
 		RefreshToken: refreshToken,
@@ -165,24 +164,24 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 // GetToken 获取当前token，优先使用缓存，token失效时才刷新
 func GetToken() (types.TokenInfo, error) {
 	cache := getTokenCache()
-	
+
 	// 尝试从缓存获取token
 	if cachedToken, exists := cache.Get(); exists {
 		logger.Debug("使用缓存的Access Token")
 		return cachedToken, nil
 	}
-	
+
 	// 缓存中没有或已过期，刷新token
 	logger.Debug("缓存中没有有效token，开始刷新")
 	tokenInfo, err := refreshTokenAndReturn()
 	if err != nil {
 		return types.TokenInfo{}, err
 	}
-	
+
 	// 缓存新的token
 	cache.Set(tokenInfo)
 	logger.Debug("新token已缓存")
-	
+
 	return tokenInfo, nil
 }
 

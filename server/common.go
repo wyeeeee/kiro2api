@@ -16,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
 func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken string, isStream bool) (*http.Request, error) {
 	cwReq := converter.BuildCodeWhispererRequest(anthropicReq)
@@ -63,7 +62,7 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token已失效，请重试"})
 		return true
 	}
-	
+
 	c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("CodeWhisperer Error: %s", string(body))})
 	return true
 }

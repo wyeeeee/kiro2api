@@ -119,7 +119,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	}
 
 	// 构建Anthropic响应
-    inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
+	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,

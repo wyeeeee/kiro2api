@@ -253,7 +253,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 			}
 		}
 	}
-		if strings.Contains(string(body), "Improperly formed request.") {
+	if strings.Contains(string(body), "Improperly formed request.") {
 		// 增强错误日志记录
 		reqBodyBytes, _ := sonic.Marshal(anthropicReq)
 		hash := sha256.Sum256(reqBodyBytes)
@@ -266,7 +266,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求格式错误: %s", respBodyStr)})
 		return
 	}
-    inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
+	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
