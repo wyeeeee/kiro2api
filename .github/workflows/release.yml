@@ -4,6 +4,9 @@ on:
     release:
         types: [created]
 
+permissions:
+    contents: write
+
 jobs:
     build:
         name: Build and Upload Release Assets
@@ -61,11 +64,7 @@ jobs:
               run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
             - name: Upload Release Asset
-              uses: actions/upload-release-asset@v1
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              uses: softprops/action-gh-release@v1
               with:
-                  upload_url: ${{ github.event.release.upload_url }}
-                  asset_path: ./${{ matrix.artifact_name }}
-                  asset_name: ${{ matrix.asset_prefix }}-${{ steps.get_version.outputs.VERSION }}${{ endsWith(matrix.artifact_name, '.exe') && '.exe' || '' }}
-                  asset_content_type: application/octet-stream
+                  files: ./${{ matrix.artifact_name }}
+                  name: ${{ matrix.asset_prefix }}-${{ steps.get_version.outputs.VERSION }}${{ endsWith(matrix.artifact_name, '.exe') && '.exe' || '' }}
