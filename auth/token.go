@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/bytedance/sonic"
 )
@@ -141,23 +142,32 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 	}
 
 	// 解析响应
-	var refreshResp types.TokenInfo
+	var refreshResp types.RefreshResponse
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("读取响应失败: %v", err)
 	}
+
+	logger.Debug("API响应内容", logger.String("response_body", string(body)))
 
 	if err := sonic.Unmarshal(body, &refreshResp); err != nil {
 		return types.TokenInfo{}, fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 
 	logger.Debug("新的Access Token", logger.String("access_token", refreshResp.AccessToken))
+	logger.Debug("Token过期信息", logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
+
+	// 根据expiresIn计算过期时间
+	expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+	logger.Info("Token过期时间已计算",
+		logger.String("expires_at", expiresAt.Format("2006-01-02 15:04:05")),
+		logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
 
 	// 返回包含有效AccessToken的TokenInfo
 	return types.TokenInfo{
 		RefreshToken: refreshToken,
 		AccessToken:  refreshResp.AccessToken,
-		ExpiresAt:    refreshResp.ExpiresAt, // 确保ExpiresAt字段被传递
+		ExpiresAt:    expiresAt, // 使用计算出的过期时间
 	}, nil
 }
 
@@ -167,7 +177,7 @@ func GetToken() (types.TokenInfo, error) {
 
 	// 尝试从缓存获取token
 	if cachedToken, exists := cache.Get(); exists {
-		logger.Debug("使用缓存的Access Token")
+		logger.Debug("使用缓存的Access Token", logger.String("expires_at", cachedToken.ExpiresAt.Format("2006-01-02 15:04:05")))
 		return cachedToken, nil
 	}
 
@@ -180,7 +190,7 @@ func GetToken() (types.TokenInfo, error) {
 
 	// 缓存新的token
 	cache.Set(tokenInfo)
-	logger.Debug("新token已缓存")
+	logger.Debug("新token已缓存", logger.String("expires_at", tokenInfo.ExpiresAt.Format("2006-01-02 15:04:05")))
 
 	return tokenInfo, nil
 }

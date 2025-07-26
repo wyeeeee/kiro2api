@@ -12,6 +12,14 @@ type TokenInfo struct {
 	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
 }
 
+// RefreshResponse 刷新token的API响应结构
+type RefreshResponse struct {
+	AccessToken  string `json:"accessToken"`
+	ExpiresIn    int    `json:"expiresIn"` // 多少秒后失效
+	ProfileArn   string `json:"profileArn"`
+	RefreshToken string `json:"refreshToken"`
+}
+
 // RefreshRequest 刷新token的请求结构
 type RefreshRequest struct {
 	RefreshToken string `json:"refreshToken"`
@@ -117,14 +125,18 @@ func (tc *TokenCache) Get() (TokenInfo, bool) {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
 
-	if tc.cachedToken == nil || time.Now().After(tc.cachedToken.ExpiresAt) {
+	if tc.cachedToken == nil {
+		return TokenInfo{}, false
+	}
+
+	// 检查token是否过期
+	now := time.Now()
+	if now.After(tc.cachedToken.ExpiresAt) {
 		return TokenInfo{}, false
 	}
 
 	return *tc.cachedToken, true
-}
-
-// Set 设置缓存的token
+} // Set 设置缓存的token
 func (tc *TokenCache) Set(token TokenInfo) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
