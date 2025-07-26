@@ -6,7 +6,7 @@
 
 这是 `kiro2api`，一个 Go 命令行工具和 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它管理 Kiro 认证令牌并提供实时流式响应功能。
 
-**当前版本**: v2.4.0 - 移除文件依赖，AWS_REFRESHTOKEN现在为必需的环境变量。
+**当前版本**: v2.5.0 - 增强请求验证和工具结果内容解析，优化错误处理逻辑，支持智能请求分析和Token池管理。
 
 ## 快速开始
 
@@ -87,17 +87,29 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 
 ### 核心请求流程
 1. **认证**: `AuthMiddleware` 验证来自 `Authorization` 或 `x-api-key` 头的 API 密钥
-2. **格式转换**: `converter/` 包将请求转换为 CodeWhisperer 格式
-3. **代理**:  通过 `127.0.0.1:8080` 代理转发到 AWS CodeWhisperer
-4. **流处理**: `StreamParser` 处理实时 AWS EventStream 二进制解析
-5. **响应转换**: 转换回客户端请求的格式（Anthropic SSE 或 OpenAI 流式）
+2. **请求分析**: `utils.AnalyzeRequestComplexity()` 分析请求复杂度，选择合适的客户端和超时配置
+3. **格式转换**: `converter/` 包将请求转换为 CodeWhisperer 格式
+4. **代理**:  通过 `127.0.0.1:8080` 代理转发到 AWS CodeWhisperer
+5. **流处理**: `StreamParser` 处理实时 AWS EventStream 二进制解析
+6. **响应转换**: 转换回客户端请求的格式（Anthropic SSE 或 OpenAI 流式）
 
 ### 关键架构模式
+
+**智能请求处理**: 新增请求分析机制：
+- `utils.AnalyzeRequestComplexity()` - 根据token数量、内容长度、工具使用等因素评估复杂度
+- `utils.GetClientForRequest()` - 为不同复杂度的请求选择合适的HTTP客户端
+- 复杂请求使用15分钟超时，简单请求使用2分钟超时
+
+**Token池管理**: 增强的认证系统：
+- `types.TokenPool` - 支持多个refresh token的池化管理
+- 自动轮换机制，每个token最多重试3次
+- 基于token过期时间的智能缓存
+- 故障转移和负载均衡
 
 **统一工具模式**: 重构后，通用函数集中化：
 - `utils.GetMessageContent()` - 消息内容提取（消除了跨文件重复）
 - `utils.ReadHTTPResponse()` - 标准 HTTP 响应读取
-- `utils.SharedHTTPClient` - 60秒超时的单一 HTTP 客户端实例
+- `utils.SharedHTTPClient` 和 `utils.LongRequestClient` - 不同超时配置的HTTP客户端
 
 **中间件链**: gin-gonic 服务器使用：
 - `gin.Logger()` 和 `gin.Recovery()` 提供基本功能  
@@ -136,7 +148,9 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 **`utils/`** - **[最近重构]** 集中化工具
 - `message.go`: `GetMessageContent()` 函数（消除重复）
 - `http.go`: `ReadHTTPResponse()` 标准响应读取
-- `client.go`: 配置超时的 `SharedHTTPClient`
+- `client.go`: 配置超时的 `SharedHTTPClient` 和 `LongRequestClient`
+- `request_analyzer.go`: **[新增]** 请求复杂度分析和客户端选择
+- `metrics.go`: **[新增]** 性能指标记录功能
 - `file.go`, `uuid.go`: 文件操作和 UUID 生成
 
 **`types/`** - **[最近重构]** 数据结构定义
@@ -144,7 +158,7 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 - `openai.go`: OpenAI API 格式结构  
 - `codewhisperer.go`: AWS CodeWhisperer API 结构
 - `model.go`: 模型映射和配置类型
-- `token.go`: 统一token管理结构（`TokenInfo`）
+- `token.go`: **[增强]** 统一token管理结构（`TokenInfo`, `TokenPool`, `TokenCache`）
 - `common.go`: 通用结构定义（`Usage`统计，`BaseTool`工具抽象）
 
 **`logger/`** - 结构化日志系统
@@ -210,7 +224,17 @@ AWS_REFRESHTOKEN=your_token     # AWS刷新token（必需设置）
 - **流式传输**: 自定义 EventStream 解析器
 - **Go 版本**: 1.23.3
 
-## 最近重构 (v2.4.0)
+## 最近重构 (v2.5.0)
+
+代码库增强请求验证和错误处理重构：
+- **智能请求分析**: 新增`utils.AnalyzeRequestComplexity()`，根据token数量、内容长度、工具使用等因素评估请求复杂度
+- **动态超时配置**: 复杂请求使用15分钟超时，简单请求使用2分钟超时，优化资源分配
+- **Token池管理**: 实现`types.TokenPool`支持多个refresh token的池化管理和自动轮换
+- **增强错误处理**: 改进工具结果内容解析和请求验证机制，提供更好的错误诊断
+- **性能优化**: 新增性能指标记录功能，支持请求处理时间监控
+- **超时配置**: 增加服务器读写超时配置，提高系统稳定性
+
+## 历史重构 (v2.4.0)
 
 代码库移除文件依赖重构：
 - **移除文件读取**: 完全移除对`~/.aws/sso/cache/kiro-auth-token.json`文件的依赖
