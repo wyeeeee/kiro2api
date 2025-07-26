@@ -46,10 +46,11 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 
 	events := parser.ParseEvents(body)
 
-	content := ""
+	allContent := ""  // 累积所有文本内容
 	contexts := []map[string]any{}
 	currentToolUse := make(map[string]any)
 	toolInputBuffer := ""
+	currentBlockContent := ""  // 当前块的文本内容
 
 	for _, event := range events {
 		if event.Data != nil {
@@ -61,7 +62,9 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 							switch deltaMap["type"] {
 							case "text_delta":
 								if text, ok := deltaMap["text"]; ok {
-									content += text.(string)
+									textStr := text.(string)
+									currentBlockContent += textStr
+									allContent += textStr
 								}
 							case "input_json_delta":
 								if partialJson, ok := deltaMap["partial_json"]; ok {
@@ -87,16 +90,18 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 									"name": blockMap["name"],
 								}
 								toolInputBuffer = ""
+							} else if blockMap["type"] == "text" {
+								currentBlockContent = ""  // 重置当前块内容
 							}
 						}
 					}
 				case "content_block_stop":
-					if content != "" {
+					if currentBlockContent != "" {
 						contexts = append(contexts, map[string]any{
-							"text": content,
+							"text": currentBlockContent,
 							"type": "text",
 						})
-						content = ""
+						currentBlockContent = ""
 					}
 					// 完成工具使用块
 					if len(currentToolUse) > 0 {
@@ -118,6 +123,14 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 		}
 	}
 
+	// 处理剩余的文本内容（如果事件流没有明确的content_block_stop）
+	if currentBlockContent != "" {
+		contexts = append(contexts, map[string]any{
+			"text": currentBlockContent,
+			"type": "text",
+		})
+	}
+
 	// 构建Anthropic响应
 	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
 	anthropicResp := map[string]any{
@@ -129,7 +142,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 		"type":          "message",
 		"usage": map[string]any{
 			"input_tokens":  len(inputContent),
-			"output_tokens": len(content),
+			"output_tokens": len(allContent),
 		},
 	}
 
@@ -142,25 +155,128 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 
 // handleOpenAIStreamRequest 处理OpenAI流式请求
 func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
-	sender := &OpenAIStreamSender{}
-	handleGenericStreamRequest(c, anthropicReq, accessToken, sender, createOpenAIStreamEvents)
-}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
 
-// createOpenAIStreamEvents 创建OpenAI流式初始事件
-func createOpenAIStreamEvents(messageId, inputContent, model string) []map[string]any {
-	initialResp := map[string]any{
+	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
+
+	req, err := buildCodeWhispererRequest(anthropicReq, accessToken, true)
+	if err != nil {
+		logger.Error("构建请求失败", logger.Err(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("构建请求失败: %v", err)})
+		return
+	}
+
+	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
+	if err != nil {
+		logger.Error("发送请求失败", logger.Err(err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("发送请求失败: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if handleCodeWhispererError(c, resp) {
+		return
+	}
+
+	// 立即刷新响应头
+	c.Writer.Flush()
+
+	// 发送初始OpenAI事件
+	initialEvent := map[string]any{
 		"id":      messageId,
 		"object":  "chat.completion.chunk",
 		"created": time.Now().Unix(),
-		"model":   model,
+		"model":   anthropicReq.Model,
 		"choices": []map[string]any{
 			{
 				"index": 0,
 				"delta": map[string]any{
 					"role": "assistant",
 				},
+				"finish_reason": nil,
 			},
 		},
 	}
-	return []map[string]any{initialResp}
+	sendOpenAIEvent(c, initialEvent)
+
+	// 创建流式解析器并处理响应
+	streamParser := parser.NewStreamParser()
+	
+	buf := make([]byte, 1024)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			events := streamParser.ParseStream(buf[:n])
+			for _, event := range events {
+				if event.Data != nil {
+					if dataMap, ok := event.Data.(map[string]any); ok {
+						switch dataMap["type"] {
+						case "content_block_delta":
+							if delta, ok := dataMap["delta"]; ok {
+								if deltaMap, ok := delta.(map[string]any); ok {
+									if deltaMap["type"] == "text_delta" {
+										if text, ok := deltaMap["text"]; ok {
+											// 发送文本内容的增量
+											contentEvent := map[string]any{
+												"id":      messageId,
+												"object":  "chat.completion.chunk",
+												"created": time.Now().Unix(),
+												"model":   anthropicReq.Model,
+												"choices": []map[string]any{
+													{
+														"index": 0,
+														"delta": map[string]any{
+															"content": text.(string),
+														},
+														"finish_reason": nil,
+													},
+												},
+											}
+											sendOpenAIEvent(c, contentEvent)
+										}
+									}
+								}
+							}
+						case "content_block_stop":
+							// 发送结束事件
+							endEvent := map[string]any{
+								"id":      messageId,
+								"object":  "chat.completion.chunk",
+								"created": time.Now().Unix(),
+								"model":   anthropicReq.Model,
+								"choices": []map[string]any{
+									{
+										"index":         0,
+										"delta":         map[string]any{},
+										"finish_reason": "stop",
+									},
+								},
+							}
+							sendOpenAIEvent(c, endEvent)
+						}
+					}
+				}
+				c.Writer.Flush()
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	// 发送结束标记
+	fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
+	c.Writer.Flush()
+}
+
+func sendOpenAIEvent(c *gin.Context, data any) {
+	json, err := sonic.Marshal(data)
+	if err != nil {
+		logger.Error("序列化OpenAI事件失败", logger.Err(err))
+		return
+	}
+	
+	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 }
