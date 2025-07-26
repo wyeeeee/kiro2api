@@ -27,11 +27,12 @@ type RefreshRequest struct {
 
 // TokenPool token池管理结构
 type TokenPool struct {
-	tokens      []string    // refresh token列表
-	currentIdx  int         // 当前使用的token索引
-	failedCount map[int]int // 每个token的失败次数
-	mutex       sync.RWMutex
-	maxRetries  int // 最大重试次数
+	tokens       []string    // refresh token列表
+	currentIdx   int         // 当前使用的token索引
+	accessIdx    int         // 当前访问的access token索引（用于轮换）
+	failedCount  map[int]int // 每个token的失败次数
+	mutex        sync.RWMutex
+	maxRetries   int // 最大重试次数
 }
 
 // NewTokenPool 创建新的token池
@@ -39,9 +40,58 @@ func NewTokenPool(tokens []string, maxRetries int) *TokenPool {
 	return &TokenPool{
 		tokens:      tokens,
 		currentIdx:  0,
+		accessIdx:   0,
 		failedCount: make(map[int]int),
 		maxRetries:  maxRetries,
 	}
+}
+
+// GetNextAccessIndex 获取下一个访问索引（用于轮换access token）
+func (tp *TokenPool) GetNextAccessIndex() int {
+	tp.mutex.Lock()
+	defer tp.mutex.Unlock()
+	
+	// 找到下一个有效的access token索引
+	startIdx := tp.accessIdx
+	for {
+		// 检查当前索引的token是否可用
+		if tp.failedCount[tp.accessIdx] < tp.maxRetries {
+			idx := tp.accessIdx
+			tp.accessIdx = (tp.accessIdx + 1) % len(tp.tokens)
+			return idx
+		}
+		
+		// 移动到下一个索引
+		tp.accessIdx = (tp.accessIdx + 1) % len(tp.tokens)
+		
+		// 如果回到起始位置，返回当前索引（即使可能不可用）
+		if tp.accessIdx == startIdx {
+			return tp.accessIdx
+		}
+	}
+}
+
+// GetCurrentAccessIndex 获取当前访问索引
+func (tp *TokenPool) GetCurrentAccessIndex() int {
+	tp.mutex.RLock()
+	defer tp.mutex.RUnlock()
+	return tp.accessIdx
+}
+
+// SetAccessIndex 设置访问索引
+func (tp *TokenPool) SetAccessIndex(idx int) {
+	tp.mutex.Lock()
+	defer tp.mutex.Unlock()
+	if idx >= 0 && idx < len(tp.tokens) {
+		tp.accessIdx = idx
+	}
+}
+
+// GetTokenCount 获取token总数
+func (tp *TokenPool) GetTokenCount() int {
+	tp.mutex.RLock()
+	defer tp.mutex.RUnlock()
+	return len(tp.tokens)
 }
 
 // GetNextToken 获取下一个可用的token
@@ -109,56 +159,124 @@ func (tp *TokenPool) GetStats() map[string]interface{} {
 	return stats
 }
 
-// TokenCache token缓存结构
+// TokenCache 多token缓存结构，支持按索引缓存多个access token
 type TokenCache struct {
-	cachedToken *TokenInfo
-	mutex       sync.RWMutex
+	cachedTokens map[int]*TokenInfo // 按refresh token索引缓存access token
+	currentIdx   int                // 当前使用的token索引
+	mutex        sync.RWMutex
 }
 
 // NewTokenCache 创建新的token缓存
 func NewTokenCache() *TokenCache {
-	return &TokenCache{}
+	return &TokenCache{
+		cachedTokens: make(map[int]*TokenInfo),
+		currentIdx:   0,
+	}
 }
 
-// Get 获取缓存的token
+// Get 获取当前轮换到的缓存token
 func (tc *TokenCache) Get() (TokenInfo, bool) {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
 
-	if tc.cachedToken == nil {
-		return TokenInfo{}, false
+	// 获取当前索引的token
+	if token, exists := tc.cachedTokens[tc.currentIdx]; exists {
+		// 检查token是否过期
+		if time.Now().Before(token.ExpiresAt) {
+			return *token, true
+		}
+		// token已过期，删除缓存
+		delete(tc.cachedTokens, tc.currentIdx)
 	}
 
-	// 检查token是否过期
-	now := time.Now()
-	if now.After(tc.cachedToken.ExpiresAt) {
-		return TokenInfo{}, false
+	return TokenInfo{}, false
+}
+
+// GetByIndex 根据索引获取特定的缓存token
+func (tc *TokenCache) GetByIndex(idx int) (TokenInfo, bool) {
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
+
+	if token, exists := tc.cachedTokens[idx]; exists {
+		// 检查token是否过期
+		if time.Now().Before(token.ExpiresAt) {
+			return *token, true
+		}
+		// token已过期，删除缓存
+		delete(tc.cachedTokens, idx)
 	}
 
-	return *tc.cachedToken, true
-} // Set 设置缓存的token
+	return TokenInfo{}, false
+}
+
+// Set 设置指定索引的缓存token
+func (tc *TokenCache) SetByIndex(idx int, token TokenInfo) {
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+	tc.cachedTokens[idx] = &token
+}
+
+// SetCurrentIndex 设置当前使用的token索引
+func (tc *TokenCache) SetCurrentIndex(idx int) {
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+	tc.currentIdx = idx
+}
+
+// GetCurrentIndex 获取当前使用的token索引
+func (tc *TokenCache) GetCurrentIndex() int {
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
+	return tc.currentIdx
+}
+
+// Set 设置当前索引的缓存token（保持向后兼容）
 func (tc *TokenCache) Set(token TokenInfo) {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
-
-	tc.cachedToken = &token
+	tc.cachedTokens[tc.currentIdx] = &token
 }
 
-// Clear 清除缓存的token
+// Clear 清除所有缓存的token
 func (tc *TokenCache) Clear() {
 	tc.mutex.Lock()
 	defer tc.mutex.Unlock()
-	tc.cachedToken = nil
+	tc.cachedTokens = make(map[int]*TokenInfo)
 }
 
-// IsExpired 检查token是否过期
+// ClearByIndex 清除指定索引的缓存token
+func (tc *TokenCache) ClearByIndex(idx int) {
+	tc.mutex.Lock()
+	defer tc.mutex.Unlock()
+	delete(tc.cachedTokens, idx)
+}
+
+// IsExpired 检查当前token是否过期
 func (tc *TokenCache) IsExpired() bool {
 	tc.mutex.RLock()
 	defer tc.mutex.RUnlock()
 
-	if tc.cachedToken == nil {
-		return true
+	if token, exists := tc.cachedTokens[tc.currentIdx]; exists {
+		return time.Now().After(token.ExpiresAt)
 	}
+	return true
+}
 
-	return time.Now().After(tc.cachedToken.ExpiresAt)
+// GetCachedCount 获取缓存的token数量
+func (tc *TokenCache) GetCachedCount() int {
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
+	return len(tc.cachedTokens)
+}
+
+// GetAllCachedIndexes 获取所有已缓存的token索引
+func (tc *TokenCache) GetAllCachedIndexes() []int {
+	tc.mutex.RLock()
+	defer tc.mutex.RUnlock()
+
+	var indexes []int
+	for idx := range tc.cachedTokens {
+		indexes = append(indexes, idx)
+	}
+	return indexes
 }

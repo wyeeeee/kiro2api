@@ -14,3 +14,6 @@ logs/
 tmp/
 temp/
 *.tmp
+1.json
+.gitignore
+2.json
