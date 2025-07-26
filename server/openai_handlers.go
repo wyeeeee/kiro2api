@@ -142,160 +142,25 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 
 // handleOpenAIStreamRequest 处理OpenAI流式请求
 func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
+	sender := &OpenAIStreamSender{}
+	handleGenericStreamRequest(c, anthropicReq, accessToken, sender, createOpenAIStreamEvents)
+}
 
-	openaiMessageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
-
-	req, err := buildCodeWhispererRequest(anthropicReq, accessToken, true)
-	if err != nil {
-		sendOpenAIErrorEvent(c, "构建请求失败", err)
-		return
-	}
-
-	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
-	if err != nil {
-		sendOpenAIErrorEvent(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-
-	if handleCodeWhispererError(c, resp) {
-		return
-	}
-
-	// 立即刷新响应头
-	c.Writer.Flush()
-
-	// 发送初始流响应
-	initialResp := types.OpenAIStreamResponse{
-		ID:      openaiMessageId,
-		Object:  "chat.completion.chunk",
-		Created: time.Now().Unix(),
-		Model:   anthropicReq.Model,
-		Choices: []types.OpenAIStreamChoice{
+// createOpenAIStreamEvents 创建OpenAI流式初始事件
+func createOpenAIStreamEvents(messageId, inputContent, model string) []map[string]any {
+	initialResp := map[string]any{
+		"id":      messageId,
+		"object":  "chat.completion.chunk",
+		"created": time.Now().Unix(),
+		"model":   model,
+		"choices": []map[string]any{
 			{
-				Index: 0,
-				Delta: struct {
-					Role    string `json:"role,omitempty"`
-					Content string `json:"content,omitempty"`
-				}{
-					Role: "assistant",
+				"index": 0,
+				"delta": map[string]any{
+					"role": "assistant",
 				},
 			},
 		},
 	}
-	sendOpenAIStreamEvent(c, initialResp)
-
-	// 创建流式解析器
-	streamParser := parser.NewStreamParser()
-
-	// 流式读取并解析EventStream响应
-	buf := make([]byte, 1024)
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			// 解析当前数据块
-			events := streamParser.ParseStream(buf[:n])
-
-			// 处理解析出的事件
-			for _, event := range events {
-				if event.Data != nil {
-					if dataMap, ok := event.Data.(map[string]any); ok {
-						if eventType, ok := dataMap["type"].(string); ok {
-							if eventType == "content_block_delta" {
-								if delta, ok := dataMap["delta"]; ok {
-									if deltaMap, ok := delta.(map[string]any); ok {
-										if deltaMap["type"] == "text_delta" {
-											if text, ok := deltaMap["text"]; ok {
-												deltaResp := types.OpenAIStreamResponse{
-													ID:      openaiMessageId,
-													Object:  "chat.completion.chunk",
-													Created: time.Now().Unix(),
-													Model:   anthropicReq.Model,
-													Choices: []types.OpenAIStreamChoice{
-														{
-															Index: 0,
-															Delta: struct {
-																Role    string `json:"role,omitempty"`
-																Content string `json:"content,omitempty"`
-															}{
-																Content: text.(string),
-															},
-														},
-													},
-												}
-												sendOpenAIStreamEvent(c, deltaResp)
-
-												// 立即刷新以确保实时性
-												c.Writer.Flush()
-											}
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
-
-	// 发送完成响应
-	finishReasonStop := "stop"
-	finishResp := types.OpenAIStreamResponse{
-		ID:      openaiMessageId,
-		Object:  "chat.completion.chunk",
-		Created: time.Now().Unix(),
-		Model:   anthropicReq.Model,
-		Choices: []types.OpenAIStreamChoice{
-			{
-				Index:        0,
-				FinishReason: &finishReasonStop,
-				Delta: struct {
-					Role    string `json:"role,omitempty"`
-					Content string `json:"content,omitempty"`
-				}{},
-			},
-		},
-	}
-	sendOpenAIStreamEvent(c, finishResp)
-
-	// 发送 [DONE] 标记
-	c.Writer.WriteString("data: [DONE]\n\n")
-	c.Writer.Flush()
-}
-
-// sendOpenAIStreamEvent 发送OpenAI流式事件
-func sendOpenAIStreamEvent(c *gin.Context, data types.OpenAIStreamResponse) {
-	jsonData, err := sonic.Marshal(data)
-	if err != nil {
-		return
-	}
-
-	c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", string(jsonData)))
-	c.Writer.Flush()
-}
-
-// sendOpenAIErrorEvent 发送OpenAI格式的错误事件
-func sendOpenAIErrorEvent(c *gin.Context, message string, _ error) {
-	errorResp := map[string]any{
-		"error": map[string]any{
-			"message": message,
-			"type":    "server_error",
-			"code":    "internal_error",
-		},
-	}
-
-	jsonData, err := sonic.Marshal(errorResp)
-	if err != nil {
-		return
-	}
-
-	c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", string(jsonData)))
-	c.Writer.Flush()
+	return []map[string]any{initialResp}
 }

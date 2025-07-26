@@ -18,6 +18,12 @@ import (
 
 // handleStreamRequest 处理流式请求
 func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
+	sender := &AnthropicStreamSender{}
+	handleGenericStreamRequest(c, anthropicReq, accessToken, sender, createAnthropicStreamEvents)
+}
+
+// handleGenericStreamRequest 通用流式请求处理
+func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -26,13 +32,13 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 
 	req, err := buildCodeWhispererRequest(anthropicReq, accessToken, true)
 	if err != nil {
-		sendErrorEvent(c, "构建请求失败", err)
+		sender.SendError(c, "构建请求失败", err)
 		return
 	}
 
 	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
 	if err != nil {
-		sendErrorEvent(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
+		sender.SendError(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
 		return
 	}
 	defer resp.Body.Close()
@@ -44,59 +50,29 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 	// 立即刷新响应头
 	c.Writer.Flush()
 
-	// 发送开始事件
+	// 发送初始事件
 	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
-	messageStart := map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id":            messageId,
-			"type":          "message",
-			"role":          "assistant",
-			"content":       []any{},
-			"model":         anthropicReq.Model,
-			"stop_reason":   nil,
-			"stop_sequence": nil,
-			"usage": map[string]any{
-				"input_tokens":  len(inputContent),
-				"output_tokens": 1,
-			},
-		},
+	initialEvents := eventCreator(messageId, inputContent, anthropicReq.Model)
+	for _, event := range initialEvents {
+		sender.SendEvent(c, event)
 	}
-	sendSSEEvent(c, "message_start", messageStart)
-	sendSSEEvent(c, "ping", map[string]string{
-		"type": "ping",
-	})
 
-	contentBlockStart := map[string]any{
-		"content_block": map[string]any{
-			"text": "",
-			"type": "text"},
-		"index": 0, "type": "content_block_start",
-	}
-	sendSSEEvent(c, "content_block_start", contentBlockStart)
-
-	// 创建流式解析器
+	// 创建流式解析器并处理响应
 	streamParser := parser.NewStreamParser()
 	outputTokens := 0
 
-	// 流式读取并解析EventStream响应
 	buf := make([]byte, 1024)
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			// 解析当前数据块
 			events := streamParser.ParseStream(buf[:n])
-
-			// 处理解析出的事件
 			for _, event := range events {
-				sendSSEEvent(c, event.Event, event.Data)
+				sender.SendEvent(c, event.Data)
 
 				if event.Event == "content_block_delta" {
 					content, _ := utils.GetMessageContent(event.Data)
 					outputTokens = len(content)
 				}
-
-				// 立即刷新以确保实时性
 				c.Writer.Flush()
 			}
 		}
@@ -105,28 +81,67 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, ac
 		}
 	}
 
-	contentBlockStop := map[string]any{
-		"index": 0,
-		"type":  "content_block_stop",
+	// 发送结束事件
+	finalEvents := createAnthropicFinalEvents(outputTokens)
+	for _, event := range finalEvents {
+		sender.SendEvent(c, event)
 	}
-	sendSSEEvent(c, "content_block_stop", contentBlockStop)
+}
 
-	contentBlockStopReason := map[string]any{
-		"type": "message_delta",
-		"delta": map[string]any{
-			"stop_reason":   "end_turn",
-			"stop_sequence": nil,
+// createAnthropicStreamEvents 创建Anthropic流式初始事件
+func createAnthropicStreamEvents(messageId, inputContent, model string) []map[string]any {
+	events := []map[string]any{
+		{
+			"type": "message_start",
+			"message": map[string]any{
+				"id":            messageId,
+				"type":          "message",
+				"role":          "assistant",
+				"content":       []any{},
+				"model":         model,
+				"stop_reason":   nil,
+				"stop_sequence": nil,
+				"usage": map[string]any{
+					"input_tokens":  len(inputContent),
+					"output_tokens": 1,
+				},
+			},
 		},
-		"usage": map[string]any{
-			"output_tokens": outputTokens,
+		{
+			"type": "ping",
+		},
+		{
+			"content_block": map[string]any{
+				"text": "",
+				"type": "text"},
+			"index": 0,
+			"type":  "content_block_start",
 		},
 	}
-	sendSSEEvent(c, "message_delta", contentBlockStopReason)
+	return events
+}
 
-	messageStop := map[string]any{
-		"type": "message_stop",
+// createAnthropicFinalEvents 创建Anthropic流式结束事件
+func createAnthropicFinalEvents(outputTokens int) []map[string]any {
+	return []map[string]any{
+		{
+			"index": 0,
+			"type":  "content_block_stop",
+		},
+		{
+			"type": "message_delta",
+			"delta": map[string]any{
+				"stop_reason":   "end_turn",
+				"stop_sequence": nil,
+			},
+			"usage": map[string]any{
+				"output_tokens": outputTokens,
+			},
+		},
+		{
+			"type": "message_stop",
+		},
 	}
-	sendSSEEvent(c, "message_stop", messageStop)
 }
 
 // handleNonStreamRequest 处理非流式请求
@@ -281,32 +296,4 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 
 	c.JSON(http.StatusOK, anthropicResp)
-}
-
-// sendSSEEvent 发送 SSE 事件
-func sendSSEEvent(c *gin.Context, eventType string, data any) {
-	json, err := sonic.Marshal(data)
-	if err != nil {
-		return
-	}
-
-	logger.Debug("发送SSE事件",
-		logger.String("event", eventType),
-		logger.String("data", string(json)))
-
-	c.Writer.WriteString(fmt.Sprintf("event: %s\n", eventType))
-	c.Writer.WriteString(fmt.Sprintf("data: %s\n\n", string(json)))
-	c.Writer.Flush()
-}
-
-// sendErrorEvent 发送错误事件
-func sendErrorEvent(c *gin.Context, message string, _ error) {
-	errorResp := map[string]any{
-		"type": "error",
-		"error": map[string]any{
-			"type":    "overloaded_error",
-			"message": message,
-		},
-	}
-	sendSSEEvent(c, "error", errorResp)
 }

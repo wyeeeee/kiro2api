@@ -12,7 +12,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/bytedance/sonic"
 )
@@ -157,18 +156,16 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 	logger.Debug("新的Access Token", logger.String("access_token", refreshResp.AccessToken))
 	logger.Debug("Token过期信息", logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
 
-	// 根据expiresIn计算过期时间
-	expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+	// 使用新的Token结构进行转换
+	var token types.Token
+	token.FromRefreshResponse(refreshResp, refreshToken)
+	
 	logger.Info("Token过期时间已计算",
-		logger.String("expires_at", expiresAt.Format("2006-01-02 15:04:05")),
+		logger.String("expires_at", token.ExpiresAt.Format("2006-01-02 15:04:05")),
 		logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
 
-	// 返回包含有效AccessToken的TokenInfo
-	return types.TokenInfo{
-		RefreshToken: refreshToken,
-		AccessToken:  refreshResp.AccessToken,
-		ExpiresAt:    expiresAt, // 使用计算出的过期时间
-	}, nil
+	// 返回兼容的TokenInfo（由于类型别名，这是相同的类型）
+	return token, nil
 }
 
 // GetToken 获取当前token，支持多token轮换使用
@@ -309,10 +306,10 @@ func ClearTokenCacheByIndex(idx int) {
 }
 
 // GetTokenPoolStats 获取token池统计信息
-func GetTokenPoolStats() map[string]interface{} {
+func GetTokenPoolStats() map[string]any {
 	pool := getTokenPool()
 	if pool == nil {
-		return map[string]interface{}{
+		return map[string]any{
 			"pool_enabled": false,
 			"message":      "Token池未初始化",
 		}

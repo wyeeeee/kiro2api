@@ -5,14 +5,60 @@ import (
 	"time"
 )
 
-// TokenInfo 表示token信息的统一结构
-type TokenInfo struct {
-	AccessToken  string    `json:"accessToken"`
+// Token 统一的token管理结构，合并了TokenInfo、RefreshResponse、RefreshRequest的功能
+type Token struct {
+	// 核心token信息
+	AccessToken  string    `json:"accessToken,omitempty"`
 	RefreshToken string    `json:"refreshToken"`
 	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
+	
+	// API响应字段
+	ExpiresIn  int    `json:"expiresIn,omitempty"`  // 多少秒后失效，来自RefreshResponse
+	ProfileArn string `json:"profileArn,omitempty"` // 来自RefreshResponse
 }
 
-// RefreshResponse 刷新token的API响应结构
+// ToTokenInfo 转换为TokenInfo格式（向后兼容）
+func (t *Token) ToTokenInfo() TokenInfo {
+	return TokenInfo{
+		AccessToken:  t.AccessToken,
+		RefreshToken: t.RefreshToken,
+		ExpiresAt:    t.ExpiresAt,
+	}
+}
+
+// ToRefreshResponse 转换为RefreshResponse格式（向后兼容）
+func (t *Token) ToRefreshResponse() RefreshResponse {
+	return RefreshResponse{
+		AccessToken:  t.AccessToken,
+		RefreshToken: t.RefreshToken,
+		ExpiresIn:    t.ExpiresIn,
+		ProfileArn:   t.ProfileArn,
+	}
+}
+
+// ToRefreshRequest 转换为RefreshRequest格式（向后兼容）
+func (t *Token) ToRefreshRequest() RefreshRequest {
+	return RefreshRequest{
+		RefreshToken: t.RefreshToken,
+	}
+}
+
+// FromRefreshResponse 从RefreshResponse创建Token
+func (t *Token) FromRefreshResponse(resp RefreshResponse, originalRefreshToken string) {
+	t.AccessToken = resp.AccessToken
+	t.RefreshToken = originalRefreshToken // 保持原始refresh token
+	t.ExpiresIn = resp.ExpiresIn
+	t.ProfileArn = resp.ProfileArn
+	t.ExpiresAt = time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)
+}
+
+// IsExpired 检查token是否已过期
+func (t *Token) IsExpired() bool {
+	return time.Now().After(t.ExpiresAt)
+}
+
+// 兼容性别名 - 逐步迁移时使用
+type TokenInfo = Token     // TokenInfo现在是Token的别名
 type RefreshResponse struct {
 	AccessToken  string `json:"accessToken"`
 	ExpiresIn    int    `json:"expiresIn"` // 多少秒后失效
@@ -20,7 +66,6 @@ type RefreshResponse struct {
 	RefreshToken string `json:"refreshToken"`
 }
 
-// RefreshRequest 刷新token的请求结构
 type RefreshRequest struct {
 	RefreshToken string `json:"refreshToken"`
 }
@@ -141,11 +186,11 @@ func (tp *TokenPool) ResetFailedCounts() {
 }
 
 // GetStats 获取token池统计信息
-func (tp *TokenPool) GetStats() map[string]interface{} {
+func (tp *TokenPool) GetStats() map[string]any {
 	tp.mutex.RLock()
 	defer tp.mutex.RUnlock()
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"total_tokens":  len(tp.tokens),
 		"current_index": tp.currentIdx,
 		"max_retries":   tp.maxRetries,
@@ -181,8 +226,8 @@ func (tc *TokenCache) Get() (TokenInfo, bool) {
 
 	// 获取当前索引的token
 	if token, exists := tc.cachedTokens[tc.currentIdx]; exists {
-		// 检查token是否过期
-		if time.Now().Before(token.ExpiresAt) {
+		// 使用新的IsExpired方法检查token是否过期
+		if !token.IsExpired() {
 			return *token, true
 		}
 		// token已过期，删除缓存
@@ -198,8 +243,8 @@ func (tc *TokenCache) GetByIndex(idx int) (TokenInfo, bool) {
 	defer tc.mutex.RUnlock()
 
 	if token, exists := tc.cachedTokens[idx]; exists {
-		// 检查token是否过期
-		if time.Now().Before(token.ExpiresAt) {
+		// 使用新的IsExpired方法检查token是否过期
+		if !token.IsExpired() {
 			return *token, true
 		}
 		// token已过期，删除缓存
@@ -257,7 +302,7 @@ func (tc *TokenCache) IsExpired() bool {
 	defer tc.mutex.RUnlock()
 
 	if token, exists := tc.cachedTokens[tc.currentIdx]; exists {
-		return time.Now().After(token.ExpiresAt)
+		return token.IsExpired()
 	}
 	return true
 }
