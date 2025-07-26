@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"kiro2api/auth"
@@ -76,7 +77,7 @@ func StartServer(port string, authToken string) {
 		logger.Debug("收到Anthropic请求",
 			logger.String("body", string(body)),
 			logger.Int("body_size", len(body)))
-
+		// println("收到Anthropic请求: ", string(body))
 		var anthropicReq types.AnthropicRequest
 		if err := sonic.Unmarshal(body, &anthropicReq); err != nil {
 			logger.Error("解析请求体失败", logger.Err(err))
@@ -88,6 +89,34 @@ func StartServer(port string, authToken string) {
 			logger.String("model", anthropicReq.Model),
 			logger.Bool("stream", anthropicReq.Stream),
 			logger.Int("max_tokens", anthropicReq.MaxTokens))
+
+		// 验证请求的有效性
+		if len(anthropicReq.Messages) == 0 {
+			logger.Error("请求中没有消息")
+			print("请求中没有消息")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "messages 数组不能为空"})
+			return
+		}
+
+		// 验证最后一条消息有有效内容
+		lastMsg := anthropicReq.Messages[len(anthropicReq.Messages)-1]
+		content, err := utils.GetMessageContent(lastMsg.Content)
+		if err != nil {
+			logger.Error("获取消息内容失败",
+				logger.Err(err),
+				logger.String("raw_content", fmt.Sprintf("%v", lastMsg.Content)))
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("获取消息内容失败: %v", err)})
+			return
+		}
+
+		trimmedContent := strings.TrimSpace(content)
+		if trimmedContent == "" || trimmedContent == "answer for user question" {
+			logger.Error("消息内容为空或无效",
+				logger.String("content", content),
+				logger.String("trimmed_content", trimmedContent))
+			c.JSON(http.StatusBadRequest, gin.H{"error": "消息内容不能为空"})
+			return
+		}
 
 		if anthropicReq.Stream {
 			handleStreamRequest(c, anthropicReq, token.AccessToken)
@@ -189,15 +218,15 @@ func StartServer(port string, authToken string) {
 	// 获取服务器超时配置
 	readTimeout := getServerTimeoutFromEnv("SERVER_READ_TIMEOUT_MINUTES", 16) * time.Minute
 	writeTimeout := getServerTimeoutFromEnv("SERVER_WRITE_TIMEOUT_MINUTES", 16) * time.Minute
-	
+
 	// 创建自定义HTTP服务器以支持长时间请求
 	server := &http.Server{
 		Addr:           ":" + port,
 		Handler:        r,
-		ReadTimeout:    readTimeout,  // 读取超时
-		WriteTimeout:   writeTimeout, // 写入超时
+		ReadTimeout:    readTimeout,       // 读取超时
+		WriteTimeout:   writeTimeout,      // 写入超时
 		IdleTimeout:    120 * time.Second, // 空闲连接超时
-		MaxHeaderBytes: 1 << 20, // 1MB
+		MaxHeaderBytes: 1 << 20,           // 1MB
 	}
 
 	logger.Info("启动HTTP服务器",

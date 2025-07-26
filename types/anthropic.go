@@ -49,10 +49,12 @@ type AnthropicSystemMessage struct {
 
 // ContentBlock 表示消息内容块的结构
 type ContentBlock struct {
-	Type      string  `json:"type"`
-	Text      *string `json:"text,omitempty"`
-	ToolUseId *string `json:"tool_use_id,omitempty"`
-	Content   *string `json:"content,omitempty"`
-	Name      *string `json:"name,omitempty"`
-	Input     *any    `json:"input,omitempty"`
+	Type         string `json:"type"`
+	Text         *string `json:"text,omitempty"`
+	ToolUseId    *string `json:"tool_use_id,omitempty"`
+	Content      any     `json:"content,omitempty"` // tool_result的内容，可以是string、[]any或map[string]any
+	Name         *string `json:"name,omitempty"`     // tool_use的名称
+	Input        *any    `json:"input,omitempty"`    // tool_use的输入参数
+	ID           *string `json:"id,omitempty"`       // tool_use的唯一标识符
+	IsError      *bool   `json:"is_error,omitempty"` // tool_result是否表示错误
 }
