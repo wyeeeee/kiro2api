@@ -16,6 +16,41 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+
+// shouldSkipDuplicateToolEvent 检查是否应该跳过重复的工具事件
+// 使用请求级别的工具ID去重，而不是全局工具名称去重
+func shouldSkipDuplicateToolEvent(event parser.SSEEvent, processedToolIds map[string]bool) bool {
+	if event.Event != "content_block_start" {
+		return false
+	}
+
+	if dataMap, ok := event.Data.(map[string]any); ok {
+		if contentBlock, exists := dataMap["content_block"]; exists {
+			if blockMap, ok := contentBlock.(map[string]any); ok {
+				if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_use" {
+					// 获取工具使用的唯一ID进行去重
+					var toolUseId string
+					if id, hasId := blockMap["id"].(string); hasId {
+						toolUseId = id
+					}
+
+					// 基于工具使用ID的请求级别去重
+					if toolUseId != "" {
+						// 检查在当前请求中是否已经处理过这个特定的工具使用ID
+						if processedToolIds[toolUseId] {
+							return true // 跳过重复的工具使用
+						}
+						processedToolIds[toolUseId] = true
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+
 // handleStreamRequest 处理流式请求
 func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
 	sender := &AnthropicStreamSender{}
@@ -57,9 +92,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		sender.SendEvent(c, event)
 	}
 
-	// 创建流式解析器并处理响应
+	// 创建流式解析器并处理响应，添加工具去重跟踪
 	streamParser := parser.NewStreamParser()
 	outputTokens := 0
+	processedToolIds := make(map[string]bool) // 请求级别的工具ID去重
 
 	buf := make([]byte, 1024)
 	for {
@@ -67,6 +103,11 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		if n > 0 {
 			events := streamParser.ParseStream(buf[:n])
 			for _, event := range events {
+				// 在流式处理中添加工具去重逻辑
+				if shouldSkipDuplicateToolEvent(event, processedToolIds) {
+					continue
+				}
+				
 				sender.SendEvent(c, event.Data)
 
 				if event.Event == "content_block_delta" {
@@ -182,18 +223,11 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	contexts := []map[string]any{}
 	partialJsonStr := ""
 	currentToolUse := make(map[string]any) // 添加当前工具使用跟踪
+	processedToolIds := make(map[string]bool) // 请求级别的工具ID去重
 
 	for _, event := range events {
-		logger.Debug("处理事件", 
-			logger.String("event_type", event.Event),
-			logger.Any("event_data", event.Data))
-			
 		if event.Data != nil {
 			if dataMap, ok := event.Data.(map[string]any); ok {
-				logger.Debug("事件数据详情", 
-					logger.String("data_type", fmt.Sprintf("%T", dataMap["type"])),
-					logger.Any("data_content", dataMap))
-					
 				switch dataMap["type"] {
 				case "content_block_start":
 					context = ""
@@ -223,10 +257,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 										toolName = nameStr
 									}
 								}
-								logger.Debug("提取到工具信息",
-									logger.String("tool_use_id", toolUseId),
-									logger.String("tool_name", toolName),
-									logger.Any("complete_tool", currentToolUse))
 								partialJsonStr = "" // 重置参数累积
 							}
 						}
@@ -254,23 +284,9 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 								if partial_json, ok := deltaMap["partial_json"]; ok {
 									if strPtr, ok := partial_json.(*string); ok && strPtr != nil {
 										partialJsonStr = partialJsonStr + *strPtr
-										logger.Debug("接收到partial_json片段(指针)",
-											logger.String("fragment", *strPtr),
-											logger.Int("total_length", len(partialJsonStr)))
 									} else if str, ok := partial_json.(string); ok {
 										partialJsonStr = partialJsonStr + str
-										logger.Debug("接收到partial_json片段(字符串)",
-											logger.String("fragment", str),
-											logger.Int("total_length", len(partialJsonStr)))
-									} else {
-										logger.Debug("partial_json类型错误",
-											logger.String("type", fmt.Sprintf("%T", partial_json)),
-											logger.Any("value", partial_json))
 									}
-								} else {
-									logger.Debug("工具delta中未找到partial_json字段",
-										logger.String("tool_name", toolName),
-										logger.String("tool_use_id", toolUseId))
 								}
 							}
 						}
@@ -283,7 +299,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 							if len(currentToolUse) > 0 {
 								// 如果有累积的参数数据，解析并更新工具输入
 								if partialJsonStr != "" {
-									logger.Debug("解析工具参数", logger.String("json_data", partialJsonStr))
 									toolInput := map[string]any{}
 									if err := sonic.Unmarshal([]byte(partialJsonStr), &toolInput); err != nil {
 										logger.Error("JSON解析失败",
@@ -293,7 +308,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 											logger.String("data", partialJsonStr))
 									} else {
 										currentToolUse["input"] = toolInput
-										logger.Debug("成功更新工具参数", logger.Any("input", toolInput))
 									}
 								} else {
 									// 确保input字段存在，即使为空
@@ -302,17 +316,33 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									}
 								}
 								
+								// 基于工具使用ID的请求级别去重
+								var currentToolUseId string
+								
+								if id, hasId := currentToolUse["id"].(string); hasId {
+									currentToolUseId = id
+								}
+								
+								if currentToolUseId != "" {
+									if processedToolIds[currentToolUseId] {
+										// 重置工具状态但不添加到contexts
+										currentToolUse = make(map[string]any)
+										partialJsonStr = ""
+										toolUseId = ""
+										toolName = ""
+										break // 跳过重复工具
+									}
+									processedToolIds[currentToolUseId] = true
+								}
+								
 								// 添加完整的工具使用块到contexts
 								contexts = append(contexts, currentToolUse)
-								logger.Debug("添加工具使用块到contexts", logger.Any("tool_block", currentToolUse))
 								
 								// 重置工具状态
 								currentToolUse = make(map[string]any)
 								partialJsonStr = ""
 								toolUseId = ""
 								toolName = ""
-							} else {
-								logger.Debug("content_block_stop但没有活跃的工具使用块")
 							}
 						case 0:
 							contexts = append(contexts, map[string]any{
