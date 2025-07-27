@@ -46,11 +46,11 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 
 	events := parser.ParseEvents(body)
 
-	allContent := ""  // 累积所有文本内容
+	allContent := "" // 累积所有文本内容
 	contexts := []map[string]any{}
 	currentToolUse := make(map[string]any)
 	toolInputBuffer := ""
-	currentBlockContent := ""  // 当前块的文本内容
+	currentBlockContent := "" // 当前块的文本内容
 
 	for _, event := range events {
 		if event.Data != nil {
@@ -83,15 +83,16 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 				case "content_block_start":
 					if contentBlock, ok := dataMap["content_block"]; ok {
 						if blockMap, ok := contentBlock.(map[string]any); ok {
-							if blockMap["type"] == "tool_use" {
+							switch blockMap["type"] {
+							case "tool_use":
 								currentToolUse = map[string]any{
 									"type": "tool_use",
 									"id":   blockMap["id"],
 									"name": blockMap["name"],
 								}
 								toolInputBuffer = ""
-							} else if blockMap["type"] == "text" {
-								currentBlockContent = ""  // 重置当前块内容
+							case "text":
+								currentBlockContent = "" // 重置当前块内容
 							}
 						}
 					}
@@ -203,7 +204,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 
 	// 创建流式解析器并处理响应
 	streamParser := parser.NewStreamParser()
-	
+
 	buf := make([]byte, 1024)
 	for {
 		n, err := resp.Body.Read(buf)
@@ -277,6 +278,6 @@ func sendOpenAIEvent(c *gin.Context, data any) {
 		logger.Error("序列化OpenAI事件失败", logger.Err(err))
 		return
 	}
-	
+
 	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 }
