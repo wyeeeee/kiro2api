@@ -18,8 +18,8 @@ import (
 
 
 // shouldSkipDuplicateToolEvent 检查是否应该跳过重复的工具事件
-// 使用请求级别的工具ID去重，而不是全局工具名称去重
-func shouldSkipDuplicateToolEvent(event parser.SSEEvent, processedToolIds map[string]bool) bool {
+// 使用基于工具名称+输入参数哈希的去重逻辑
+func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.ToolDedupManager) bool {
 	if event.Event != "content_block_start" {
 		return false
 	}
@@ -28,19 +28,25 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, processedToolIds map[st
 		if contentBlock, exists := dataMap["content_block"]; exists {
 			if blockMap, ok := contentBlock.(map[string]any); ok {
 				if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_use" {
-					// 获取工具使用的唯一ID进行去重
-					var toolUseId string
-					if id, hasId := blockMap["id"].(string); hasId {
-						toolUseId = id
+					// 获取工具名称和输入参数
+					var toolName string
+					var toolInput interface{}
+					
+					if name, hasName := blockMap["name"].(string); hasName {
+						toolName = name
 					}
-
-					// 基于工具使用ID的请求级别去重
-					if toolUseId != "" {
-						// 检查在当前请求中是否已经处理过这个特定的工具使用ID
-						if processedToolIds[toolUseId] {
+					
+					if input, hasInput := blockMap["input"]; hasInput {
+						toolInput = input
+					}
+					
+					// 检查工具是否已被处理（基于名称+输入哈希）
+					if toolName != "" {
+						if processed, err := dedupManager.IsToolProcessed(toolName, toolInput); err == nil && processed {
 							return true // 跳过重复的工具使用
 						}
-						processedToolIds[toolUseId] = true
+						// 标记工具为已处理
+						dedupManager.MarkToolProcessed(toolName, toolInput)
 					}
 				}
 			}
@@ -95,7 +101,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	// 创建流式解析器并处理响应，添加工具去重跟踪
 	streamParser := parser.NewStreamParser()
 	outputTokens := 0
-	processedToolIds := make(map[string]bool) // 请求级别的工具ID去重
+	dedupManager := utils.NewToolDedupManager() // 请求级别的工具去重管理器
 
 	buf := make([]byte, 1024)
 	for {
@@ -104,7 +110,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 			events := streamParser.ParseStream(buf[:n])
 			for _, event := range events {
 				// 在流式处理中添加工具去重逻辑
-				if shouldSkipDuplicateToolEvent(event, processedToolIds) {
+				if shouldSkipDuplicateToolEvent(event, dedupManager) {
 					continue
 				}
 				
@@ -223,7 +229,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	contexts := []map[string]any{}
 	partialJsonStr := ""
 	currentToolUse := make(map[string]any) // 添加当前工具使用跟踪
-	processedToolIds := make(map[string]bool) // 请求级别的工具ID去重
+	dedupManager := utils.NewToolDedupManager() // 请求级别的工具去重管理器
 
 	for _, event := range events {
 		if event.Data != nil {
@@ -316,15 +322,21 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									}
 								}
 								
-								// 基于工具使用ID的请求级别去重
-								var currentToolUseId string
+								// 基于工具名称+输入参数的请求级别去重
+								var currentToolName string
+								var currentToolInput interface{}
 								
-								if id, hasId := currentToolUse["id"].(string); hasId {
-									currentToolUseId = id
+								if name, hasName := currentToolUse["name"].(string); hasName {
+									currentToolName = name
 								}
 								
-								if currentToolUseId != "" {
-									if processedToolIds[currentToolUseId] {
+								if input, hasInput := currentToolUse["input"]; hasInput {
+									currentToolInput = input
+								}
+								
+								if currentToolName != "" {
+									// 检查工具是否已被处理（基于名称+输入哈希）
+									if processed, err := dedupManager.IsToolProcessed(currentToolName, currentToolInput); err == nil && processed {
 										// 重置工具状态但不添加到contexts
 										currentToolUse = make(map[string]any)
 										partialJsonStr = ""
@@ -332,7 +344,8 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 										toolName = ""
 										break // 跳过重复工具
 									}
-									processedToolIds[currentToolUseId] = true
+									// 标记工具为已处理
+									dedupManager.MarkToolProcessed(currentToolName, currentToolInput)
 								}
 								
 								// 添加完整的工具使用块到contexts
