@@ -181,16 +181,56 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	toolUseId := ""
 	contexts := []map[string]any{}
 	partialJsonStr := ""
+	currentToolUse := make(map[string]any) // 添加当前工具使用跟踪
 
 	for _, event := range events {
+		logger.Debug("处理事件", 
+			logger.String("event_type", event.Event),
+			logger.Any("event_data", event.Data))
+			
 		if event.Data != nil {
 			if dataMap, ok := event.Data.(map[string]any); ok {
+				logger.Debug("事件数据详情", 
+					logger.String("data_type", fmt.Sprintf("%T", dataMap["type"])),
+					logger.Any("data_content", dataMap))
+					
 				switch dataMap["type"] {
 				case "content_block_start":
 					context = ""
 					partialJsonStr = ""
 					toolUseId = ""
 					toolName = ""
+					
+					// 提取tool_use信息从content_block_start事件
+					if contentBlock, ok := dataMap["content_block"]; ok {
+						if blockMap, ok := contentBlock.(map[string]any); ok {
+							if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_use" {
+								// 直接使用content_block中的完整工具信息
+								currentToolUse = map[string]any{
+									"type": "tool_use",
+									"id":   blockMap["id"],
+									"name": blockMap["name"],
+									"input": blockMap["input"], // 可能为空，后续会更新
+								}
+								// 安全地提取tool信息到局部变量（用于日志）
+								if id, ok := blockMap["id"]; ok && id != nil {
+									if idStr, ok := id.(string); ok {
+										toolUseId = idStr
+									}
+								}
+								if name, ok := blockMap["name"]; ok && name != nil {
+									if nameStr, ok := name.(string); ok {
+										toolName = nameStr
+									}
+								}
+								logger.Debug("提取到工具信息",
+									logger.String("tool_use_id", toolUseId),
+									logger.String("tool_name", toolName),
+									logger.Any("complete_tool", currentToolUse))
+								partialJsonStr = "" // 重置参数累积
+							}
+						}
+					}
 				case "content_block_delta":
 					if delta, ok := dataMap["delta"]; ok {
 						if deltaMap, ok := delta.(map[string]any); ok {
@@ -239,33 +279,41 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 					if index, ok := dataMap["index"]; ok {
 						switch index {
 						case 1:
-							if partialJsonStr == "" {
-								logger.Debug("工具调用没有参数数据，跳过",
-									logger.String("tool_name", toolName),
-									logger.String("tool_use_id", toolUseId))
-								break
+							// 处理工具使用块完成
+							if len(currentToolUse) > 0 {
+								// 如果有累积的参数数据，解析并更新工具输入
+								if partialJsonStr != "" {
+									logger.Debug("解析工具参数", logger.String("json_data", partialJsonStr))
+									toolInput := map[string]any{}
+									if err := sonic.Unmarshal([]byte(partialJsonStr), &toolInput); err != nil {
+										logger.Error("JSON解析失败",
+											logger.String("tool_name", toolName),
+											logger.String("tool_use_id", toolUseId),
+											logger.Err(err),
+											logger.String("data", partialJsonStr))
+									} else {
+										currentToolUse["input"] = toolInput
+										logger.Debug("成功更新工具参数", logger.Any("input", toolInput))
+									}
+								} else {
+									// 确保input字段存在，即使为空
+									if _, hasInput := currentToolUse["input"]; !hasInput {
+										currentToolUse["input"] = map[string]any{}
+									}
+								}
+								
+								// 添加完整的工具使用块到contexts
+								contexts = append(contexts, currentToolUse)
+								logger.Debug("添加工具使用块到contexts", logger.Any("tool_block", currentToolUse))
+								
+								// 重置工具状态
+								currentToolUse = make(map[string]any)
+								partialJsonStr = ""
+								toolUseId = ""
+								toolName = ""
+							} else {
+								logger.Debug("content_block_stop但没有活跃的工具使用块")
 							}
-							logger.Debug("Attempting to parse tool call JSON", logger.String("json_data", partialJsonStr))
-							toolInput := map[string]any{}
-							if err := sonic.Unmarshal([]byte(partialJsonStr), &toolInput); err != nil {
-								logger.Error("JSON解析失败",
-									logger.String("tool_name", toolName),
-									logger.String("tool_use_id", toolUseId),
-									logger.Err(err),
-									logger.String("data", partialJsonStr))
-								break
-							}
-							if len(toolInput) == 0 {
-								logger.Debug("工具参数为空",
-									logger.String("tool_name", toolName),
-									logger.String("tool_use_id", toolUseId))
-							}
-							contexts = append(contexts, map[string]any{
-								"type":  "tool_use",
-								"id":    toolUseId,
-								"name":  toolName,
-								"input": toolInput,
-							})
 						case 0:
 							contexts = append(contexts, map[string]any{
 								"text": context,
