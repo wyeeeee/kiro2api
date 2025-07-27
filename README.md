@@ -5,6 +5,7 @@
 ## 功能特性
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
+- **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和工具去重逻辑
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
 - **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
 - **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期令牌
@@ -142,6 +143,87 @@ curl -X POST http://localhost:8080/v1/chat/completions \
     ]
   }'
 ```
+
+#### 工具调用示例
+
+```bash
+# Anthropic API工具调用格式
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1000,
+    "messages": [
+      {"role": "user", "content": "请搜索人工智能的信息"}
+    ],
+    "tools": [
+      {
+        "name": "web_search",
+        "description": "Search the web for information",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "The search query"
+            }
+          },
+          "required": ["query"]
+        }
+      }
+    ],
+    "tool_choice": {"type": "auto"}
+  }'
+
+# OpenAI API工具调用格式
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "messages": [
+      {"role": "user", "content": "执行系统命令"}
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "bash",
+          "description": "Execute bash commands",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "The command to execute"
+              }
+            },
+            "required": ["command"]
+          }
+        }
+      }
+    ],
+    "tool_choice": "auto"
+  }'
+```
+
+## 工具调用支持
+
+kiro2api完全支持Anthropic和OpenAI格式的工具调用：
+
+### 支持的功能
+- **工具定义**：支持完整的工具schema定义和参数验证
+- **tool_choice参数**：支持"auto"、"any"、"tool"、"none"等工具选择策略
+- **工具去重**：智能防止重复工具调用，基于工具名称和参数组合创建唯一标识
+- **流式工具调用**：支持在流式响应中处理工具调用事件
+- **错误处理**：完善的工具调用错误处理和调试支持
+
+### 常用工具示例
+- `web_search` - 网络搜索工具
+- `bash` - 系统命令执行工具
+- `file_operations` - 文件操作工具
+- 自定义工具 - 支持任意自定义工具定义
 
 ## 支持的模型
 
