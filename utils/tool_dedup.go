@@ -77,7 +77,3 @@ func (m *ToolDedupManager) Reset() {
 	m.processedHashes = make(map[string]bool)
 }
 
-// GetProcessedCount 获取已处理的工具数量
-func (m *ToolDedupManager) GetProcessedCount() int {
-	return len(m.processedHashes)
-}

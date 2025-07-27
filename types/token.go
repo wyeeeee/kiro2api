@@ -178,12 +178,7 @@ func (tp *TokenPool) MarkTokenSuccess(idx int) {
 	tp.failedCount[idx] = 0
 }
 
-// ResetFailedCounts 重置所有失败计数（可用于定期重置）
-func (tp *TokenPool) ResetFailedCounts() {
-	tp.mutex.Lock()
-	defer tp.mutex.Unlock()
-	tp.failedCount = make(map[int]int)
-}
+
 
 // GetStats 获取token池统计信息
 func (tp *TokenPool) GetStats() map[string]any {
