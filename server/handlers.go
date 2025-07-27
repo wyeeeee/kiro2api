@@ -200,8 +200,17 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									context += text.(string)
 								}
 							case "input_json_delta":
-								toolUseId = deltaMap["id"].(string)
-								toolName = deltaMap["name"].(string)
+								// 安全地获取tool_use_id和name，防止nil panic
+								if id, ok := deltaMap["id"]; ok && id != nil {
+									if idStr, ok := id.(string); ok {
+										toolUseId = idStr
+									}
+								}
+								if name, ok := deltaMap["name"]; ok && name != nil {
+									if nameStr, ok := name.(string); ok {
+										toolName = nameStr
+									}
+								}
 								if partial_json, ok := deltaMap["partial_json"]; ok {
 									if strPtr, ok := partial_json.(*string); ok && strPtr != nil {
 										partialJsonStr = partialJsonStr + *strPtr
