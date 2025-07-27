@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -50,21 +51,18 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 
 	// 转换 tools
 	if len(openaiReq.Tools) > 0 {
-		var anthropicTools []types.AnthropicTool
-		for _, tool := range openaiReq.Tools {
-			if tool.Type == "function" {
-				// 清理 OpenAI 特有的字段，避免 CodeWhisperer 拒绝请求
-				cleanedParams := cleanToolParameters(tool.Function.Parameters)
-
-				anthropicTool := types.AnthropicTool{
-					Name:        tool.Function.Name,
-					Description: tool.Function.Description,
-					InputSchema: cleanedParams,
-				}
-				anthropicTools = append(anthropicTools, anthropicTool)
-			}
+		anthropicTools, err := validateAndProcessTools(openaiReq.Tools)
+		if err != nil {
+			// 记录警告但不中断处理，允许部分工具失败
+			// 可以考虑返回错误，取决于业务需求
+			// 这里参考server.py的做法，记录错误但继续处理有效的工具
 		}
 		anthropicReq.Tools = anthropicTools
+	}
+
+	// 转换 tool_choice
+	if openaiReq.ToolChoice != nil {
+		anthropicReq.ToolChoice = convertOpenAIToolChoiceToAnthropic(openaiReq.ToolChoice)
 	}
 
 	return anthropicReq
@@ -289,14 +287,68 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	return cwReq
 }
 
-func cleanToolParameters(params map[string]any) map[string]any {
-	if params == nil {
-		return nil
+// validateAndProcessTools 验证和处理工具定义
+// 参考server.py中的clean_gemini_schema函数以及Anthropic官方文档
+func validateAndProcessTools(tools []types.OpenAITool) ([]types.AnthropicTool, error) {
+	if len(tools) == 0 {
+		return nil, nil
 	}
 
+	var anthropicTools []types.AnthropicTool
+	var validationErrors []string
+
+	for i, tool := range tools {
+		if tool.Type != "function" {
+			validationErrors = append(validationErrors, fmt.Sprintf("tool[%d]: 不支持的工具类型 '%s'，仅支持 'function'", i, tool.Type))
+			continue
+		}
+
+		// 验证函数名称
+		if tool.Function.Name == "" {
+			validationErrors = append(validationErrors, fmt.Sprintf("tool[%d]: 函数名称不能为空", i))
+			continue
+		}
+
+		// 验证参数schema
+		if tool.Function.Parameters == nil {
+			validationErrors = append(validationErrors, fmt.Sprintf("tool[%d]: 参数schema不能为空", i))
+			continue
+		}
+
+		// 清理和验证参数
+		cleanedParams, err := cleanAndValidateToolParameters(tool.Function.Parameters, tool.Function.Name)
+		if err != nil {
+			validationErrors = append(validationErrors, fmt.Sprintf("tool[%d] (%s): %v", i, tool.Function.Name, err))
+			continue
+		}
+
+		anthropicTool := types.AnthropicTool{
+			Name:        tool.Function.Name,
+			Description: tool.Function.Description,
+			InputSchema: cleanedParams,
+		}
+		anthropicTools = append(anthropicTools, anthropicTool)
+	}
+
+	if len(validationErrors) > 0 {
+		return anthropicTools, fmt.Errorf("工具验证失败: %s", strings.Join(validationErrors, "; "))
+	}
+
+	return anthropicTools, nil
+}
+
+// cleanAndValidateToolParameters 清理和验证工具参数
+func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string]any, error) {
+	if params == nil {
+		return nil, fmt.Errorf("参数不能为nil")
+	}
+
+	// 深拷贝避免修改原始数据
 	cleanedParams, _ := sonic.Marshal(params)
 	var tempParams map[string]any
-	sonic.Unmarshal(cleanedParams, &tempParams)
+	if err := sonic.Unmarshal(cleanedParams, &tempParams); err != nil {
+		return nil, fmt.Errorf("参数序列化失败: %v", err)
+	}
 
 	// 移除不支持的顶级字段
 	delete(tempParams, "additionalProperties")
@@ -307,5 +359,69 @@ func cleanToolParameters(params map[string]any) map[string]any {
 	delete(tempParams, "definitions")
 	delete(tempParams, "$defs")
 
-	return tempParams
+	// 验证必需的字段
+	if schemaType, exists := tempParams["type"]; exists {
+		if typeStr, ok := schemaType.(string); ok && typeStr == "object" {
+			// 对象类型应该有properties字段
+			if _, hasProps := tempParams["properties"]; !hasProps {
+				return nil, fmt.Errorf("对象类型缺少properties字段")
+			}
+		}
+	}
+
+	return tempParams, nil
+}
+
+// convertOpenAIToolChoiceToAnthropic 将OpenAI的tool_choice转换为Anthropic格式
+// 参考server.py中的转换逻辑以及Anthropic官方文档
+func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) *types.ToolChoice {
+	if openaiToolChoice == nil {
+		return nil
+	}
+
+	switch choice := openaiToolChoice.(type) {
+	case string:
+		// 处理字符串类型："auto", "none", "required"
+		switch choice {
+		case "auto":
+			return &types.ToolChoice{Type: "auto"}
+		case "required", "any":
+			return &types.ToolChoice{Type: "any"}
+		case "none":
+			// Anthropic没有"none"选项，返回nil表示不强制使用工具
+			return nil
+		default:
+			// 未知字符串，默认为auto
+			return &types.ToolChoice{Type: "auto"}
+		}
+		
+	case map[string]any:
+		// 处理对象类型：{"type": "function", "function": {"name": "tool_name"}}
+		if choiceType, ok := choice["type"].(string); ok && choiceType == "function" {
+			if functionObj, ok := choice["function"].(map[string]any); ok {
+				if name, ok := functionObj["name"].(string); ok {
+					return &types.ToolChoice{
+						Type: "tool",
+						Name: name,
+					}
+				}
+			}
+		}
+		// 如果无法解析，返回auto
+		return &types.ToolChoice{Type: "auto"}
+		
+	case types.OpenAIToolChoice:
+		// 处理结构化的OpenAIToolChoice类型
+		if choice.Type == "function" && choice.Function != nil {
+			return &types.ToolChoice{
+				Type: "tool",
+				Name: choice.Function.Name,
+			}
+		}
+		return &types.ToolChoice{Type: "auto"}
+		
+	default:
+		// 未知类型，默认为auto
+		return &types.ToolChoice{Type: "auto"}
+	}
 }

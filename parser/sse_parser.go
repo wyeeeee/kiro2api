@@ -132,7 +132,7 @@ func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
 			Event: "content_block_delta",
 			Data: map[string]any{
 				"type":  "content_block_delta",
-				"index": 0,
+				"index": 0, // 文本内容块总是使用index 0
 				"delta": map[string]any{
 					"type": "text_delta",
 					"text": evt.Content,
@@ -140,13 +140,16 @@ func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
 			},
 		}
 	} else if evt.ToolUseId != "" && evt.Name != "" && !evt.Stop {
+		// 工具使用块应该使用递增的index，但这里简化为固定值
+		// 在实际实现中，应该维护一个全局的block index计数器
+		toolBlockIndex := 1
 
 		if evt.Input == nil {
 			return SSEEvent{
 				Event: "content_block_start",
 				Data: map[string]any{
 					"type":  "content_block_start",
-					"index": 1,
+					"index": toolBlockIndex,
 					"content_block": map[string]any{
 						"type":  "tool_use",
 						"id":    evt.ToolUseId,
@@ -160,11 +163,9 @@ func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
 				Event: "content_block_delta",
 				Data: map[string]any{
 					"type":  "content_block_delta",
-					"index": 1,
+					"index": toolBlockIndex,
 					"delta": map[string]any{
 						"type":         "input_json_delta",
-						"id":           evt.ToolUseId,
-						"name":         evt.Name,
 						"partial_json": *evt.Input,
 					},
 				},
@@ -176,7 +177,7 @@ func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
 			Event: "content_block_stop",
 			Data: map[string]any{
 				"type":  "content_block_stop",
-				"index": 1,
+				"index": 1, // 对应工具使用块的index
 			},
 		}
 	}

@@ -7,6 +7,12 @@ type AnthropicTool struct {
 	InputSchema map[string]any `json:"input_schema"`
 }
 
+// ToolChoice 表示工具选择策略
+type ToolChoice struct {
+	Type string `json:"type"`           // "auto", "any", "tool"
+	Name string `json:"name,omitempty"` // 当type为"tool"时指定的工具名称
+}
+
 // AnthropicRequest 表示 Anthropic API 的请求结构
 type AnthropicRequest struct {
 	Model       string                    `json:"model"`
@@ -14,6 +20,7 @@ type AnthropicRequest struct {
 	Messages    []AnthropicRequestMessage `json:"messages"`
 	System      []AnthropicSystemMessage  `json:"system,omitempty"`
 	Tools       []AnthropicTool           `json:"tools,omitempty"`
+	ToolChoice  *ToolChoice               `json:"tool_choice,omitempty"`
 	Stream      bool                      `json:"stream"`
 	Temperature *float64                  `json:"temperature,omitempty"`
 	Metadata    map[string]any            `json:"metadata,omitempty"`
