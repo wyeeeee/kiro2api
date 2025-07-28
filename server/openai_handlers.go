@@ -51,6 +51,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	currentToolUse := make(map[string]any)
 	toolInputBuffer := ""
 	currentBlockContent := "" // 当前块的文本内容
+	dedupManager := utils.NewToolDedupManager() // OpenAI端点的工具去重管理器
 
 	for _, event := range events {
 		if event.Data != nil {
@@ -115,6 +116,25 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 							}
 							currentToolUse["input"] = toolInput
 						}
+
+						// 基于 tool_use_id 的工具去重检查
+						var currentToolUseId string
+						if id, hasId := currentToolUse["id"].(string); hasId {
+							currentToolUseId = id
+						}
+
+						if currentToolUseId != "" {
+							// 检查工具是否已被处理（基于 tool_use_id）
+							if dedupManager.IsToolProcessed(currentToolUseId) {
+								// 重置工具状态但不添加到contexts
+								currentToolUse = make(map[string]any)
+								toolInputBuffer = ""
+								break // 跳过重复工具
+							}
+							// 标记工具为已处理
+							dedupManager.MarkToolProcessed(currentToolUseId)
+						}
+
 						contexts = append(contexts, currentToolUse)
 						currentToolUse = make(map[string]any)
 						toolInputBuffer = ""
@@ -202,8 +222,9 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	}
 	sendOpenAIEvent(c, initialEvent)
 
-	// 创建流式解析器并处理响应
+	// 创建流式解析器和去重管理器
 	streamParser := parser.NewStreamParser()
+	dedupManager := utils.NewToolDedupManager() // OpenAI流式端点的工具去重管理器
 
 	buf := make([]byte, 1024)
 	for {
@@ -211,6 +232,11 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 		if n > 0 {
 			events := streamParser.ParseStream(buf[:n])
 			for _, event := range events {
+				// 在流式处理中添加工具去重逻辑
+				if shouldSkipDuplicateToolEvent(event, dedupManager) {
+					continue
+				}
+
 				if event.Data != nil {
 					if dataMap, ok := event.Data.(map[string]any); ok {
 						switch dataMap["type"] {

@@ -17,7 +17,7 @@ import (
 )
 
 // shouldSkipDuplicateToolEvent 检查是否应该跳过重复的工具事件
-// 使用基于工具名称+输入参数哈希的去重逻辑
+// 使用基于 tool_use_id 的去重逻辑，符合 Anthropic 标准
 func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.ToolDedupManager) bool {
 	if event.Event != "content_block_start" {
 		return false
@@ -27,25 +27,14 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.Too
 		if contentBlock, exists := dataMap["content_block"]; exists {
 			if blockMap, ok := contentBlock.(map[string]any); ok {
 				if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_use" {
-					// 获取工具名称和输入参数
-					var toolName string
-					var toolInput interface{}
-
-					if name, hasName := blockMap["name"].(string); hasName {
-						toolName = name
-					}
-
-					if input, hasInput := blockMap["input"]; hasInput {
-						toolInput = input
-					}
-
-					// 检查工具是否已被处理（基于名称+输入哈希）
-					if toolName != "" {
-						if processed, err := dedupManager.IsToolProcessed(toolName, toolInput); err == nil && processed {
+					// 提取 tool_use_id
+					if toolUseId, hasId := blockMap["id"].(string); hasId && toolUseId != "" {
+						// 检查工具是否已被处理（基于 tool_use_id）
+						if dedupManager.IsToolProcessed(toolUseId) {
 							return true // 跳过重复的工具使用
 						}
 						// 标记工具为已处理
-						dedupManager.MarkToolProcessed(toolName, toolInput)
+						dedupManager.MarkToolProcessed(toolUseId)
 					}
 				}
 			}
@@ -320,21 +309,16 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									}
 								}
 
-								// 基于工具名称+输入参数的请求级别去重
-								var currentToolName string
-								var currentToolInput interface{}
+								// 基于 tool_use_id 的请求级别去重
+								var currentToolUseId string
 
-								if name, hasName := currentToolUse["name"].(string); hasName {
-									currentToolName = name
+								if id, hasId := currentToolUse["id"].(string); hasId {
+									currentToolUseId = id
 								}
 
-								if input, hasInput := currentToolUse["input"]; hasInput {
-									currentToolInput = input
-								}
-
-								if currentToolName != "" {
-									// 检查工具是否已被处理（基于名称+输入哈希）
-									if processed, err := dedupManager.IsToolProcessed(currentToolName, currentToolInput); err == nil && processed {
+								if currentToolUseId != "" {
+									// 检查工具是否已被处理（基于 tool_use_id）
+									if dedupManager.IsToolProcessed(currentToolUseId) {
 										// 重置工具状态但不添加到contexts
 										currentToolUse = make(map[string]any)
 										partialJsonStr = ""
@@ -343,7 +327,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 										break // 跳过重复工具
 									}
 									// 标记工具为已处理
-									dedupManager.MarkToolProcessed(currentToolName, currentToolInput)
+									dedupManager.MarkToolProcessed(currentToolUseId)
 								}
 
 								// 添加完整的工具使用块到contexts

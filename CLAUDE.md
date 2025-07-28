@@ -6,7 +6,7 @@
 
 这是 `kiro2api`，一个 Go 命令行工具和 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它管理 Kiro 认证令牌并提供实时流式响应功能。
 
-**当前版本**: v2.5.2 - 修复工具调用全局状态污染问题，改用请求级别的工具ID去重，确保不同请求间工具调用不相互干扰。
+**当前版本**: v2.5.3 - 重构工具调用去重机制，从参数哈希改为基于 `tool_use_id` 的标准去重，符合 Anthropic 最佳实践，彻底解决工具调用重复问题。
 
 ## 快速开始
 
@@ -106,10 +106,11 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 - 基于token过期时间的智能缓存
 - 故障转移和负载均衡
 
-**统一工具模式**: 重构后，通用函数集中化：
-- `utils.GetMessageContent()` - 消息内容提取（消除了跨文件重复）
-- `utils.ReadHTTPResponse()` - 标准 HTTP 响应读取
-- `utils.SharedHTTPClient` 和 `utils.LongRequestClient` - 不同超时配置的HTTP客户端
+**工具调用去重**: 增强的工具调用管理系统：
+- `utils.ToolDedupManager` - 基于 `tool_use_id` 的精确去重机制
+- 符合 Anthropic 标准，避免基于参数哈希的误判
+- 流式和非流式请求统一去重逻辑，确保一致性
+- 请求级别的去重管理，防止跨请求状态污染
 
 **中间件链**: gin-gonic 服务器使用：
 - `gin.Logger()` 和 `gin.Recovery()` 提供基本功能  
@@ -151,6 +152,7 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 - `client.go`: 配置超时的 `SharedHTTPClient` 和 `LongRequestClient`
 - `request_analyzer.go`: **[新增]** 请求复杂度分析和客户端选择
 - `metrics.go`: **[新增]** 性能指标记录功能
+- `tool_dedup.go`: **[v2.5.3重构]** 基于 `tool_use_id` 的工具去重管理器
 - `file.go`, `uuid.go`: 文件操作和 UUID 生成
 
 **`types/`** - **[最近重构]** 数据结构定义
@@ -224,7 +226,16 @@ AWS_REFRESHTOKEN=your_token     # AWS刷新token（必需设置）
 - **流式传输**: 自定义 EventStream 解析器
 - **Go 版本**: 1.23.3
 
-## 最近重构 (v2.5.2)
+## 最近重构 (v2.5.3)
+
+工具调用去重机制重构，符合 Anthropic 标准：
+- **去重机制重构**: 从基于 `name+input` 哈希改为基于 `tool_use_id` 的标准去重
+- **精确去重**: 使用 Anthropic 官方推荐的唯一标识符，避免参数哈希误判
+- **一致性保证**: 流式和非流式处理统一使用相同去重逻辑
+- **性能优化**: 简化去重算法，移除复杂的 JSON 序列化和 SHA256 计算
+- **符合标准**: 完全遵循 Anthropic 工具调用最佳实践和文档建议
+
+## 历史重构 (v2.5.2)
 
 代码库工具调用全局状态污染修复：
 - **修复全局状态污染**: 移除错误的全局工具跟踪器(`globalProcessedTools`)，避免跨请求工具调用干扰
