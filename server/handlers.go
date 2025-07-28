@@ -16,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-
 // shouldSkipDuplicateToolEvent 检查是否应该跳过重复的工具事件
 // 使用基于工具名称+输入参数哈希的去重逻辑
 func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.ToolDedupManager) bool {
@@ -31,15 +30,15 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.Too
 					// 获取工具名称和输入参数
 					var toolName string
 					var toolInput interface{}
-					
+
 					if name, hasName := blockMap["name"].(string); hasName {
 						toolName = name
 					}
-					
+
 					if input, hasInput := blockMap["input"]; hasInput {
 						toolInput = input
 					}
-					
+
 					// 检查工具是否已被处理（基于名称+输入哈希）
 					if toolName != "" {
 						if processed, err := dedupManager.IsToolProcessed(toolName, toolInput); err == nil && processed {
@@ -55,7 +54,6 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.Too
 
 	return false
 }
-
 
 // handleStreamRequest 处理流式请求
 func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
@@ -77,7 +75,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		return
 	}
 
-	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
+	resp, err := utils.DoSmartRequest(req, &anthropicReq)
 	if err != nil {
 		sender.SendError(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
 		return
@@ -113,7 +111,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 				if shouldSkipDuplicateToolEvent(event, dedupManager) {
 					continue
 				}
-				
+
 				sender.SendEvent(c, event.Data)
 
 				if event.Event == "content_block_delta" {
@@ -200,7 +198,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		return
 	}
 
-	resp, err := utils.DoSmartRequestWithMetrics(req, &anthropicReq)
+	resp, err := utils.DoSmartRequest(req, &anthropicReq)
 	if err != nil {
 		logger.Error("发送请求失败", logger.Err(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("发送请求失败: %v", err)})
@@ -228,7 +226,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	toolUseId := ""
 	contexts := []map[string]any{}
 	partialJsonStr := ""
-	currentToolUse := make(map[string]any) // 添加当前工具使用跟踪
+	currentToolUse := make(map[string]any)      // 添加当前工具使用跟踪
 	dedupManager := utils.NewToolDedupManager() // 请求级别的工具去重管理器
 
 	for _, event := range events {
@@ -240,16 +238,16 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 					partialJsonStr = ""
 					toolUseId = ""
 					toolName = ""
-					
+
 					// 提取tool_use信息从content_block_start事件
 					if contentBlock, ok := dataMap["content_block"]; ok {
 						if blockMap, ok := contentBlock.(map[string]any); ok {
 							if blockType, ok := blockMap["type"].(string); ok && blockType == "tool_use" {
 								// 直接使用content_block中的完整工具信息
 								currentToolUse = map[string]any{
-									"type": "tool_use",
-									"id":   blockMap["id"],
-									"name": blockMap["name"],
+									"type":  "tool_use",
+									"id":    blockMap["id"],
+									"name":  blockMap["name"],
 									"input": blockMap["input"], // 可能为空，后续会更新
 								}
 								// 安全地提取tool信息到局部变量（用于日志）
@@ -321,19 +319,19 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 										currentToolUse["input"] = map[string]any{}
 									}
 								}
-								
+
 								// 基于工具名称+输入参数的请求级别去重
 								var currentToolName string
 								var currentToolInput interface{}
-								
+
 								if name, hasName := currentToolUse["name"].(string); hasName {
 									currentToolName = name
 								}
-								
+
 								if input, hasInput := currentToolUse["input"]; hasInput {
 									currentToolInput = input
 								}
-								
+
 								if currentToolName != "" {
 									// 检查工具是否已被处理（基于名称+输入哈希）
 									if processed, err := dedupManager.IsToolProcessed(currentToolName, currentToolInput); err == nil && processed {
@@ -347,10 +345,10 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									// 标记工具为已处理
 									dedupManager.MarkToolProcessed(currentToolName, currentToolInput)
 								}
-								
+
 								// 添加完整的工具使用块到contexts
 								contexts = append(contexts, currentToolUse)
-								
+
 								// 重置工具状态
 								currentToolUse = make(map[string]any)
 								partialJsonStr = ""

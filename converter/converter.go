@@ -394,7 +394,7 @@ func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) *types.ToolChoice 
 			// 未知字符串，默认为auto
 			return &types.ToolChoice{Type: "auto"}
 		}
-		
+
 	case map[string]any:
 		// 处理对象类型：{"type": "function", "function": {"name": "tool_name"}}
 		if choiceType, ok := choice["type"].(string); ok && choiceType == "function" {
@@ -409,7 +409,7 @@ func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) *types.ToolChoice 
 		}
 		// 如果无法解析，返回auto
 		return &types.ToolChoice{Type: "auto"}
-		
+
 	case types.OpenAIToolChoice:
 		// 处理结构化的OpenAIToolChoice类型
 		if choice.Type == "function" && choice.Function != nil {
@@ -419,7 +419,7 @@ func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) *types.ToolChoice 
 			}
 		}
 		return &types.ToolChoice{Type: "auto"}
-		
+
 	default:
 		// 未知类型，默认为auto
 		return &types.ToolChoice{Type: "auto"}

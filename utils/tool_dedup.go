@@ -45,7 +45,7 @@ func (m *ToolDedupManager) GenerateToolHash(toolName string, toolInput interface
 
 	// 组合工具名称和输入参数
 	combined := fmt.Sprintf("%s:%s", toolName, inputJSON)
-	
+
 	// 生成SHA256哈希
 	hash := sha256.Sum256([]byte(combined))
 	return hex.EncodeToString(hash[:]), nil
@@ -57,7 +57,7 @@ func (m *ToolDedupManager) IsToolProcessed(toolName string, toolInput interface{
 	if err != nil {
 		return false, err
 	}
-	
+
 	return m.processedHashes[hash], nil
 }
 
@@ -67,7 +67,7 @@ func (m *ToolDedupManager) MarkToolProcessed(toolName string, toolInput interfac
 	if err != nil {
 		return err
 	}
-	
+
 	m.processedHashes[hash] = true
 	return nil
 }
@@ -76,4 +76,3 @@ func (m *ToolDedupManager) MarkToolProcessed(toolName string, toolInput interfac
 func (m *ToolDedupManager) Reset() {
 	m.processedHashes = make(map[string]bool)
 }
-

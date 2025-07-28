@@ -22,12 +22,12 @@ func parseToolResultContent(content any) string {
 			return "Tool executed with no output"
 		}
 		return v
-		
+
 	case []any:
 		if len(v) == 0 {
 			return "Tool executed with empty result list"
 		}
-		
+
 		var result strings.Builder
 		for _, item := range v {
 			switch itemVal := item.(type) {
@@ -57,13 +57,13 @@ func parseToolResultContent(content any) string {
 				result.WriteString(fmt.Sprintf("%v\n", itemVal))
 			}
 		}
-		
+
 		resultStr := strings.TrimSpace(result.String())
 		if resultStr == "" {
 			return "Tool executed with empty content"
 		}
 		return resultStr
-		
+
 	case map[string]any:
 		// 处理单个结构化对象
 		if contentType, ok := v["type"].(string); ok && contentType == "text" {
@@ -74,7 +74,7 @@ func parseToolResultContent(content any) string {
 				return text
 			}
 		}
-		
+
 		// 检查是否有直接的text字段
 		if text, ok := v["text"].(string); ok {
 			if text == "" {
@@ -82,13 +82,13 @@ func parseToolResultContent(content any) string {
 			}
 			return text
 		}
-		
+
 		// 序列化整个对象
 		if data, err := sonic.Marshal(v); err == nil {
 			return string(data)
 		}
 		return fmt.Sprintf("%v", v)
-		
+
 	default:
 		// 处理其他基本类型（数字、布尔值等）
 		return fmt.Sprintf("%v", content)
@@ -116,17 +116,17 @@ func GetMessageContent(content any) (string, error) {
 						case "tool_result":
 							if cb.Content != nil {
 								toolResultContent := parseToolResultContent(cb.Content)
-								
+
 								// 检查是否为错误结果
 								if cb.IsError != nil && *cb.IsError {
 									toolResultContent = "Tool Error: " + toolResultContent
 								}
-								
+
 								// 添加tool_use_id信息以便追踪
 								if cb.ToolUseId != nil && *cb.ToolUseId != "" {
 									toolResultContent = fmt.Sprintf("Tool result for %s: %s", *cb.ToolUseId, toolResultContent)
 								}
-								
+
 								texts = append(texts, toolResultContent)
 							}
 						case "text":

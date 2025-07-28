@@ -11,7 +11,7 @@ type Token struct {
 	AccessToken  string    `json:"accessToken,omitempty"`
 	RefreshToken string    `json:"refreshToken"`
 	ExpiresAt    time.Time `json:"expiresAt,omitempty"`
-	
+
 	// API响应字段
 	ExpiresIn  int    `json:"expiresIn,omitempty"`  // 多少秒后失效，来自RefreshResponse
 	ProfileArn string `json:"profileArn,omitempty"` // 来自RefreshResponse
@@ -58,7 +58,7 @@ func (t *Token) IsExpired() bool {
 }
 
 // 兼容性别名 - 逐步迁移时使用
-type TokenInfo = Token     // TokenInfo现在是Token的别名
+type TokenInfo = Token // TokenInfo现在是Token的别名
 type RefreshResponse struct {
 	AccessToken  string `json:"accessToken"`
 	ExpiresIn    int    `json:"expiresIn"` // 多少秒后失效
@@ -72,12 +72,12 @@ type RefreshRequest struct {
 
 // TokenPool token池管理结构
 type TokenPool struct {
-	tokens       []string    // refresh token列表
-	currentIdx   int         // 当前使用的token索引
-	accessIdx    int         // 当前访问的access token索引（用于轮换）
-	failedCount  map[int]int // 每个token的失败次数
-	mutex        sync.RWMutex
-	maxRetries   int // 最大重试次数
+	tokens      []string    // refresh token列表
+	currentIdx  int         // 当前使用的token索引
+	accessIdx   int         // 当前访问的access token索引（用于轮换）
+	failedCount map[int]int // 每个token的失败次数
+	mutex       sync.RWMutex
+	maxRetries  int // 最大重试次数
 }
 
 // NewTokenPool 创建新的token池
@@ -95,7 +95,7 @@ func NewTokenPool(tokens []string, maxRetries int) *TokenPool {
 func (tp *TokenPool) GetNextAccessIndex() int {
 	tp.mutex.Lock()
 	defer tp.mutex.Unlock()
-	
+
 	// 找到下一个有效的access token索引
 	startIdx := tp.accessIdx
 	for {
@@ -105,10 +105,10 @@ func (tp *TokenPool) GetNextAccessIndex() int {
 			tp.accessIdx = (tp.accessIdx + 1) % len(tp.tokens)
 			return idx
 		}
-		
+
 		// 移动到下一个索引
 		tp.accessIdx = (tp.accessIdx + 1) % len(tp.tokens)
-		
+
 		// 如果回到起始位置，返回当前索引（即使可能不可用）
 		if tp.accessIdx == startIdx {
 			return tp.accessIdx
@@ -177,8 +177,6 @@ func (tp *TokenPool) MarkTokenSuccess(idx int) {
 	defer tp.mutex.Unlock()
 	tp.failedCount[idx] = 0
 }
-
-
 
 // GetStats 获取token池统计信息
 func (tp *TokenPool) GetStats() map[string]any {

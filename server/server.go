@@ -178,24 +178,6 @@ func StartServer(port string, authToken string) {
 		c.String(http.StatusOK, "OK")
 	})
 
-	// 性能指标端点
-	r.GET("/metrics", func(c *gin.Context) {
-		metrics := utils.GetMetrics()
-		c.JSON(http.StatusOK, gin.H{
-			"requests": gin.H{
-				"total":        metrics.RequestCount,
-				"success":      metrics.SuccessCount,
-				"errors":       metrics.ErrorCount,
-				"success_rate": metrics.SuccessRate(),
-			},
-			"latency": gin.H{
-				"avg_ms": float64(metrics.AvgLatency().Nanoseconds()) / 1e6,
-				"max_ms": float64(metrics.MaxLatency) / 1e6,
-				"min_ms": float64(metrics.MinLatency) / 1e6,
-			},
-		})
-	})
-
 	r.NoRoute(func(c *gin.Context) {
 		logger.Warn("访问未知端点",
 			logger.String("path", c.Request.URL.Path),
@@ -212,7 +194,6 @@ func StartServer(port string, authToken string) {
 	logger.Println("  POST /v1/messages         - Anthropic API代理")
 	logger.Println("  POST /v1/chat/completions - OpenAI API代理")
 	logger.Println("  GET  /health              - 健康检查")
-	logger.Println("  GET  /metrics             - 性能指标")
 	logger.Println("按Ctrl+C停止服务器")
 
 	// 获取服务器超时配置

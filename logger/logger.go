@@ -1,116 +1,124 @@
 package logger
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
 
-// Logger 主要Logger结构
-type Logger struct {
-	config    Config
-	formatter Formatter
-	writer    Writer
-	level     Level
-	mutex     sync.RWMutex
+// Level 日志级别类型
+type Level int
+
+const (
+	DEBUG Level = iota
+	INFO
+	WARN
+	ERROR
+	FATAL
+)
+
+// 级别名称映射
+var levelNames = map[Level]string{
+	DEBUG: "DEBUG",
+	INFO:  "INFO",
+	WARN:  "WARN",
+	ERROR: "ERROR",
+	FATAL: "FATAL",
 }
 
-// 全局实例
+// Field 日志字段结构
+type Field struct {
+	Key   string
+	Value interface{}
+}
+
+// Logger 简化的日志器
+type Logger struct {
+	level     Level
+	logger    *log.Logger
+	mutex     sync.RWMutex
+	logFile   *os.File
+	writers   []io.Writer
+}
+
 var (
 	defaultLogger *Logger
 	once          sync.Once
 )
 
-// InitLogger 初始化日志器
-func InitLogger(config Config) error {
-	logger, err := NewLogger(config)
-	if err != nil {
-		return err
-	}
-
-	// 关闭旧的logger
-	if defaultLogger != nil {
-		defaultLogger.Close()
-	}
-
-	defaultLogger = logger
-	return nil
+// 初始化默认logger
+func init() {
+	defaultLogger = createLogger()
 }
 
-// NewLogger 创建新的Logger实例
-func NewLogger(config Config) (*Logger, error) {
-	// 创建格式化器
-	var formatter Formatter
-	switch config.Format {
-	case JSONFormat:
-		formatter = NewJSONFormatter(config.TimeFormat)
-	default:
-		formatter = NewConsoleFormatter(config.Color, config.TimeFormat)
+// createLogger 创建并配置logger实例
+func createLogger() *Logger {
+	logger := &Logger{
+		level:   INFO,
+		writers: []io.Writer{os.Stdout}, // 默认输出到控制台
 	}
-
-	// 创建输出器
-	var writers []Writer
-
-	// 控制台输出
-	if config.Console {
-		writers = append(writers, NewConsoleWriter())
+	
+	// 从环境变量设置级别
+	if debug := os.Getenv("DEBUG"); debug != "" && (debug == "true" || debug == "1") {
+		logger.level = DEBUG
 	}
-
-	// 文件输出
-	if config.File != "" {
-		fileWriter, err := NewFileWriter(config.File)
-		if err != nil {
-			// 如果文件输出失败，记录错误但继续使用控制台输出
-			fmt.Fprintf(os.Stderr, "Failed to create file writer: %v\n", err)
+	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
+		if level, err := ParseLevel(logLevel); err == nil {
+			logger.level = level
+		}
+	}
+	
+	// 设置文件输出
+	if logFile := os.Getenv("LOG_FILE"); logFile != "" {
+		if file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+			logger.logFile = file
+			// 检查是否禁用控制台输出
+			if os.Getenv("LOG_CONSOLE") == "false" {
+				logger.writers = []io.Writer{file} // 只输出到文件
+			} else {
+				logger.writers = []io.Writer{os.Stdout, file} // 同时输出到控制台和文件
+			}
 		} else {
-			writers = append(writers, fileWriter)
+			fmt.Fprintf(os.Stderr, "无法打开日志文件 %s: %v\n", logFile, err)
 		}
 	}
-
-	// 如果没有任何输出器，至少创建控制台输出
-	if len(writers) == 0 {
-		writers = append(writers, NewConsoleWriter())
-	}
-
-	var writer Writer
-	if len(writers) == 1 {
-		writer = writers[0]
-	} else {
-		writer = NewMultiWriter(writers...)
-	}
-
-	return &Logger{
-		config:    config,
-		formatter: formatter,
-		writer:    writer,
-		level:     config.Level,
-	}, nil
+	
+	// 创建多写入器
+	multiWriter := io.MultiWriter(logger.writers...)
+	logger.logger = log.New(multiWriter, "", 0)
+	
+	return logger
 }
 
-// getDefaultLogger 获取默认日志器
-func getDefaultLogger() *Logger {
-	once.Do(func() {
-		config := ParseConfig()
-		logger, err := NewLogger(config)
-		if err != nil {
-			// 如果创建失败，使用最基本的配置
-			logger, _ = NewLogger(DefaultConfig)
-		}
-		defaultLogger = logger
-	})
-	return defaultLogger
+// ParseLevel 从字符串解析日志级别
+func ParseLevel(s string) (Level, error) {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "DEBUG":
+		return DEBUG, nil
+	case "INFO":
+		return INFO, nil
+	case "WARN", "WARNING":
+		return WARN, nil
+	case "ERROR":
+		return ERROR, nil
+	case "FATAL":
+		return FATAL, nil
+	default:
+		return INFO, fmt.Errorf("unknown log level: %s", s)
+	}
 }
 
-// Close 关闭日志器
-func (l *Logger) Close() error {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-
-	if l.writer != nil {
-		return l.writer.Close()
-	}
-	return nil
+// shouldLog 检查是否应该记录指定级别的日志
+func (l *Logger) shouldLog(level Level) bool {
+	l.mutex.RLock()
+	defer l.mutex.RUnlock()
+	return l.level <= level
 }
 
 // log 内部日志记录方法
@@ -119,152 +127,145 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 		return
 	}
 
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-
 	// 获取调用者信息
-	file, line, function := GetCallerInfo(4) // 跳过4层调用栈
-
-	entry := LogEntry{
-		Time:     time.Now(),
-		Level:    level,
-		Message:  msg,
-		Fields:   fields,
-		File:     file,
-		Line:     line,
-		Function: function,
+	_, file, line, _ := runtime.Caller(3)
+	if idx := strings.LastIndex(file, "/"); idx >= 0 {
+		file = file[idx+1:]
 	}
 
-	data := l.formatter.Format(entry)
-	l.writer.Write(data)
-}
-
-// logf 内部格式化日志记录方法
-func (l *Logger) logf(level Level, format string, args ...interface{}) {
-	if !l.shouldLog(level) {
-		return
+	// 构建日志条目
+	entry := map[string]interface{}{
+		"timestamp": time.Now().Format("2006-01-02T15:04:05.000Z07:00"),
+		"level":     levelNames[level],
+		"message":   msg,
+		"file":      fmt.Sprintf("%s:%d", file, line),
 	}
 
-	msg := fmt.Sprintf(format, args...)
-	l.log(level, msg, nil)
-}
+	// 添加字段
+	for _, field := range fields {
+		entry[field.Key] = field.Value
+	}
 
-// shouldLog 检查是否应该记录指定级别的日志
-func (l *Logger) shouldLog(level Level) bool {
-	return l.level <= level
+	// JSON格式输出
+	jsonData, _ := json.Marshal(entry)
+	l.logger.Println(string(jsonData))
+
+	// Fatal级别退出程序
+	if level == FATAL {
+		os.Exit(1)
+	}
 }
 
 // SetLevel 设置日志级别
-func (l *Logger) SetLevel(level Level) {
-	l.mutex.Lock()
-	defer l.mutex.Unlock()
-	l.level = level
+func SetLevel(level Level) {
+	defaultLogger.mutex.Lock()
+	defer defaultLogger.mutex.Unlock()
+	defaultLogger.level = level
 }
 
-// GetLevel 获取当前日志级别
-func (l *Logger) GetLevel() Level {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-	return l.level
-}
-
-// IsDebugEnabled 检查是否启用debug模式
-func (l *Logger) IsDebugEnabled() bool {
-	return l.shouldLog(DEBUG)
-}
-
-// 全局API函数
-
-// Debug 输出debug级别日志
+// 全局日志函数
 func Debug(msg string, fields ...Field) {
-	getDefaultLogger().log(DEBUG, msg, fields)
+	defaultLogger.log(DEBUG, msg, fields)
 }
 
-// Debugf 输出格式化debug级别日志
-func Debugf(format string, args ...interface{}) {
-	getDefaultLogger().logf(DEBUG, format, args...)
-}
-
-// Info 输出info级别日志
 func Info(msg string, fields ...Field) {
-	getDefaultLogger().log(INFO, msg, fields)
+	defaultLogger.log(INFO, msg, fields)
 }
 
-// Infof 输出格式化info级别日志
-func Infof(format string, args ...interface{}) {
-	getDefaultLogger().logf(INFO, format, args...)
-}
-
-// Warn 输出warn级别日志
 func Warn(msg string, fields ...Field) {
-	getDefaultLogger().log(WARN, msg, fields)
+	defaultLogger.log(WARN, msg, fields)
 }
 
-// Warnf 输出格式化warn级别日志
-func Warnf(format string, args ...interface{}) {
-	getDefaultLogger().logf(WARN, format, args...)
-}
-
-// Error 输出error级别日志
 func Error(msg string, fields ...Field) {
-	getDefaultLogger().log(ERROR, msg, fields)
+	defaultLogger.log(ERROR, msg, fields)
 }
 
-// Errorf 输出格式化error级别日志
-func Errorf(format string, args ...interface{}) {
-	getDefaultLogger().logf(ERROR, format, args...)
-}
-
-// Fatal 输出fatal级别日志并退出程序
 func Fatal(msg string, fields ...Field) {
-	getDefaultLogger().log(FATAL, msg, fields)
-	os.Exit(1)
+	defaultLogger.log(FATAL, msg, fields)
 }
 
-// Fatalf 输出格式化fatal级别日志并退出程序
-func Fatalf(format string, args ...interface{}) {
-	getDefaultLogger().logf(FATAL, format, args...)
-	os.Exit(1)
+// 字段构造函数
+func String(key, val string) Field {
+	return Field{Key: key, Value: val}
 }
 
-// 用户界面专用函数（不受日志级别限制）
+func Int(key string, val int) Field {
+	return Field{Key: key, Value: val}
+}
 
-// Print 输出消息（不受日志级别限制）
+func Int64(key string, val int64) Field {
+	return Field{Key: key, Value: val}
+}
+
+func Bool(key string, val bool) Field {
+	return Field{Key: key, Value: val}
+}
+
+func Err(err error) Field {
+	if err == nil {
+		return Field{Key: "error", Value: nil}
+	}
+	return Field{Key: "error", Value: err.Error()}
+}
+
+func Duration(key string, val time.Duration) Field {
+	return Field{Key: key, Value: val}
+}
+
+func Any(key string, val interface{}) Field {
+	return Field{Key: key, Value: val}
+}
+
+// Reinitialize 重新初始化默认logger（用于.env文件加载后）
+func Reinitialize() {
+	if defaultLogger.logFile != nil {
+		defaultLogger.logFile.Close()
+	}
+	defaultLogger = createLogger()
+}
+
+// Config 配置结构（兼容性）
+type Config struct {
+	Level Level
+}
+
+// InitLogger 初始化logger（兼容性）
+func InitLogger(config Config) error {
+	SetLevel(config.Level)
+	return nil
+}
+
+// ParseConfig 解析配置（兼容性）
+func ParseConfig() Config {
+	level := INFO
+	if debug := os.Getenv("DEBUG"); debug != "" && (debug == "true" || debug == "1") {
+		level = DEBUG
+	}
+	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
+		if l, err := ParseLevel(logLevel); err == nil {
+			level = l
+		}
+	}
+	return Config{Level: level}
+}
+
+// Close 关闭logger（兼容性）
+func Close() error {
+	if defaultLogger.logFile != nil {
+		return defaultLogger.logFile.Close()
+	}
+	return nil
+}
+
+// Print functions for backwards compatibility
 func Print(msg string) {
 	fmt.Print(msg)
 }
 
-// Printf 输出格式化消息（不受日志级别限制）
 func Printf(format string, args ...interface{}) {
 	fmt.Printf(format, args...)
 }
 
-// Println 输出消息并换行（不受日志级别限制）
 func Println(msg string) {
 	fmt.Println(msg)
-}
-
-// 全局工具函数
-
-// IsDebugEnabled 检查是否启用debug模式
-func IsDebugEnabled() bool {
-	return getDefaultLogger().IsDebugEnabled()
-}
-
-// SetLevel 设置全局日志级别
-func SetLevel(level Level) {
-	getDefaultLogger().SetLevel(level)
-}
-
-// GetLevel 获取全局日志级别
-func GetLevel() Level {
-	return getDefaultLogger().GetLevel()
-}
-
-// Close 关闭全局日志器
-func Close() error {
-	if defaultLogger != nil {
-		return defaultLogger.Close()
-	}
-	return nil
 }

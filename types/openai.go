@@ -32,7 +32,7 @@ type OpenAITool struct {
 
 // OpenAIToolChoice 表示OpenAI格式的工具选择策略
 type OpenAIToolChoice struct {
-	Type     string                   `json:"type"`              // "function"
+	Type     string                    `json:"type"`               // "function"
 	Function *OpenAIToolChoiceFunction `json:"function,omitempty"` // 当指定具体函数时
 }
 
@@ -41,13 +41,13 @@ type OpenAIToolChoiceFunction struct {
 }
 
 type OpenAIRequest struct {
-	Model       string             `json:"model"`
-	Messages    []OpenAIMessage    `json:"messages"`
-	MaxTokens   *int               `json:"max_tokens,omitempty"`
-	Temperature *float64           `json:"temperature,omitempty"`
-	Stream      *bool              `json:"stream,omitempty"`
-	Tools       []OpenAITool       `json:"tools,omitempty"`
-	ToolChoice  any                `json:"tool_choice,omitempty"` // 可以是 "auto", "none", "required" 或 OpenAIToolChoice
+	Model       string          `json:"model"`
+	Messages    []OpenAIMessage `json:"messages"`
+	MaxTokens   *int            `json:"max_tokens,omitempty"`
+	Temperature *float64        `json:"temperature,omitempty"`
+	Stream      *bool           `json:"stream,omitempty"`
+	Tools       []OpenAITool    `json:"tools,omitempty"`
+	ToolChoice  any             `json:"tool_choice,omitempty"` // 可以是 "auto", "none", "required" 或 OpenAIToolChoice
 }
 
 type OpenAIChoice struct {

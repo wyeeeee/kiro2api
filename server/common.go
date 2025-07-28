@@ -83,16 +83,16 @@ func (s *AnthropicStreamSender) SendEvent(c *gin.Context, data any) error {
 			eventType = t.(string)
 		}
 	}
-	
+
 	json, err := sonic.Marshal(data)
 	if err != nil {
 		return err
 	}
-	
+
 	logger.Debug("发送SSE事件",
 		logger.String("event", eventType),
 		logger.String("data", string(json)))
-	
+
 	fmt.Fprintf(c.Writer, "event: %s\n", eventType)
 	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 	c.Writer.Flush()
@@ -118,7 +118,7 @@ func (s *OpenAIStreamSender) SendEvent(c *gin.Context, data any) error {
 	if err != nil {
 		return err
 	}
-	
+
 	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 	c.Writer.Flush()
 	return nil
@@ -132,12 +132,12 @@ func (s *OpenAIStreamSender) SendError(c *gin.Context, message string, _ error) 
 			"code":    "internal_error",
 		},
 	}
-	
+
 	json, err := sonic.Marshal(errorResp)
 	if err != nil {
 		return err
 	}
-	
+
 	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 	c.Writer.Flush()
 	return nil

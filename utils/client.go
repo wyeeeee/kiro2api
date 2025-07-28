@@ -78,36 +78,20 @@ func getTimeoutFromEnv(envVar string, defaultMinutes int) time.Duration {
 	return time.Duration(defaultMinutes)
 }
 
-// DoWithMetrics 执行HTTP请求并记录性能指标
-func DoWithMetrics(req *http.Request) (*http.Response, error) {
-	start := time.Now()
-	resp, err := SharedHTTPClient.Do(req)
-	duration := time.Since(start)
-
-	// 记录指标
-	success := err == nil && resp != nil && resp.StatusCode < 500
-	RecordRequest(duration, success)
-
-	return resp, err
+// DoRequest 执行HTTP请求（使用默认客户端）
+func DoRequest(req *http.Request) (*http.Response, error) {
+	return SharedHTTPClient.Do(req)
 }
 
-// DoLongRequestWithMetrics 执行长时间请求并记录性能指标
-func DoLongRequestWithMetrics(req *http.Request) (*http.Response, error) {
-	start := time.Now()
-	resp, err := LongRequestClient.Do(req)
-	duration := time.Since(start)
-
-	// 记录指标
-	success := err == nil && resp != nil && resp.StatusCode < 500
-	RecordRequest(duration, success)
-
-	return resp, err
+// DoLongRequest 执行长时间请求
+func DoLongRequest(req *http.Request) (*http.Response, error) {
+	return LongRequestClient.Do(req)
 }
 
-// DoSmartRequestWithMetrics 根据请求复杂度智能选择客户端并执行请求
-func DoSmartRequestWithMetrics(httpReq *http.Request, anthropicReq *types.AnthropicRequest) (*http.Response, error) {
+// DoSmartRequest 根据请求复杂度智能选择客户端并执行请求
+func DoSmartRequest(httpReq *http.Request, anthropicReq *types.AnthropicRequest) (*http.Response, error) {
 	if anthropicReq != nil && AnalyzeRequestComplexity(*anthropicReq) == ComplexRequest {
-		return DoLongRequestWithMetrics(httpReq)
+		return DoLongRequest(httpReq)
 	}
-	return DoWithMetrics(httpReq)
+	return DoRequest(httpReq)
 }

@@ -16,10 +16,14 @@ func main() {
 		fmt.Printf("警告: 无法加载.env文件: %v\n", err)
 	}
 
-	// 初始化日志器
-	if err := logger.InitLogger(logger.ParseConfig()); err != nil {
-		fmt.Printf("初始化日志器失败: %v\n", err)
-	}
+	// 重新初始化logger以使用.env文件中的配置
+	logger.Reinitialize()
+
+	// 显示当前日志级别设置（仅在DEBUG级别时显示详细信息）
+	logger.Debug("日志系统初始化完成", 
+		logger.String("log_level", os.Getenv("LOG_LEVEL")),
+		logger.String("log_file", os.Getenv("LOG_FILE")))
+
 	defer logger.Close()
 
 	// 检查必需的环境变量

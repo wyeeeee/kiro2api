@@ -159,7 +159,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 	// 使用新的Token结构进行转换
 	var token types.Token
 	token.FromRefreshResponse(refreshResp, refreshToken)
-	
+
 	logger.Info("Token过期时间已计算",
 		logger.String("expires_at", token.ExpiresAt.Format("2006-01-02 15:04:05")),
 		logger.Int("expires_in_seconds", refreshResp.ExpiresIn))

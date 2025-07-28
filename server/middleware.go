@@ -18,7 +18,7 @@ func AuthMiddleware(authToken string) gin.HandlerFunc {
 func PathBasedAuthMiddleware(authToken string, protectedPrefixes []string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
-		
+
 		// 检查是否需要认证
 		if !requiresAuth(path, protectedPrefixes) {
 			logger.Debug("跳过认证", logger.String("path", path))
