@@ -4,9 +4,9 @@
 
 ## 项目概述
 
-这是 `kiro2api`，一个 Go 命令行工具和 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它管理 Kiro 认证令牌并提供实时流式响应功能。
+这是 `kiro2api`，一个 Go 高性能 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它提供多token池管理、智能请求分析、结构化日志系统和实时流式响应功能。
 
-**当前版本**: v2.5.3 - 重构工具调用去重机制，从参数哈希改为基于 `tool_use_id` 的标准去重，符合 Anthropic 最佳实践，彻底解决工具调用重复问题。
+**当前版本**: v2.7.0+ - 继续完善结构化日志系统，优化Token池管理，增强请求复杂度分析，维护基于 `tool_use_id` 的标准工具去重机制，完善Docker部署支持。
 
 ## 快速开始
 
@@ -41,7 +41,7 @@ curl -X POST http://localhost:8080/v1/messages \
 # 构建应用程序
 go build -o kiro2api main.go
 
-# 运行测试（当前无测试文件）
+# 运行测试
 go test ./...
 
 # 运行特定包的详细测试
@@ -67,9 +67,12 @@ rm -f kiro2api && go build -o kiro2api main.go
 ./kiro2api 8080              # 指定端口（环境变量PORT优先级更高）
 
 # 环境变量配置：
-export KIRO_CLIENT_TOKEN="your_token"  # 客户端认证token (默认: 123456)
-export PORT="8080"                      # 服务端口 (默认: 8080)
-export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
+export KIRO_CLIENT_TOKEN="your_token"      # 客户端认证token (默认: 123456)
+export PORT="8080"                          # 服务端口 (默认: 8080)
+export AWS_REFRESHTOKEN="your_refresh"      # AWS刷新token（必需设置，支持多个逗号分隔）
+export LOG_LEVEL="info"                     # 日志级别 (默认: info)
+export LOG_FORMAT="json"                    # 日志格式 (默认: json)
+export GIN_MODE="release"                   # Gin模式 (默认: release)
 ./kiro2api
 
 # 使用.env文件配置：
@@ -95,32 +98,34 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 
 ### 关键架构模式
 
-**智能请求处理**: 新增请求分析机制：
-- `utils.AnalyzeRequestComplexity()` - 根据token数量、内容长度、工具使用等因素评估复杂度
+**智能请求处理**: 全面的请求分析机制：
+- `utils.AnalyzeRequestComplexity()` - 根据token数量、内容长度、工具使用、关键词等因素评估复杂度
 - `utils.GetClientForRequest()` - 为不同复杂度的请求选择合适的HTTP客户端
 - 复杂请求使用15分钟超时，简单请求使用2分钟超时
+- 服务器读写超时配置，支持长时间处理
 
-**Token池管理**: 增强的认证系统：
-- `types.TokenPool` - 支持多个refresh token的池化管理
-- 自动轮换机制，每个token最多重试3次
-- 基于token过期时间的智能缓存
-- 故障转移和负载均衡
+**Token池管理**: 高级认证系统：
+- `types.TokenPool` - 支持多个refresh token的池化管理和自动轮换
+- 智能故障转移，每个token最多重试3次后自动跳过
+- `types.TokenCache` - 基于token过期时间的多索引智能缓存
+- 负载均衡和健康状态管理
 
-**工具调用去重**: 增强的工具调用管理系统：
+**工具调用去重**: 标准化工具调用管理：
 - `utils.ToolDedupManager` - 基于 `tool_use_id` 的精确去重机制
 - 符合 Anthropic 标准，避免基于参数哈希的误判
 - 流式和非流式请求统一去重逻辑，确保一致性
 - 请求级别的去重管理，防止跨请求状态污染
 
-**中间件链**: gin-gonic 服务器使用：
-- `gin.Logger()` 和 `gin.Recovery()` 提供基本功能  
+**中间件链**: gin-gonic 服务器架构：
+- `gin.Logger()` 和 `gin.Recovery()` 提供基本功能
 - `corsMiddleware()` 处理 CORS
-- `AuthMiddleware(authToken)` 对除 `/health` 外的所有端点进行 API 密钥验证
+- `PathBasedAuthMiddleware()` 基于路径的认证，仅对 `/v1/*` 端点验证 API 密钥
 
-**流处理架构**: 
+**流处理架构**:
 - 使用滑动窗口缓冲区的 `StreamParser` 进行实时 EventStream 解析
 - 立即客户端流式传输（零首字符延迟）
 - 使用 `binary.BigEndian` 进行 AWS EventStream 协议的二进制格式解析
+- 支持 `assistantResponseEvent` 和 `toolUseEvent` 两种事件类型
 
 ## 包结构
 
@@ -146,14 +151,13 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 - 通过 `RefreshTokenForServer()` 在 403 错误时自动刷新
 - 使用`utils.SharedHTTPClient`进行HTTP请求
 
-**`utils/`** - **[最近重构]** 集中化工具
+**`utils/`** - **[最近优化]** 集中化工具包
 - `message.go`: `GetMessageContent()` 函数（消除重复）
 - `http.go`: `ReadHTTPResponse()` 标准响应读取
 - `client.go`: 配置超时的 `SharedHTTPClient` 和 `LongRequestClient`
-- `request_analyzer.go`: **[新增]** 请求复杂度分析和客户端选择
-- `metrics.go`: **[新增]** 性能指标记录功能
+- `request_analyzer.go`: **[核心功能]** 请求复杂度分析和客户端选择
 - `tool_dedup.go`: **[v2.5.3重构]** 基于 `tool_use_id` 的工具去重管理器
-- `file.go`, `uuid.go`: 文件操作和 UUID 生成
+- `uuid.go`: UUID 生成工具
 
 **`types/`** - **[最近重构]** 数据结构定义
 - `anthropic.go`: Anthropic API 请求/响应结构
@@ -163,10 +167,12 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 - `token.go`: **[增强]** 统一token管理结构（`TokenInfo`, `TokenPool`, `TokenCache`）
 - `common.go`: 通用结构定义（`Usage`统计，`BaseTool`工具抽象）
 
-**`logger/`** - 结构化日志系统
-- `logger.go`: 主日志接口
-- `config.go`, `level.go`: 配置和日志级别管理
-- `formatter.go`, `writer.go`: 输出格式化和写入器
+**`logger/`** - **[v2.6.0+优化]** 结构化日志系统
+- `logger.go`: 完整的日志系统实现，支持结构化字段和JSON格式输出
+- 支持环境变量配置：`LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_CONSOLE`
+- 日志级别管理（DEBUG、INFO、WARN、ERROR、FATAL）
+- 多输出支持：控制台、文件或同时输出
+- **优化亮点**: 简化架构，移除复杂 writer 接口，提升性能和可维护性
 
 **`config/`** - 配置常量
 - `ModelMap`: 将公开模型名称映射到内部 CodeWhisperer 模型 ID
@@ -181,85 +187,150 @@ export AWS_REFRESHTOKEN="your_refresh"  # AWS刷新token（必需设置）
 
 ## Docker 支持
 
-项目包含 Dockerfile，支持容器化部署：
+项目提供完整的容器化支持，包括 Dockerfile 和 docker-compose.yml：
+
+### Dockerfile 特性
+- 多平台构建支持（BUILDPLATFORM, TARGETOS, TARGETARCH）
+- 多阶段构建，最小化镜像大小
+- 非 root 用户运行，增强安全性
+- 内置健康检查
+- Alpine Linux 基础镜像
+
+### Docker Compose 部署
 
 ```bash
-# 构建 Docker 镜像
+# 使用 docker-compose（推荐）
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f kiro2api
+
+# 停止服务
+docker-compose down
+```
+
+### Docker 命令示例
+
+```bash
+# 使用预构建镜像
+docker run -d \
+  --name kiro2api \
+  -p 8080:8080 \
+  -e AWS_REFRESHTOKEN="your_refresh_token" \
+  -e KIRO_CLIENT_TOKEN="123456" \
+  ghcr.io/caidaoli/kiro2api:latest
+
+# 本地构建并运行
 docker build -t kiro2api .
-
-# 运行容器（默认端口 8080）
-docker run -p 8080:8080 kiro2api
-
+docker run -d \
+  --name kiro2api \
+  -p 8080:8080 \
+  -e AWS_REFRESHTOKEN="your_refresh_token" \
+  -e KIRO_CLIENT_TOKEN="123456" \
+  kiro2api
 ```
 
 ## 重要实现细节
 
-**认证**: 采用基于路径的认证策略
+**认证**: 采用基于路径的认证策略（PathBasedAuthMiddleware）
 - **需要认证**: `/v1/*` 开头的所有端点，需要在 `Authorization: Bearer <token>` 或 `x-api-key: <token>` 头中提供 API 密钥
-- **无需认证**: `/health`、`/metrics` 等非API端点
+- **无需认证**: `/health` 等非API端点
 
 **模型映射**: 公开模型名称通过 `config.ModelMap` 映射到内部 CodeWhisperer ID：
 - `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
 - `claude-3-7-sonnet-20250219` → `CLAUDE_3_7_SONNET_20250219_V1_0`
 - `claude-3-5-haiku-20241022` → `CLAUDE_3_5_HAIKU_20241022_V1_0`
 
-**代理配置**: 所有 CodeWhisperer 请求都通过代理 `127.0.0.1:8080` 路由
+**流式传输**: 使用自定义二进制 EventStream 解析器（StreamParser）进行实时响应处理
+- 支持滑动窗口缓冲区，实现零延迟流式传输
+- 处理 `assistantResponseEvent` 和 `toolUseEvent` 两种事件类型
+- 自动转换为 Anthropic SSE 格式
 
-**流式传输**: 使用自定义二进制 EventStream 解析器进行实时响应处理，而非缓冲解析
+**Token池配置**: 高级Token管理，完全基于环境变量：
+1. **环境变量 AWS_REFRESHTOKEN**: **必需设置**，支持多个token用逗号分隔
+2. **多Token支持**: 智能轮换、故障转移、最多3次重试
+3. **智能缓存**: 基于token过期时间的缓存管理
 
-**认证配置**: 完全基于环境变量的认证配置：
-1. **环境变量 AWS_REFRESHTOKEN**: **必需设置**，程序启动时检查此环境变量，未设置则退出
-2. **.env文件配置**: 项目根目录的.env文件，支持的变量：
+**环境变量配置**: 支持完整的环境变量配置：
 ```bash
-KIRO_CLIENT_TOKEN=123456        # 客户端认证token（默认：123456）
-PORT=8080                       # 服务端口（默认：8080）
-AWS_REFRESHTOKEN=your_token     # AWS刷新token（必需设置）
+# 必需配置
+AWS_REFRESHTOKEN=token1,token2,token3  # 多token支持
+
+# 可选配置
+KIRO_CLIENT_TOKEN=123456               # 客户端认证token
+PORT=8080                              # 服务端口
+LOG_LEVEL=info                         # 日志级别
+LOG_FORMAT=json                        # 日志格式
+GIN_MODE=release                       # Gin模式
+
+# 超时配置
+REQUEST_TIMEOUT_MINUTES=15             # 复杂请求超时
+SIMPLE_REQUEST_TIMEOUT_MINUTES=2       # 简单请求超时
+SERVER_READ_TIMEOUT_MINUTES=16         # 服务器读取超时
+SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 ```
 
-**错误处理**: 403 响应触发通过 `auth.RefreshTokenForServer()` 自动令牌刷新
+**错误处理**: 智能错误处理和恢复机制
+- 403 响应触发自动令牌刷新
+- Token池故障转移
+- 请求复杂度分析和超时调整
 
 ## 技术栈
 
-- **框架**: gin-gonic/gin v1.10.1
-- **JSON**: bytedance/sonic（高性能）
-- **HTTP**: 标准 net/http 与共享客户端
-- **流式传输**: 自定义 EventStream 解析器
+- **Web框架**: gin-gonic/gin v1.10.1
+- **JSON处理**: bytedance/sonic v1.14.0（高性能）
+- **环境变量**: github.com/joho/godotenv v1.5.1
+- **HTTP**: 标准 net/http 与共享客户端池
+- **流式传输**: 自定义 EventStream 二进制协议解析器
 - **Go 版本**: 1.23.3
 
-## 最近重构 (v2.5.3)
+## 最近重构 (v2.7.0+)
 
-工具调用去重机制重构，符合 Anthropic 标准：
-- **去重机制重构**: 从基于 `name+input` 哈希改为基于 `tool_use_id` 的标准去重
-- **精确去重**: 使用 Anthropic 官方推荐的唯一标识符，避免参数哈希误判
+持续优化和功能增强：
+
+### 结构化日志系统优化 (v2.6.0+)
+- **JSON格式输出**: 标准 JSON 格式，便于日志分析和监控集成
+- **简化架构**: 移除复杂的 writer 接口，提升性能和可维护性
+- **多输出支持**: 支持控制台、文件或同时输出到多个目标
+- **环境变量配置**: 支持 `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_CONSOLE` 配置
+- **调用者信息**: 自动记录文件名和行号，便于调试
+
+### Docker 和部署增强
+- **多平台构建**: 支持不同架构的Docker镜像构建
+- **安全优化**: 非root用户运行，最小权限原则
+- **健康检查**: 内置容器健康检查机制
+- **Docker Compose**: 提供完整的编排配置文件
+
+## 重要历史重构记录
+
+### v2.5.3 - 工具调用去重机制标准化
+**符合 Anthropic 最佳实践的精确去重**：
+- **标准化去重**: 从 `name+input` 哈希改为基于 `tool_use_id` 的标准去重
+- **精确识别**: 使用 Anthropic 官方推荐的唯一标识符，避免参数哈希误判
 - **一致性保证**: 流式和非流式处理统一使用相同去重逻辑
-- **性能优化**: 简化去重算法，移除复杂的 JSON 序列化和 SHA256 计算
-- **符合标准**: 完全遵循 Anthropic 工具调用最佳实践和文档建议
+- **性能提升**: 简化去重算法，移除复杂的 JSON 序列化和 SHA256 计算
+- **标准合规**: 完全遵循 Anthropic 工具调用最佳实践
 
-## 历史重构 (v2.5.2)
+### v2.5.2 - 全局状态污染修复
+**请求隔离和状态管理优化**：
+- **状态隔离**: 移除全局工具跟踪器，避免跨请求工具调用干扰
+- **去重策略改进**: 请求级别的 `tool_use_id` 去重，确保逻辑正确性
+- **并发安全**: 每个请求独立维护工具去重状态
+- **代码简化**: 移除不必要的全局 mutex 和同步逻辑
 
-代码库工具调用全局状态污染修复：
-- **修复全局状态污染**: 移除错误的全局工具跟踪器(`globalProcessedTools`)，避免跨请求工具调用干扰
-- **改进去重策略**: 从工具名称去重改为请求级别的`tool_use_id`去重，确保去重逻辑的正确性
-- **消除跨请求影响**: 每个请求独立维护工具去重状态，同一工具可在不同请求中正常使用
-- **代码简化**: 移除不必要的全局mutex和同步逻辑，提升代码可维护性
+### v2.5.1 - 工具调用稳定性增强
+**工具处理流程优化**：
+- **去重逻辑优化**: 使用 `name+input` 组合创建唯一标识符
+- **代码清理**: 移除调试日志，提升代码可读性
+- **稳定性保证**: 确保工具调用只处理一次，解决重复执行问题
 
-## 历史重构 (v2.5.1)
-
-代码库工具调用重复修复和代码清理：
-- **工具去重优化**: 重构工具去重逻辑，使用`name+input`组合创建唯一标识符，有效防止重复工具调用
-- **代码清理**: 移除handlers.go中的调试日志代码，提升代码可读性和性能
-- **稳定性增强**: 优化工具处理流程，确保工具调用只处理一次，解决工具重复执行问题
-- **调试清理**: 删除临时调试测试脚本和图片文件，保持代码库整洁
-
-## 历史重构 (v2.5.0)
-
-代码库增强请求验证和错误处理重构：
-- **智能请求分析**: 新增`utils.AnalyzeRequestComplexity()`，根据token数量、内容长度、工具使用等因素评估请求复杂度
-- **动态超时配置**: 复杂请求使用15分钟超时，简单请求使用2分钟超时，优化资源分配
-- **Token池管理**: 实现`types.TokenPool`支持多个refresh token的池化管理和自动轮换
-- **增强错误处理**: 改进工具结果内容解析和请求验证机制，提供更好的错误诊断
-- **性能优化**: 新增性能指标记录功能，支持请求处理时间监控
-- **超时配置**: 增加服务器读写超时配置，提高系统稳定性
+### v2.5.0 - 智能请求处理系统
+**全面的请求分析和资源管理**：
+- **复杂度分析**: 多因素评估请求复杂度（token数量、内容长度、工具使用等）
+- **动态超时**: 智能调整超时时间，复杂请求15分钟，简单请求2分钟
+- **Token池管理**: 多token池化管理和自动轮换机制
+- **错误处理增强**: 改进工具结果内容解析和请求验证
+- **性能监控**: 请求处理时间监控和性能指标记录
 
 ## 历史重构 (v2.4.0)
 
@@ -299,20 +370,54 @@ AWS_REFRESHTOKEN=your_token     # AWS刷新token（必需设置）
 
 ### 添加新的模型支持
 1. 在 `config/config.go` 的 `ModelMap` 中添加模型映射
+   ```go
+   "new-model-name": "INTERNAL_MODEL_ID"
+   ```
 2. 确保 `types/model.go` 中的结构支持新模型
 3. 测试新模型的请求和响应转换
+4. 更新 README.md 中的模型列表
 
 ### 修改认证逻辑
-1. 主要逻辑在 `server/middleware.go` 的 `AuthMiddleware`
-2. 令牌刷新逻辑在 `auth/token.go`
-3. 确保所有端点（除 `/health`）都使用中间件
+1. 主要逻辑在 `server/middleware.go` 的 `PathBasedAuthMiddleware`
+2. Token管理和刷新逻辑在 `auth/token.go`
+3. Token池配置在 `types/token.go`
+4. 确保所有 `/v1/*` 端点都经过认证验证
 
 ### 调试流式响应
-1. 检查 `parser/sse_parser.go` 中的 `StreamParser`
-2. 确认二进制 EventStream 解析逻辑
-3. 验证客户端格式转换（Anthropic SSE vs OpenAI 流式）
+1. 检查 `parser/sse_parser.go` 中的 `StreamParser` 和 `ParseEvents`
+2. 确认二进制 EventStream 解析逻辑（BigEndian 格式）
+3. 验证事件类型处理：`assistantResponseEvent` 和 `toolUseEvent`
+4. 测试客户端格式转换（Anthropic SSE vs OpenAI 流式）
 
-### 性能优化
-1. 利用 `utils.SharedHTTPClient` 复用连接
-2. 确保使用 `bytedance/sonic` 进行 JSON 操作
-3. 监控 `StreamParser` 的内存使用情况
+### 调试Token池和缓存
+1. 检查 `auth/token.go` 中的Token池管理逻辑
+2. 验证多Token轮换和故障转移机制
+3. 监控Token缓存命中率和过期处理
+4. 使用环境变量配置多个refresh token测试
+
+### 调试日志系统
+1. 检查 `logger/logger.go` 中的结构化日志实现
+2. 配置环境变量：
+   - `LOG_LEVEL`: debug, info, warn, error
+   - `LOG_FORMAT`: text, json
+   - `LOG_FILE`: 日志文件路径
+   - `LOG_CONSOLE`: 是否输出到控制台
+3. 监控 JSON 格式日志输出，便于问题诊断和性能分析
+
+### 调试请求复杂度分析
+1. 检查 `utils/request_analyzer.go` 中的复杂度评估逻辑
+2. 验证不同复杂度请求的超时配置
+3. 测试HTTP客户端选择机制（SharedHTTPClient vs LongRequestClient）
+4. 监控请求处理时间和资源使用情况
+
+### 工具调用去重调试
+1. 验证 `utils/tool_dedup.go` 中基于 `tool_use_id` 的去重逻辑
+2. 测试流式和非流式请求的工具调用一致性
+3. 确保请求级别的去重管理，避免跨请求状态污染
+4. 检查工具调用错误处理和调试支持
+
+### Docker 部署调试
+1. 验证 `Dockerfile` 多平台构建配置
+2. 测试 `docker-compose.yml` 环境变量传递
+3. 检查容器健康检查机制（`/health` 端点）
+4. 监控容器日志和性能指标

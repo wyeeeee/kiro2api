@@ -11,14 +11,16 @@
 - **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期令牌
 - **Token池管理**：支持多个refresh token轮换使用，提供故障转移和负载均衡
 - **智能请求分析**：自动分析请求复杂度，动态调整超时时间和客户端配置
+- **结构化日志系统**：采用JSON格式输出，支持环境变量配置日志级别
 - **增强错误处理**：改进工具结果内容解析和请求验证机制
 - **完善的中间件**：统一的认证、CORS 和日志处理
-- **容器化支持**：提供 Dockerfile，支持 Docker 部署
+- **容器化支持**：提供 Dockerfile 和 docker-compose.yml，支持容器化部署
 
 ## 技术栈
 
 - **Web框架**: gin-gonic/gin v1.10.1
 - **JSON处理**: bytedance/sonic v1.14.0
+- **环境变量**: github.com/joho/godotenv v1.5.1
 - **Go版本**: 1.23.3
 - **流式解析**: 自定义 AWS EventStream 二进制协议解析器
 
@@ -52,12 +54,25 @@ cp .env.example .env
 ### 使用 Docker
 
 ```bash
-# 构建镜像
+# 方式一：使用预构建镜像
+docker run -d \
+  --name kiro2api \
+  -p 8080:8080 \
+  -e AWS_REFRESHTOKEN="your_refresh_token" \
+  -e KIRO_CLIENT_TOKEN="123456" \
+  ghcr.io/caidaoli/kiro2api:latest
+
+# 方式二：本地构建镜像
 docker build -t kiro2api .
+docker run -d \
+  --name kiro2api \
+  -p 8080:8080 \
+  -e AWS_REFRESHTOKEN="your_refresh_token" \
+  -e KIRO_CLIENT_TOKEN="123456" \
+  kiro2api
 
-# 运行容器
-docker run -p 8080:8080 kiro2api
-
+# 方式三：使用 docker-compose
+docker-compose up -d
 ```
 
 ## API 接口
@@ -80,11 +95,28 @@ Authorization: Bearer your-auth-token
 # 或使用 x-api-key 认证
 x-api-key: your-auth-token
 ```
-### 在Claude Code中使用
+
+### 在 Claude Code 中使用
 
 ```bash
-export ANTHROPIC_AUTH_TOKEN=123456 
+export ANTHROPIC_AUTH_TOKEN=123456
 export ANTHROPIC_BASE_URL=http://localhost:8080
+```
+
+### 在其他应用中使用
+
+```bash
+# 作为 Anthropic API 使用
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Authorization: Bearer 123456" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 1000, "messages": [{"role": "user", "content": "Hello"}]}'
+
+# 作为 OpenAI API 使用
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer 123456" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "claude-sonnet-4-20250514", "messages": [{"role": "user", "content": "Hello"}]}'
 ```
 ### 请求示例
 
@@ -229,9 +261,18 @@ kiro2api完全支持Anthropic和OpenAI格式的工具调用：
 
 当前支持的模型映射：
 
-- `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
-- `claude-3-7-sonnet-20250219` → `CLAUDE_3_7_SONNET_20250219_V1_0`
-- `claude-3-5-haiku-20241022` → `CLAUDE_3_5_HAIKU_20241022_V1_0`
+| 公开模型名称 | 内部 CodeWhisperer 模型 ID | 说明 |
+|-------------|---------------------------|------|
+| `claude-sonnet-4-20250514` | `CLAUDE_SONNET_4_20250514_V1_0` | 最新 Claude-4 Sonnet 模型 |
+| `claude-3-7-sonnet-20250219` | `CLAUDE_3_7_SONNET_20250219_V1_0` | Claude-3.7 Sonnet 模型 |
+| `claude-3-5-haiku-20241022` | `CLAUDE_3_5_HAIKU_20241022_V1_0` | Claude-3.5 Haiku 模型 |
+
+### 获取模型列表
+
+```bash
+curl -X GET http://localhost:8080/v1/models \
+  -H "Authorization: Bearer 123456"
+```
 
 ## 配置管理
 
@@ -246,7 +287,17 @@ export AWS_REFRESHTOKEN="your_refresh_token"  # 必需设置，支持多个token
 # 可选配置
 export KIRO_CLIENT_TOKEN="your_token"         # 客户端认证token（默认：123456）
 export PORT="8080"                            # 服务端口（默认：8080）
-export LOG_LEVEL="info"                       # 日志级别（默认：info）
+export LOG_LEVEL="info"                       # 日志级别：debug, info, warn, error（默认：info）
+export LOG_FORMAT="json"                      # 日志格式：text, json（默认：json）
+export LOG_FILE="/path/to/log/file"           # 日志文件路径（可选）
+export LOG_CONSOLE="true"                     # 是否输出到控制台（默认：true）
+export GIN_MODE="release"                     # Gin模式：debug, release, test（默认：release）
+
+# 超时配置
+export REQUEST_TIMEOUT_MINUTES="15"           # 复杂请求超时（默认：15分钟）
+export SIMPLE_REQUEST_TIMEOUT_MINUTES="2"    # 简单请求超时（默认：2分钟）
+export SERVER_READ_TIMEOUT_MINUTES="16"      # 服务器读取超时（默认：16分钟）
+export SERVER_WRITE_TIMEOUT_MINUTES="16"     # 服务器写入超时（默认：16分钟）
 ```
 
 ### .env 文件支持
@@ -262,24 +313,57 @@ KIRO_CLIENT_TOKEN=123456
 PORT=8080
 AWS_REFRESHTOKEN=your_refresh_token_here
 LOG_LEVEL=info
+LOG_FORMAT=json
+GIN_MODE=release
+REQUEST_TIMEOUT_MINUTES=15
+SIMPLE_REQUEST_TIMEOUT_MINUTES=2
+SERVER_READ_TIMEOUT_MINUTES=16
+SERVER_WRITE_TIMEOUT_MINUTES=16
 ```
 
 ### Token 池管理
 
-- **多Token支持**：支持多个refresh token，用逗号分隔
-- **自动轮换**：当一个token失败时自动切换到下一个
-- **失败重试**：每个token最多重试3次，超过后自动跳过
-- **智能缓存**：基于token自身过期时间进行缓存管理
+kiro2api 支持高级的 Token 池管理功能：
+
+- **多Token支持**：支持多个refresh token，用逗号分隔配置
+- **自动轮换**：智能轮换使用不同的 token，提供负载均衡
+- **故障转移**：当一个token失败时自动切换到下一个可用token
+- **失败重试**：每个token最多重试3次，超过限制后自动跳过
+- **智能缓存**：基于token自身过期时间进行缓存管理，避免不必要的刷新
 - **自动刷新**：当收到403错误时自动刷新token
+
+#### Token池配置示例
+
+```bash
+# 单个token
+export AWS_REFRESHTOKEN="token1"
+
+# 多个token（推荐）
+export AWS_REFRESHTOKEN="token1,token2,token3"
+```
 
 ### 智能请求分析
 
-- **复杂度分析**：根据请求的token数量、内容长度、工具使用情况自动评估复杂度
-- **动态超时**：复杂请求使用15分钟超时，简单请求使用2分钟超时
+系统会自动分析每个请求的复杂度并优化处理：
+
+- **复杂度评估**：根据以下因素评估请求复杂度：
+  - Token数量（>4000为复杂）
+  - 内容长度（>10K字符为复杂）
+  - 工具使用情况（有工具调用为复杂）
+  - 系统提示长度（>2K字符增加复杂度）
+  - 关键词检测（包含"分析"、"详细"等关键词）
+
+- **动态超时配置**：
+  - 复杂请求：15分钟超时
+  - 简单请求：2分钟超时
+  - 服务器读写超时：16分钟
+
 - **客户端选择**：自动为不同复杂度的请求选择合适的HTTP客户端
 - **性能优化**：基于请求特征进行智能资源分配
 
-刷新URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
+#### Token刷新接口
+
+内部使用的刷新URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
 
 ## 开发指南
 
@@ -308,15 +392,40 @@ rm -f kiro2api && go build -o kiro2api main.go
 
 ```
 kiro2api/
-├── main.go              # 程序入口
-├── auth/                # 认证和令牌管理
-├── config/              # 配置和常量定义
-├── converter/           # API 格式转换
-├── logger/              # 结构化日志系统
-├── parser/              # 流式响应解析
-├── server/              # HTTP 服务器和处理器
-├── types/               # 数据结构定义
-└── utils/               # 工具函数
+├── main.go                      # 程序入口，初始化日志和服务器
+├── .env.example                 # 环境变量配置示例
+├── Dockerfile                   # Docker 构建文件
+├── docker-compose.yml           # Docker Compose 配置
+├── auth/
+│   └── token.go                 # Token管理，支持多token池和自动轮换
+├── config/
+│   └── config.go                # 配置常量，模型映射和API端点
+├── converter/
+│   └── converter.go             # API格式转换，支持OpenAI↔Anthropic↔CodeWhisperer
+├── logger/
+│   └── logger.go                # 结构化日志系统，支持JSON格式和环境变量配置
+├── parser/
+│   └── sse_parser.go            # AWS EventStream二进制协议解析器
+├── server/
+│   ├── server.go                # HTTP服务器和路由配置
+│   ├── handlers.go              # Anthropic API处理器
+│   ├── openai_handlers.go       # OpenAI API处理器
+│   ├── middleware.go            # 认证和CORS中间件
+│   └── common.go                # 共享HTTP工具和错误处理
+├── types/
+│   ├── anthropic.go             # Anthropic API数据结构
+│   ├── openai.go                # OpenAI API数据结构
+│   ├── codewhisperer.go         # CodeWhisperer API数据结构
+│   ├── token.go                 # Token管理相关结构
+│   ├── model.go                 # 模型定义结构
+│   └── common.go                # 通用数据结构
+└── utils/
+    ├── client.go                # HTTP客户端管理
+    ├── http.go                  # HTTP响应处理工具
+    ├── message.go               # 消息内容提取工具
+    ├── request_analyzer.go      # 请求复杂度分析
+    ├── tool_dedup.go            # 工具调用去重管理
+    └── uuid.go                  # UUID生成工具
 ```
 
 ## 架构说明
@@ -324,30 +433,80 @@ kiro2api/
 ### 请求处理流程
 
 1. **接收请求** - gin 路由器接收 HTTP 请求
-2. **认证验证** - AuthMiddleware 验证 API 密钥
-3. **格式转换** - converter 包将请求转换为 CodeWhisperer 格式
-4. **代理转发** - 通过 `127.0.0.1:8080` 代理转发到 AWS CodeWhisperer
-5. **响应解析** - StreamParser 实时解析 AWS EventStream 二进制数据
-6. **格式转换** - 将响应转换回客户端请求的格式
-7. **返回响应** - 以流式或非流式方式返回给客户端
+2. **认证验证** - PathBasedAuthMiddleware 验证 API 密钥
+3. **请求分析** - 智能分析请求复杂度，选择合适的客户端和超时配置
+4. **格式转换** - converter 包将请求转换为 CodeWhisperer 格式
+5. **Token管理** - 从Token池获取可用的access token，支持自动轮换
+6. **代理转发** - 转发到 AWS CodeWhisperer API
+7. **响应解析** - StreamParser 实时解析 AWS EventStream 二进制数据
+8. **格式转换** - 将响应转换回客户端请求的格式（Anthropic/OpenAI）
+9. **返回响应** - 以流式或非流式方式返回给客户端
 
 ### 核心特性
 
 - **零延迟流式**: 使用滑动窗口缓冲区的自定义 EventStream 解析器
+- **智能Token管理**: 多token池支持，自动轮换和故障转移
+- **请求复杂度分析**: 根据请求特征动态调整超时和客户端配置
 - **统一中间件**: 集中式的认证、CORS 和错误处理
 - **高性能处理**: 共享 HTTP 客户端和优化的 JSON 序列化
 - **容错设计**: 自动令牌刷新和优雅的错误处理
-- **智能超时**: 基于请求复杂度的动态超时配置
-- **精确去重**: 基于 `tool_use_id` 的工具调用去重，符合 Anthropic 标准
+- **精确工具去重**: 基于 `tool_use_id` 的工具调用去重，符合 Anthropic 标准
+- **结构化日志**: JSON格式日志输出，便于监控和分析
 - **增强验证**: 改进的请求验证和工具结果内容解析机制
 
-## 环境变量
+## Docker 部署
 
-可以通过环境变量配置部分行为：
+### 使用 docker-compose（推荐）
 
+1. 创建 `.env` 文件：
 ```bash
-# 日志级别（可选）
-export LOG_LEVEL=info
+cp .env.example .env
+# 编辑 .env 文件，设置必要的环境变量
+```
+
+2. 启动服务：
+```bash
+docker-compose up -d
+```
+
+3. 查看日志：
+```bash
+docker-compose logs -f kiro2api
+```
+
+4. 停止服务：
+```bash
+docker-compose down
+```
+
+### 健康检查
+
+容器支持健康检查，通过 `/health` 端点监控服务状态：
+```bash
+# 检查容器健康状态
+docker ps
+docker inspect kiro2api | grep -A 10 "Health"
+```
+
+## 日志系统
+
+项目采用结构化日志系统，支持JSON格式输出：
+
+### 日志配置
+- **LOG_LEVEL**: 设置日志级别（debug, info, warn, error）
+- **LOG_FORMAT**: 设置日志格式（text, json）
+- **LOG_FILE**: 设置日志文件路径（可选）
+- **LOG_CONSOLE**: 是否同时输出到控制台（默认：true）
+
+### 日志示例
+```json
+{
+  "timestamp": "2024-01-01T12:00:00.000Z",
+  "level": "INFO",
+  "message": "启动Anthropic API代理服务器",
+  "file": "server.go:188",
+  "port": "8080"
+}
 ```
 
 ## 注意事项

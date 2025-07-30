@@ -223,14 +223,14 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 
 	// 构建历史消息
-	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 {
+	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 || len(anthropicReq.Tools) > 0 {
 		var history []any
 
-		// 正确处理 system 消息
+		// 构建综合系统提示
+		var systemContentBuilder strings.Builder
+		
+		// 添加原有的 system 消息
 		if len(anthropicReq.System) > 0 {
-			// 将 system prompt 作为独立的 user/assistant 消息对添加到历史记录
-			// AWS Q 的后端会将其识别为 system prompt
-			var systemContentBuilder strings.Builder
 			for _, sysMsg := range anthropicReq.System {
 				content, err := utils.GetMessageContent(sysMsg)
 				if err == nil {
@@ -238,7 +238,19 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 					systemContentBuilder.WriteString("\n")
 				}
 			}
-
+		}
+		
+		// 如果有工具，添加工具使用系统提示
+		if len(anthropicReq.Tools) > 0 {
+			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.Tools)
+			if systemContentBuilder.Len() > 0 {
+				systemContentBuilder.WriteString("\n\n")
+			}
+			systemContentBuilder.WriteString(toolSystemPrompt)
+		}
+		
+		// 如果有系统内容，添加到历史记录
+		if systemContentBuilder.Len() > 0 {
 			userMsg := types.HistoryUserMessage{}
 			userMsg.UserInputMessage.Content = strings.TrimSpace(systemContentBuilder.String())
 			userMsg.UserInputMessage.ModelId = modelId
@@ -285,6 +297,126 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 	}
 
 	return cwReq
+}
+
+// generateToolSystemPrompt 生成工具使用的系统提示
+// 根据工具复杂度提供不同级别的指导，避免过度复杂化简单工具
+func generateToolSystemPrompt(tools []types.AnthropicTool) string {
+	var prompt strings.Builder
+	
+	prompt.WriteString("你是一个专业的助手，必须直接使用提供的工具来完成任务。")
+	prompt.WriteString("重要：绝不要要求用户提供更多信息，必须使用合理的默认值直接调用工具。")
+	prompt.WriteString("\n\n可用工具：\n")
+	
+	hasComplexTools := false
+	
+	for _, tool := range tools {
+		prompt.WriteString(fmt.Sprintf("- %s: %s\n", tool.Name, tool.Description))
+		
+		// 检查工具复杂度
+		isSimple := isSimpleTool(tool)
+		if isSimple {
+			// 简单工具：仅显示参数名称
+			if properties, ok := tool.InputSchema["properties"].(map[string]any); ok {
+				var paramNames []string
+				for paramName := range properties {
+					paramNames = append(paramNames, paramName)
+				}
+				if len(paramNames) > 0 {
+					prompt.WriteString(fmt.Sprintf("  参数: %s\n", strings.Join(paramNames, ", ")))
+				}
+			}
+		} else {
+			// 复杂工具：显示详细信息
+			hasComplexTools = true
+			if properties, ok := tool.InputSchema["properties"].(map[string]any); ok {
+				for paramName, paramDef := range properties {
+					if paramObj, ok := paramDef.(map[string]any); ok {
+						paramType := "string"
+						if pType, ok := paramObj["type"].(string); ok {
+							paramType = pType
+						}
+						
+						prompt.WriteString(fmt.Sprintf("  - %s (%s)", paramName, paramType))
+						
+						// 处理枚举值
+						if enum, hasEnum := paramObj["enum"]; hasEnum {
+							if enumSlice, ok := enum.([]any); ok {
+								var enumStrs []string
+								for _, val := range enumSlice {
+									if str, ok := val.(string); ok {
+										enumStrs = append(enumStrs, str)
+									}
+								}
+								if len(enumStrs) > 0 {
+									prompt.WriteString(fmt.Sprintf(": %s", strings.Join(enumStrs, "|")))  
+								}
+							}
+						}
+						
+						// 处理描述
+						if desc, hasDesc := paramObj["description"]; hasDesc {
+							if descStr, ok := desc.(string); ok && descStr != "" {
+								prompt.WriteString(fmt.Sprintf(" - %s", descStr))
+							}
+						}
+						
+						prompt.WriteString("\n")
+					}
+				}
+			}
+		}
+	}
+	
+	// 根据工具复杂度调整使用指南
+	if hasComplexTools {
+		prompt.WriteString("\n重要指令：\n")
+		prompt.WriteString("1. 立即使用最合适的工具，不要询问或要求更多信息\n")
+		prompt.WriteString("2. 枚举参数：直接从选项中选择最合理的值（如'高优先级'→'high'）\n")
+		prompt.WriteString("3. 必需参数：根据用户意图推断合理值（如'处理任务'→title:'用户任务'）\n")
+		prompt.WriteString("4. 可选参数：使用默认值或省略\n")
+		prompt.WriteString("5. 立即执行，不要解释或询问")
+	} else {
+		prompt.WriteString("\n重要：立即使用工具完成用户请求，推断合理的参数值，不要询问任何信息。")
+	}
+	
+	return prompt.String()
+}
+
+// isSimpleTool 判断工具是否为简单工具
+// 简单工具：参数少（≤3个）、无枚举、无复杂嵌套结构
+func isSimpleTool(tool types.AnthropicTool) bool {
+	properties, ok := tool.InputSchema["properties"].(map[string]any)
+	if !ok {
+		return true
+	}
+	
+	// 超过3个参数认为是复杂工具
+	if len(properties) > 3 {
+		return false
+	}
+	
+	// 检查是否有复杂特征
+	for _, paramDef := range properties {
+		if paramObj, ok := paramDef.(map[string]any); ok {
+			// 有枚举值的认为是复杂工具
+			if _, hasEnum := paramObj["enum"]; hasEnum {
+				return false
+			}
+			
+			// 有嵌套对象的认为是复杂工具
+			if pType, ok := paramObj["type"].(string); ok && pType == "object" {
+				return false
+			}
+			
+			// 有数组类型的认为是复杂工具
+			if pType, ok := paramObj["type"].(string); ok && pType == "array" {
+				return false
+			}
+		}
+	}
+	
+	return true
 }
 
 // validateAndProcessTools 验证和处理工具定义
@@ -338,7 +470,7 @@ func validateAndProcessTools(tools []types.OpenAITool) ([]types.AnthropicTool, e
 }
 
 // cleanAndValidateToolParameters 清理和验证工具参数
-func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string]any, error) {
+func cleanAndValidateToolParameters(params map[string]any, toolName string) (map[string]any, error) {
 	if params == nil {
 		return nil, fmt.Errorf("参数不能为nil")
 	}
@@ -358,6 +490,44 @@ func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string
 	delete(tempParams, "$ref")
 	delete(tempParams, "definitions")
 	delete(tempParams, "$defs")
+
+	// 处理超长参数名 - CodeWhisperer限制参数名长度
+	if properties, ok := tempParams["properties"].(map[string]any); ok {
+		cleanedProperties := make(map[string]any)
+		for paramName, paramDef := range properties {
+			cleanedName := paramName
+			// 如果参数名超过64字符，进行简化
+			if len(paramName) > 64 {
+				// 保留前缀和后缀，中间用下划线连接
+				if len(paramName) > 80 {
+					cleanedName = paramName[:20] + "_" + paramName[len(paramName)-20:]
+				} else {
+					cleanedName = paramName[:30] + "_param"
+				}
+			}
+			cleanedProperties[cleanedName] = paramDef
+		}
+		tempParams["properties"] = cleanedProperties
+		
+		// 同时更新required字段中的参数名
+		if required, ok := tempParams["required"].([]any); ok {
+			var cleanedRequired []any
+			for _, req := range required {
+				if reqStr, ok := req.(string); ok {
+					if len(reqStr) > 64 {
+						if len(reqStr) > 80 {
+							cleanedRequired = append(cleanedRequired, reqStr[:20] + "_" + reqStr[len(reqStr)-20:])
+						} else {
+							cleanedRequired = append(cleanedRequired, reqStr[:30] + "_param")
+						}
+					} else {
+						cleanedRequired = append(cleanedRequired, reqStr)
+					}
+				}
+			}
+			tempParams["required"] = cleanedRequired
+		}
+	}
 
 	// 验证必需的字段
 	if schemaType, exists := tempParams["type"]; exists {
