@@ -6,7 +6,7 @@
 
 这是 `kiro2api`，一个 Go 高性能 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它提供多token池管理、智能请求分析、结构化日志系统和实时流式响应功能。
 
-**当前版本**: v2.7.0+ - 继续完善结构化日志系统，优化Token池管理，增强请求复杂度分析，维护基于 `tool_use_id` 的标准工具去重机制，完善Docker部署支持。
+**当前版本**: v2.8.0+ - 新增多模态图片输入支持，实现OpenAI与Anthropic格式自动转换，完善图片处理和验证机制，持续优化结构化日志系统和Docker部署支持。
 
 ## 快速开始
 
@@ -157,6 +157,7 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - `client.go`: 配置超时的 `SharedHTTPClient` 和 `LongRequestClient`
 - `request_analyzer.go`: **[核心功能]** 请求复杂度分析和客户端选择
 - `tool_dedup.go`: **[v2.5.3重构]** 基于 `tool_use_id` 的工具去重管理器
+- `image.go`: **[v2.8.0新增]** 多模态图片处理工具，支持格式检测、验证和转换
 - `uuid.go`: UUID 生成工具
 
 **`types/`** - **[最近重构]** 数据结构定义
@@ -284,11 +285,20 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 - **流式传输**: 自定义 EventStream 二进制协议解析器
 - **Go 版本**: 1.23.3
 
-## 最近重构 (v2.7.0+)
+## 最近重构 (v2.8.0+)
 
 持续优化和功能增强：
 
-### 结构化日志系统优化 (v2.6.0+)
+### 多模态图片支持 (v2.8.0)
+- **完整图片处理管道**: 新增 `utils/image.go`，提供完整的图片处理功能
+- **格式自动检测**: 支持PNG、JPEG、GIF、WebP、BMP等主流图片格式的自动检测
+- **OpenAI↔Anthropic转换**: 自动转换OpenAI `image_url`格式到Anthropic `image`格式
+- **data URL支持**: 完整支持data URL格式的图片输入（`data:image/png;base64,...`）
+- **严格验证机制**: 图片格式验证、大小限制（20MB）、编码完整性检查
+- **CodeWhisperer集成**: 自动转换为CodeWhisperer所需的图片格式
+- **错误处理增强**: 详细的图片处理错误信息和调试支持
+
+### 结构化日志系统优化 (v2.7.0+)
 - **JSON格式输出**: 标准 JSON 格式，便于日志分析和监控集成
 - **简化架构**: 移除复杂的 writer 接口，提升性能和可维护性
 - **多输出支持**: 支持控制台、文件或同时输出到多个目标
@@ -409,6 +419,14 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 2. 验证不同复杂度请求的超时配置
 3. 测试HTTP客户端选择机制（SharedHTTPClient vs LongRequestClient）
 4. 监控请求处理时间和资源使用情况
+
+### 调试多模态图片处理
+1. 检查 `utils/image.go` 中的图片处理管道
+2. 验证图片格式检测和验证逻辑
+3. 测试OpenAI↔Anthropic格式转换功能
+4. 调试data URL解析和base64编码处理
+5. 监控图片大小限制和错误处理机制
+6. 验证CodeWhisperer图片格式转换
 
 ### 工具调用去重调试
 1. 验证 `utils/tool_dedup.go` 中基于 `tool_use_id` 的去重逻辑

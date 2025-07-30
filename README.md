@@ -1,19 +1,19 @@
 # kiro2api
 
-一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持实时流式响应、多种认证方式和环境变量配置。
+一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
 ## 功能特性
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
 - **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑
-- **多模态支持**：完整支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式
+- **多模态图片支持**：完整支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持PNG、JPEG、GIF、WebP、BMP等格式
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
 - **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
 - **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期令牌
 - **Token池管理**：支持多个refresh token轮换使用，提供故障转移和负载均衡
 - **智能请求分析**：自动分析请求复杂度，动态调整超时时间和客户端配置
 - **结构化日志系统**：采用JSON格式输出，支持环境变量配置日志级别
-- **增强错误处理**：改进工具结果内容解析和请求验证机制
+- **增强验证机制**：完善的图片格式验证、请求内容验证和工具结果解析机制
 - **完善的中间件**：统一的认证、CORS 和日志处理
 - **容器化支持**：提供 Dockerfile 和 docker-compose.yml，支持容器化部署
 
@@ -241,9 +241,9 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-#### 图片输入示例
+#### 多模态图片输入示例
 
-kiro2api 完全支持多模态输入，能够处理图片内容并自动在OpenAI和Anthropic格式之间转换：
+kiro2api 完全支持多模态图片输入，提供完整的图片处理和格式转换功能，自动在OpenAI和Anthropic格式之间转换：
 
 ```bash
 # OpenAI格式的图片输入
@@ -302,15 +302,18 @@ curl -X POST http://localhost:8080/v1/messages \
 
 **支持的图片格式**：
 - PNG (`image/png`)
-- JPEG (`image/jpeg`)
+- JPEG (`image/jpeg`) 
 - GIF (`image/gif`)
 - WebP (`image/webp`)
 - BMP (`image/bmp`)
 
-**图片限制**：
+**图片处理特性**：
 - 最大文件大小：20MB
 - 支持data URL格式（`data:image/png;base64,...`）
 - 自动格式检测和验证
+- 二进制文件头检测，确保格式准确性
+- Base64编码验证和大小限制检查
+- 格式声明与实际内容一致性验证
 
 ## 工具调用支持
 
@@ -523,10 +526,10 @@ kiro2api/
 - **统一中间件**: 集中式的认证、CORS 和错误处理
 - **高性能处理**: 共享 HTTP 客户端和优化的 JSON 序列化
 - **容错设计**: 自动令牌刷新和优雅的错误处理
-- **多模态处理**: 自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持多种图片格式
+- **多模态图片处理**: 完整的图片处理管道，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持多种图片格式和严格的验证机制
 - **精确工具去重**: 基于 `tool_use_id` 的工具调用去重，符合 Anthropic 标准
 - **结构化日志**: JSON格式日志输出，便于监控和分析
-- **增强验证**: 改进的请求验证和工具结果内容解析机制，包括图片格式验证
+- **增强验证机制**: 全面的请求验证、工具结果解析和图片内容验证，包括格式检测、大小限制和编码验证
 
 ## Docker 部署
 
