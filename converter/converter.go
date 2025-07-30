@@ -18,9 +18,16 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 
 	// 转换消息
 	for _, msg := range openaiReq.Messages {
+		// 转换消息内容格式
+		convertedContent, err := convertOpenAIContentToAnthropic(msg.Content)
+		if err != nil {
+			// 如果转换失败，记录错误但使用原始内容继续处理
+			convertedContent = msg.Content
+		}
+
 		anthropicMsg := types.AnthropicRequestMessage{
 			Role:    msg.Role,
-			Content: msg.Content,
+			Content: convertedContent,
 		}
 		anthropicMessages = append(anthropicMessages, anthropicMsg)
 	}
@@ -186,18 +193,24 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 }
 
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
-func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWhispererRequest {
+func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeWhispererRequest, error) {
 	cwReq := types.CodeWhispererRequest{
 		ProfileArn: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
 	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
-	content, err := utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
+
+	// 处理最后一条消息，包括图片
+	lastMessage := anthropicReq.Messages[len(anthropicReq.Messages)-1]
+	textContent, images, err := processMessageContent(lastMessage.Content)
 	if err != nil {
-		// 错误处理: 可以选择记录日志、返回错误或设置默认内容
-		content = ""
+		return cwReq, fmt.Errorf("处理消息内容失败: %v", err)
 	}
-	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = content
+
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = textContent
+	if len(images) > 0 {
+		cwReq.ConversationState.CurrentMessage.UserInputMessage.Images = images
+	}
 
 	// 确保ModelId不为空，如果映射不存在则使用默认模型
 	modelId := config.ModelMap[anthropicReq.Model]
@@ -228,7 +241,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 
 		// 构建综合系统提示
 		var systemContentBuilder strings.Builder
-		
+
 		// 添加原有的 system 消息
 		if len(anthropicReq.System) > 0 {
 			for _, sysMsg := range anthropicReq.System {
@@ -239,7 +252,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 				}
 			}
 		}
-		
+
 		// 如果有工具，添加工具使用系统提示
 		if len(anthropicReq.Tools) > 0 {
 			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.Tools)
@@ -248,7 +261,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 			}
 			systemContentBuilder.WriteString(toolSystemPrompt)
 		}
-		
+
 		// 如果有系统内容，添加到历史记录
 		if systemContentBuilder.Len() > 0 {
 			userMsg := types.HistoryUserMessage{}
@@ -267,12 +280,18 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 		for i := 0; i < len(anthropicReq.Messages)-1; i++ {
 			if anthropicReq.Messages[i].Role == "user" {
 				userMsg := types.HistoryUserMessage{}
-				content, err := utils.GetMessageContent(anthropicReq.Messages[i].Content)
+
+				// 处理用户消息的内容和图片
+				messageContent, messageImages, err := processMessageContent(anthropicReq.Messages[i].Content)
 				if err == nil {
-					userMsg.UserInputMessage.Content = content
+					userMsg.UserInputMessage.Content = messageContent
+					if len(messageImages) > 0 {
+						userMsg.UserInputMessage.Images = messageImages
+					}
 				} else {
 					userMsg.UserInputMessage.Content = ""
 				}
+
 				userMsg.UserInputMessage.ModelId = modelId // 使用验证后的modelId
 				userMsg.UserInputMessage.Origin = "AI_EDITOR"
 				history = append(history, userMsg)
@@ -296,23 +315,183 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) types.CodeWh
 		cwReq.ConversationState.History = history
 	}
 
-	return cwReq
+	return cwReq, nil
+}
+
+// processMessageContent 处理消息内容，提取文本和图片
+func processMessageContent(content any) (string, []types.CodeWhispererImage, error) {
+	var textParts []string
+	var images []types.CodeWhispererImage
+
+	switch v := content.(type) {
+	case string:
+		// 简单字符串内容
+		return v, nil, nil
+
+	case []any:
+		// 内容块数组
+		for _, item := range v {
+			if block, ok := item.(map[string]any); ok {
+				contentBlock, err := parseContentBlock(block)
+				if err != nil {
+					continue // 跳过无法解析的块
+				}
+
+				switch contentBlock.Type {
+				case "text":
+					if contentBlock.Text != nil {
+						textParts = append(textParts, *contentBlock.Text)
+					}
+				case "image":
+					if contentBlock.Source != nil {
+						// 验证图片内容
+						if err := utils.ValidateImageContent(contentBlock.Source); err != nil {
+							return "", nil, fmt.Errorf("图片验证失败: %v", err)
+						}
+
+						// 转换为 CodeWhisperer 格式
+						cwImage := utils.CreateCodeWhispererImage(contentBlock.Source)
+						if cwImage != nil {
+							images = append(images, *cwImage)
+						}
+					}
+				case "tool_result":
+					// 处理工具结果，这里暂时转换为文本
+					if contentBlock.Content != nil {
+						if str, ok := contentBlock.Content.(string); ok {
+							textParts = append(textParts, fmt.Sprintf("工具结果: %s", str))
+						}
+					}
+				}
+			}
+		}
+
+	case []types.ContentBlock:
+		// 结构化的内容块数组
+		for _, block := range v {
+			switch block.Type {
+			case "text":
+				if block.Text != nil {
+					textParts = append(textParts, *block.Text)
+				}
+			case "image":
+				if block.Source != nil {
+					// 验证图片内容
+					if err := utils.ValidateImageContent(block.Source); err != nil {
+						return "", nil, fmt.Errorf("图片验证失败: %v", err)
+					}
+
+					// 转换为 CodeWhisperer 格式
+					cwImage := utils.CreateCodeWhispererImage(block.Source)
+					if cwImage != nil {
+						images = append(images, *cwImage)
+					}
+				}
+			case "tool_result":
+				// 处理工具结果
+				if block.Content != nil {
+					if str, ok := block.Content.(string); ok {
+						textParts = append(textParts, fmt.Sprintf("工具结果: %s", str))
+					}
+				}
+			}
+		}
+
+	default:
+		// 尝试转换为字符串
+		return fmt.Sprintf("%v", content), nil, nil
+	}
+
+	return strings.Join(textParts, ""), images, nil
+}
+
+// parseContentBlock 解析内容块
+func parseContentBlock(block map[string]any) (types.ContentBlock, error) {
+	var contentBlock types.ContentBlock
+
+	// 解析类型
+	if blockType, ok := block["type"].(string); ok {
+		contentBlock.Type = blockType
+	} else {
+		return contentBlock, fmt.Errorf("缺少内容块类型")
+	}
+
+	// 根据类型解析不同字段
+	switch contentBlock.Type {
+	case "text":
+		if text, ok := block["text"].(string); ok {
+			contentBlock.Text = &text
+		}
+
+	case "image":
+		if source, ok := block["source"].(map[string]any); ok {
+			imageSource := &types.ImageSource{}
+
+			if sourceType, ok := source["type"].(string); ok {
+				imageSource.Type = sourceType
+			}
+			if mediaType, ok := source["media_type"].(string); ok {
+				imageSource.MediaType = mediaType
+			}
+			if data, ok := source["data"].(string); ok {
+				imageSource.Data = data
+			}
+
+			contentBlock.Source = imageSource
+		}
+
+	case "image_url":
+		// 处理OpenAI格式的图片块，转换为Anthropic格式
+		if imageURL, ok := block["image_url"].(map[string]any); ok {
+			imageSource, err := utils.ConvertImageURLToImageSource(imageURL)
+			if err != nil {
+				return contentBlock, fmt.Errorf("转换image_url失败: %v", err)
+			}
+			// 将类型改为image并设置source
+			contentBlock.Type = "image"
+			contentBlock.Source = imageSource
+		}
+
+	case "tool_result":
+		if toolUseId, ok := block["tool_use_id"].(string); ok {
+			contentBlock.ToolUseId = &toolUseId
+		}
+		if content, ok := block["content"]; ok {
+			contentBlock.Content = content
+		}
+		if isError, ok := block["is_error"].(bool); ok {
+			contentBlock.IsError = &isError
+		}
+
+	case "tool_use":
+		if id, ok := block["id"].(string); ok {
+			contentBlock.ID = &id
+		}
+		if name, ok := block["name"].(string); ok {
+			contentBlock.Name = &name
+		}
+		if input, ok := block["input"]; ok {
+			contentBlock.Input = &input
+		}
+	}
+
+	return contentBlock, nil
 }
 
 // generateToolSystemPrompt 生成工具使用的系统提示
 // 根据工具复杂度提供不同级别的指导，避免过度复杂化简单工具
 func generateToolSystemPrompt(tools []types.AnthropicTool) string {
 	var prompt strings.Builder
-	
+
 	prompt.WriteString("你是一个专业的助手，必须直接使用提供的工具来完成任务。")
 	prompt.WriteString("重要：绝不要要求用户提供更多信息，必须使用合理的默认值直接调用工具。")
 	prompt.WriteString("\n\n可用工具：\n")
-	
+
 	hasComplexTools := false
-	
+
 	for _, tool := range tools {
 		prompt.WriteString(fmt.Sprintf("- %s: %s\n", tool.Name, tool.Description))
-		
+
 		// 检查工具复杂度
 		isSimple := isSimpleTool(tool)
 		if isSimple {
@@ -336,9 +515,9 @@ func generateToolSystemPrompt(tools []types.AnthropicTool) string {
 						if pType, ok := paramObj["type"].(string); ok {
 							paramType = pType
 						}
-						
+
 						prompt.WriteString(fmt.Sprintf("  - %s (%s)", paramName, paramType))
-						
+
 						// 处理枚举值
 						if enum, hasEnum := paramObj["enum"]; hasEnum {
 							if enumSlice, ok := enum.([]any); ok {
@@ -349,25 +528,25 @@ func generateToolSystemPrompt(tools []types.AnthropicTool) string {
 									}
 								}
 								if len(enumStrs) > 0 {
-									prompt.WriteString(fmt.Sprintf(": %s", strings.Join(enumStrs, "|")))  
+									prompt.WriteString(fmt.Sprintf(": %s", strings.Join(enumStrs, "|")))
 								}
 							}
 						}
-						
+
 						// 处理描述
 						if desc, hasDesc := paramObj["description"]; hasDesc {
 							if descStr, ok := desc.(string); ok && descStr != "" {
 								prompt.WriteString(fmt.Sprintf(" - %s", descStr))
 							}
 						}
-						
+
 						prompt.WriteString("\n")
 					}
 				}
 			}
 		}
 	}
-	
+
 	// 根据工具复杂度调整使用指南
 	if hasComplexTools {
 		prompt.WriteString("\n重要指令：\n")
@@ -379,7 +558,7 @@ func generateToolSystemPrompt(tools []types.AnthropicTool) string {
 	} else {
 		prompt.WriteString("\n重要：立即使用工具完成用户请求，推断合理的参数值，不要询问任何信息。")
 	}
-	
+
 	return prompt.String()
 }
 
@@ -390,12 +569,12 @@ func isSimpleTool(tool types.AnthropicTool) bool {
 	if !ok {
 		return true
 	}
-	
+
 	// 超过3个参数认为是复杂工具
 	if len(properties) > 3 {
 		return false
 	}
-	
+
 	// 检查是否有复杂特征
 	for _, paramDef := range properties {
 		if paramObj, ok := paramDef.(map[string]any); ok {
@@ -403,19 +582,19 @@ func isSimpleTool(tool types.AnthropicTool) bool {
 			if _, hasEnum := paramObj["enum"]; hasEnum {
 				return false
 			}
-			
+
 			// 有嵌套对象的认为是复杂工具
 			if pType, ok := paramObj["type"].(string); ok && pType == "object" {
 				return false
 			}
-			
+
 			// 有数组类型的认为是复杂工具
 			if pType, ok := paramObj["type"].(string); ok && pType == "array" {
 				return false
 			}
 		}
 	}
-	
+
 	return true
 }
 
@@ -508,7 +687,7 @@ func cleanAndValidateToolParameters(params map[string]any, toolName string) (map
 			cleanedProperties[cleanedName] = paramDef
 		}
 		tempParams["properties"] = cleanedProperties
-		
+
 		// 同时更新required字段中的参数名
 		if required, ok := tempParams["required"].([]any); ok {
 			var cleanedRequired []any
@@ -516,9 +695,9 @@ func cleanAndValidateToolParameters(params map[string]any, toolName string) (map
 				if reqStr, ok := req.(string); ok {
 					if len(reqStr) > 64 {
 						if len(reqStr) > 80 {
-							cleanedRequired = append(cleanedRequired, reqStr[:20] + "_" + reqStr[len(reqStr)-20:])
+							cleanedRequired = append(cleanedRequired, reqStr[:20]+"_"+reqStr[len(reqStr)-20:])
 						} else {
-							cleanedRequired = append(cleanedRequired, reqStr[:30] + "_param")
+							cleanedRequired = append(cleanedRequired, reqStr[:30]+"_param")
 						}
 					} else {
 						cleanedRequired = append(cleanedRequired, reqStr)
@@ -593,5 +772,96 @@ func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) *types.ToolChoice 
 	default:
 		// 未知类型，默认为auto
 		return &types.ToolChoice{Type: "auto"}
+	}
+}
+
+// convertOpenAIContentToAnthropic 将OpenAI消息内容转换为Anthropic格式
+func convertOpenAIContentToAnthropic(content any) (any, error) {
+	switch v := content.(type) {
+	case string:
+		// 简单字符串内容，无需转换
+		return v, nil
+
+	case []any:
+		// 内容块数组，需要转换格式
+		var convertedBlocks []any
+
+		for _, item := range v {
+			if block, ok := item.(map[string]any); ok {
+				convertedBlock, err := convertContentBlock(block)
+				if err != nil {
+					// 如果转换失败，跳过该块但继续处理其他块
+					continue
+				}
+				convertedBlocks = append(convertedBlocks, convertedBlock)
+			} else {
+				// 非map类型的项目，直接保留
+				convertedBlocks = append(convertedBlocks, item)
+			}
+		}
+
+		return convertedBlocks, nil
+
+	default:
+		// 其他类型，直接返回
+		return content, nil
+	}
+}
+
+// convertContentBlock 转换单个内容块
+func convertContentBlock(block map[string]any) (map[string]any, error) {
+	blockType, exists := block["type"]
+	if !exists {
+		return block, fmt.Errorf("内容块缺少type字段")
+	}
+
+	switch blockType {
+	case "text":
+		// 文本块无需转换
+		return block, nil
+
+	case "image_url":
+		// 将OpenAI的image_url格式转换为Anthropic的image格式
+		imageURL, exists := block["image_url"]
+		if !exists {
+			return nil, fmt.Errorf("image_url块缺少image_url字段")
+		}
+
+		imageURLMap, ok := imageURL.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("image_url字段必须是对象")
+		}
+
+		// 使用utils包中的转换函数
+		imageSource, err := utils.ConvertImageURLToImageSource(imageURLMap)
+		if err != nil {
+			return nil, fmt.Errorf("转换图片格式失败: %v", err)
+		}
+
+		// 构建Anthropic格式的图片块，确保source为map[string]any类型
+		sourceMap := map[string]any{
+			"type":       imageSource.Type,
+			"media_type": imageSource.MediaType,
+			"data":       imageSource.Data,
+		}
+
+		convertedBlock := map[string]any{
+			"type":   "image",
+			"source": sourceMap,
+		}
+
+		return convertedBlock, nil
+
+	case "image":
+		// 已经是Anthropic格式，无需转换
+		return block, nil
+
+	case "tool_result", "tool_use":
+		// 工具相关块，无需转换
+		return block, nil
+
+	default:
+		// 未知类型，直接返回
+		return block, nil
 	}
 }

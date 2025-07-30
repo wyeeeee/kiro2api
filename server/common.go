@@ -18,7 +18,11 @@ import (
 
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
 func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken string, isStream bool) (*http.Request, error) {
-	cwReq := converter.BuildCodeWhispererRequest(anthropicReq)
+	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq)
+	if err != nil {
+		return nil, fmt.Errorf("构建CodeWhisperer请求失败: %v", err)
+	}
+	
 	cwReqBody, err := sonic.Marshal(cwReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化请求失败: %v", err)

@@ -6,6 +6,7 @@
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
 - **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑
+- **多模态支持**：完整支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
 - **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
 - **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期令牌
@@ -240,6 +241,77 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   }'
 ```
 
+#### 图片输入示例
+
+kiro2api 完全支持多模态输入，能够处理图片内容并自动在OpenAI和Anthropic格式之间转换：
+
+```bash
+# OpenAI格式的图片输入
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-3-7-sonnet-20250219",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "图片上是什么内容？"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            }
+          }
+        ]
+      }
+    ]
+  }'
+
+# Anthropic格式的图片输入
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-3-7-sonnet-20250219",
+    "max_tokens": 1000,
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "请分析这张图片"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "base64",
+              "media_type": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+**支持的图片格式**：
+- PNG (`image/png`)
+- JPEG (`image/jpeg`)
+- GIF (`image/gif`)
+- WebP (`image/webp`)
+- BMP (`image/bmp`)
+
+**图片限制**：
+- 最大文件大小：20MB
+- 支持data URL格式（`data:image/png;base64,...`）
+- 自动格式检测和验证
+
 ## 工具调用支持
 
 kiro2api完全支持Anthropic和OpenAI格式的工具调用：
@@ -422,7 +494,8 @@ kiro2api/
 └── utils/
     ├── client.go                # HTTP客户端管理
     ├── http.go                  # HTTP响应处理工具
-    ├── message.go               # 消息内容提取工具
+    ├── image.go                 # 图片处理和格式转换工具
+    ├── message.go               # 消息内容提取工具，支持多模态内容
     ├── request_analyzer.go      # 请求复杂度分析
     ├── tool_dedup.go            # 工具调用去重管理
     └── uuid.go                  # UUID生成工具
@@ -450,9 +523,10 @@ kiro2api/
 - **统一中间件**: 集中式的认证、CORS 和错误处理
 - **高性能处理**: 共享 HTTP 客户端和优化的 JSON 序列化
 - **容错设计**: 自动令牌刷新和优雅的错误处理
+- **多模态处理**: 自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持多种图片格式
 - **精确工具去重**: 基于 `tool_use_id` 的工具调用去重，符合 Anthropic 标准
 - **结构化日志**: JSON格式日志输出，便于监控和分析
-- **增强验证**: 改进的请求验证和工具结果内容解析机制
+- **增强验证**: 改进的请求验证和工具结果内容解析机制，包括图片格式验证
 
 ## Docker 部署
 

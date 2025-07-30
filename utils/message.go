@@ -95,7 +95,7 @@ func parseToolResultContent(content any) string {
 	}
 }
 
-// GetMessageContent 从消息中提取文本内容的辅助函数
+// GetMessageContent 从消息中提取文本内容的辅助函数，支持图片内容
 func GetMessageContent(content any) (string, error) {
 	switch v := content.(type) {
 	case types.AnthropicSystemMessage:
@@ -107,6 +107,7 @@ func GetMessageContent(content any) (string, error) {
 		return v, nil
 	case []any:
 		var texts []string
+		hasImage := false
 		for _, block := range v {
 			if m, ok := block.(map[string]any); ok {
 				var cb types.ContentBlock
@@ -133,10 +134,61 @@ func GetMessageContent(content any) (string, error) {
 							if cb.Text != nil {
 								texts = append(texts, *cb.Text)
 							}
+						case "image":
+							hasImage = true
+							if cb.Source != nil {
+								texts = append(texts, fmt.Sprintf("[图片: %s格式]", cb.Source.MediaType))
+							} else {
+								texts = append(texts, "[图片]")
+							}
 						}
 					}
 				}
 			}
+		}
+		if len(texts) == 0 && hasImage {
+			return "请描述这张图片的内容", nil
+		}
+		if len(texts) == 0 {
+			return "answer for user question", nil
+		}
+		return strings.Join(texts, "\n"), nil
+	case []types.ContentBlock:
+		var texts []string
+		hasImage := false
+		for _, cb := range v {
+			switch cb.Type {
+			case "tool_result":
+				if cb.Content != nil {
+					toolResultContent := parseToolResultContent(cb.Content)
+
+					// 检查是否为错误结果
+					if cb.IsError != nil && *cb.IsError {
+						toolResultContent = "Tool Error: " + toolResultContent
+					}
+
+					// 添加tool_use_id信息以便追踪
+					if cb.ToolUseId != nil && *cb.ToolUseId != "" {
+						toolResultContent = fmt.Sprintf("Tool result for %s: %s", *cb.ToolUseId, toolResultContent)
+					}
+
+					texts = append(texts, toolResultContent)
+				}
+			case "text":
+				if cb.Text != nil {
+					texts = append(texts, *cb.Text)
+				}
+			case "image":
+				hasImage = true
+				if cb.Source != nil {
+					texts = append(texts, fmt.Sprintf("[图片: %s格式]", cb.Source.MediaType))
+				} else {
+					texts = append(texts, "[图片]")
+				}
+			}
+		}
+		if len(texts) == 0 && hasImage {
+			return "请描述这张图片的内容", nil
 		}
 		if len(texts) == 0 {
 			return "answer for user question", nil

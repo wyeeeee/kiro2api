@@ -78,8 +78,11 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	// 立即刷新响应头
 	c.Writer.Flush()
 
-	// 发送初始事件
-	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
+	// 发送初始事件，处理包含图片的消息内容
+	inputContent := ""
+	if len(anthropicReq.Messages) > 0 {
+		inputContent, _ = utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
+	}
 	initialEvents := eventCreator(messageId, inputContent, anthropicReq.Model)
 	for _, event := range initialEvents {
 		sender.SendEvent(c, event)
@@ -363,7 +366,10 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("请求格式错误: %s", respBodyStr)})
 		return
 	}
-	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
+	inputContent := ""
+	if len(anthropicReq.Messages) > 0 {
+		inputContent, _ = utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
+	}
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
