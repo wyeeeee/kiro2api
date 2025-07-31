@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"kiro2api/config"
+	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
 )
@@ -96,7 +97,7 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 						if toolUseId, ok := textBlock["id"].(string); ok {
 							if toolName, ok := textBlock["name"].(string); ok {
 								if input, ok := textBlock["input"]; ok {
-									inputJson, _ := utils.FastMarshal(input)
+									inputJson, _ := utils.SafeMarshal(input)
 									toolCall := types.OpenAIToolCall{
 										ID:   toolUseId,
 										Type: "function",
@@ -129,7 +130,7 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 					if toolUseId, ok := textBlock["id"].(string); ok {
 						if toolName, ok := textBlock["name"].(string); ok {
 							if input, ok := textBlock["input"]; ok {
-								inputJson, _ := utils.FastMarshal(input)
+								inputJson, _ := utils.SafeMarshal(input)
 								toolCall := types.OpenAIToolCall{
 									ID:   toolUseId,
 									Type: "function",
@@ -195,11 +196,26 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 	cwReq := types.CodeWhispererRequest{
 		ProfileArn: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
 	}
+	
+	// 验证必需字段
+	if cwReq.ProfileArn == "" {
+		return cwReq, fmt.Errorf("ProfileArn不能为空")
+	}
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
 
 	// 处理最后一条消息，包括图片
+	if len(anthropicReq.Messages) == 0 {
+		return cwReq, fmt.Errorf("消息列表为空")
+	}
+	
 	lastMessage := anthropicReq.Messages[len(anthropicReq.Messages)-1]
+	
+	// 调试：记录原始消息内容
+	logger.Debug("处理用户消息",
+		logger.String("role", lastMessage.Role),
+		logger.String("content_type", fmt.Sprintf("%T", lastMessage.Content)))
+	
 	textContent, images, err := processMessageContent(lastMessage.Content)
 	if err != nil {
 		return cwReq, fmt.Errorf("处理消息内容失败: %v", err)
@@ -214,6 +230,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 	modelId := config.ModelMap[anthropicReq.Model]
 	if modelId == "" {
 		modelId = "CLAUDE_3_7_SONNET_20250219_V1_0" // 使用默认模型
+		logger.Warn("使用默认模型，因为映射不存在",
+			logger.String("requested_model", anthropicReq.Model),
+			logger.String("default_model", modelId))
 	}
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = modelId
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR"
@@ -313,6 +332,35 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 		cwReq.ConversationState.History = history
 	}
 
+	// 最终验证请求完整性 - 恢复严格验证
+	// 正常情况下内容不应该为空，如果为空说明处理过程有问题
+	trimmedContent := strings.TrimSpace(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)
+	if trimmedContent == "" && len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images) == 0 {
+		logger.Error("用户消息内容和图片都为空，这不应该发生",
+			logger.String("original_content", fmt.Sprintf("%q", cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)),
+			logger.Int("content_length", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)),
+			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
+		return cwReq, fmt.Errorf("用户消息内容处理异常：内容和图片都为空，原始内容长度=%d", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content))
+	}
+	
+	if cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId == "" {
+		return cwReq, fmt.Errorf("ModelId不能为空")
+	}
+	
+	logger.Debug("构建CodeWhisperer请求完成",
+		logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+		logger.String("model_id", cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId),
+		logger.String("content_preview", func() string {
+			content := cwReq.ConversationState.CurrentMessage.UserInputMessage.Content
+			if len(content) > 100 {
+				return content[:100] + "..."
+			}
+			return content
+		}()),
+		logger.Int("images_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images)),
+		logger.Int("tools_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools)),
+		logger.Int("history_count", len(cwReq.ConversationState.History)))
+
 	return cwReq, nil
 }
 
@@ -328,10 +376,11 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 
 	case []any:
 		// 内容块数组
-		for _, item := range v {
+		for i, item := range v {
 			if block, ok := item.(map[string]any); ok {
 				contentBlock, err := parseContentBlock(block)
 				if err != nil {
+					logger.Warn("解析内容块失败，跳过", logger.Err(err), logger.Int("index", i))
 					continue // 跳过无法解析的块
 				}
 
@@ -339,8 +388,11 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 				case "text":
 					if contentBlock.Text != nil {
 						textParts = append(textParts, *contentBlock.Text)
+					} else {
+						logger.Warn("文本块的Text字段为nil")
 					}
 				case "image":
+					// ... 图片处理保持不变
 					if contentBlock.Source != nil {
 						// 验证图片内容
 						if err := utils.ValidateImageContent(contentBlock.Source); err != nil {
@@ -354,13 +406,47 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 						}
 					}
 				case "tool_result":
-					// 处理工具结果，这里暂时转换为文本
+					// 处理工具结果，支持复杂的内容结构
 					if contentBlock.Content != nil {
-						if str, ok := contentBlock.Content.(string); ok {
-							textParts = append(textParts, fmt.Sprintf("工具结果: %s", str))
+						// 处理不同类型的tool_result内容
+						switch content := contentBlock.Content.(type) {
+						case string:
+							// 简单字符串内容
+							textParts = append(textParts, content)
+						case []any:
+							// 内容数组，可能包含text对象
+							for _, item := range content {
+								if textObj, ok := item.(map[string]any); ok {
+									// 检查是否有text字段
+									if text, hasText := textObj["text"].(string); hasText {
+										textParts = append(textParts, text)
+									}
+								} else {
+									// 如果不是map，直接尝试转换为字符串
+									itemStr := fmt.Sprintf("%v", item)
+									if itemStr != "" && itemStr != "<nil>" {
+										textParts = append(textParts, itemStr)
+									}
+								}
+							}
+						case map[string]any:
+							// 单个map对象，可能是嵌套的text结构
+							if text, hasText := content["text"].(string); hasText {
+								textParts = append(textParts, text)
+							} else {
+								// 尝试转换整个map为字符串
+								textParts = append(textParts, fmt.Sprintf("%v", content))
+							}
+						default:
+							// 其他类型，尝试转换为字符串
+							textParts = append(textParts, fmt.Sprintf("%v", content))
 						}
 					}
 				}
+			} else {
+				logger.Warn("内容块不是map[string]any类型", 
+					logger.Int("index", i), 
+					logger.String("actual_type", fmt.Sprintf("%T", item)))
 			}
 		}
 
@@ -371,6 +457,8 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 			case "text":
 				if block.Text != nil {
 					textParts = append(textParts, *block.Text)
+				} else {
+					logger.Warn("结构化文本块的Text字段为nil")
 				}
 			case "image":
 				if block.Source != nil {
@@ -386,10 +474,40 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 					}
 				}
 			case "tool_result":
-				// 处理工具结果
+				// 处理工具结果，支持复杂的内容结构
 				if block.Content != nil {
-					if str, ok := block.Content.(string); ok {
-						textParts = append(textParts, fmt.Sprintf("工具结果: %s", str))
+					// 处理不同类型的tool_result内容
+					switch content := block.Content.(type) {
+					case string:
+						// 简单字符串内容
+						textParts = append(textParts, content)
+					case []any:
+						// 内容数组，可能包含text对象
+						for _, item := range content {
+							if textObj, ok := item.(map[string]any); ok {
+								// 检查是否有text字段
+								if text, hasText := textObj["text"].(string); hasText {
+									textParts = append(textParts, text)
+								}
+							} else {
+								// 如果不是map，直接尝试转换为字符串
+								itemStr := fmt.Sprintf("%v", item)
+								if itemStr != "" && itemStr != "<nil>" {
+									textParts = append(textParts, itemStr)
+								}
+							}
+						}
+					case map[string]any:
+						// 单个map对象，可能是嵌套的text结构
+						if text, hasText := content["text"].(string); hasText {
+							textParts = append(textParts, text)
+						} else {
+							// 尝试转换整个map为字符串
+							textParts = append(textParts, fmt.Sprintf("%v", content))
+						}
+					default:
+						// 其他类型，尝试转换为字符串
+						textParts = append(textParts, fmt.Sprintf("%v", content))
 					}
 				}
 			}
@@ -397,10 +515,21 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 
 	default:
 		// 尝试转换为字符串
-		return fmt.Sprintf("%v", content), nil, nil
+		fallbackStr := fmt.Sprintf("%v", content)
+		return fallbackStr, nil, nil
 	}
 
-	return strings.Join(textParts, ""), images, nil
+	result := strings.Join(textParts, "")
+	
+	// 保留关键调试信息用于问题定位
+	if result == "" && len(images) == 0 {
+		logger.Debug("消息内容处理结果为空",
+			logger.String("content_type", fmt.Sprintf("%T", content)),
+			logger.Int("text_parts_count", len(textParts)),
+			logger.Int("images_count", len(images)))
+	}
+
+	return result, images, nil
 }
 
 // parseContentBlock 解析内容块
@@ -411,6 +540,9 @@ func parseContentBlock(block map[string]any) (types.ContentBlock, error) {
 	if blockType, ok := block["type"].(string); ok {
 		contentBlock.Type = blockType
 	} else {
+		logger.Error("内容块缺少type字段或type不是字符串", 
+			logger.String("type_value", fmt.Sprintf("%v", block["type"])),
+			logger.String("type_type", fmt.Sprintf("%T", block["type"])))
 		return contentBlock, fmt.Errorf("缺少内容块类型")
 	}
 
@@ -419,6 +551,10 @@ func parseContentBlock(block map[string]any) (types.ContentBlock, error) {
 	case "text":
 		if text, ok := block["text"].(string); ok {
 			contentBlock.Text = &text
+		} else {
+			logger.Warn("文本块缺少text字段或不是字符串",
+				logger.String("text_value", fmt.Sprintf("%v", block["text"])),
+				logger.String("text_type", fmt.Sprintf("%T", block["text"])))
 		}
 
 	case "image":
@@ -596,6 +732,15 @@ func isSimpleTool(tool types.AnthropicTool) bool {
 	return true
 }
 
+// getMapKeys 获取map的所有键，用于调试
+func getMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // validateAndProcessTools 验证和处理工具定义
 // 参考server.py中的clean_gemini_schema函数以及Anthropic官方文档
 func validateAndProcessTools(tools []types.OpenAITool) ([]types.AnthropicTool, error) {
@@ -653,9 +798,9 @@ func cleanAndValidateToolParameters(params map[string]any, toolName string) (map
 	}
 
 	// 深拷贝避免修改原始数据
-	cleanedParams, _ := utils.FastMarshal(params)
+	cleanedParams, _ := utils.SafeMarshal(params)
 	var tempParams map[string]any
-	if err := utils.FastUnmarshal(cleanedParams, &tempParams); err != nil {
+	if err := utils.SafeUnmarshal(cleanedParams, &tempParams); err != nil {
 		return nil, fmt.Errorf("参数序列化失败: %v", err)
 	}
 

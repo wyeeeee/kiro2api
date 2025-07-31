@@ -148,7 +148,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 
 	logger.Debug("API响应内容", logger.String("response_body", string(body)))
 
-	if err := utils.FastUnmarshal(body, &refreshResp); err != nil {
+	if err := utils.SafeUnmarshal(body, &refreshResp); err != nil {
 		return types.TokenInfo{}, fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 

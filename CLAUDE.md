@@ -6,7 +6,7 @@
 
 这是 `kiro2api`，一个 Go 高性能 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它提供多token池管理、智能请求分析、结构化日志系统和实时流式响应功能。
 
-**当前版本**: v2.8.0+ - 新增多模态图片输入支持，实现OpenAI与Anthropic格式自动转换，完善图片处理和验证机制，持续优化结构化日志系统和Docker部署支持。
+**当前版本**: v2.8.1 - 修复工具调用中 `tool_result` 嵌套内容结构处理问题，彻底解决多模态环境下的 "Improperly formed request" 错误，优化调试日志系统。
 
 ## 快速开始
 
@@ -435,6 +435,43 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 1. 验证 `utils/tool_dedup.go` 中基于 `tool_use_id` 的去重逻辑
 2. 测试流式和非流式请求的工具调用一致性
 3. 确保请求级别的去重管理，避免跨请求状态污染
+
+## 故障排除
+
+### "Improperly formed request" 错误
+这个错误通常出现在工具调用场景中，特别是多模态请求。排查步骤：
+
+1. **检查工具结果内容**：确认 `tool_result` 内容块是否包含嵌套结构
+   ```json
+   {
+     "type": "tool_result",
+     "content": [{"text": "实际内容"}]  // 嵌套数组结构
+   }
+   ```
+
+2. **启用调试日志**：在环境变量中设置详细日志级别
+   ```bash
+   export LOG_LEVEL=debug
+   ./kiro2api
+   ```
+
+3. **检查消息内容处理**：查看日志中的 "消息内容处理结果为空" 条目
+   - 如果 `text_parts_count=0` 且 `images_count=0`，说明内容提取失败
+   - 检查内容结构是否符合预期格式
+
+4. **验证JSON序列化**：确保使用 `utils.SafeMarshal` 而非 `utils.FastMarshal`
+
+**修复历史**：v2.8.1 版本已修复 `tool_result` 嵌套内容结构处理问题。
+
+### Token刷新失败
+1. 检查 `AWS_REFRESHTOKEN` 环境变量是否正确设置
+2. 验证token池配置和轮换机制
+3. 查看token过期时间和自动刷新日志
+
+### 流式响应中断
+1. 检查客户端连接稳定性
+2. 验证 EventStream 解析器状态
+3. 查看工具调用去重逻辑是否影响流式输出
 4. 检查工具调用错误处理和调试支持
 
 ### Docker 部署调试

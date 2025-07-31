@@ -102,7 +102,7 @@ func StartServer(port string, authToken string) {
 			logger.Int("body_size", len(body)))
 		// println("收到Anthropic请求: ", string(body))
 		var anthropicReq types.AnthropicRequest
-		if err := utils.FastUnmarshal(body, &anthropicReq); err != nil {
+		if err := utils.SafeUnmarshal(body, &anthropicReq); err != nil {
 			logger.Error("解析请求体失败", logger.Err(err))
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
 			tracker.RecordFailure()
@@ -115,7 +115,17 @@ func StartServer(port string, authToken string) {
 		logger.Debug("请求解析成功",
 			logger.String("model", anthropicReq.Model),
 			logger.Bool("stream", anthropicReq.Stream),
-			logger.Int("max_tokens", anthropicReq.MaxTokens))
+			logger.Int("max_tokens", anthropicReq.MaxTokens),
+			logger.Int("messages_count", len(anthropicReq.Messages)))
+
+		// 详细记录消息内容以调试
+		for i, msg := range anthropicReq.Messages {
+			logger.Debug("消息详情",
+				logger.Int("index", i),
+				logger.String("role", msg.Role),
+				logger.String("content_type", fmt.Sprintf("%T", msg.Content)),
+				logger.String("content_preview", fmt.Sprintf("%.200v", msg.Content)))
+		}
 
 		// 验证请求的有效性
 		if len(anthropicReq.Messages) == 0 {
@@ -179,7 +189,7 @@ func StartServer(port string, authToken string) {
 			logger.Int("body_size", len(body)))
 
 		var openaiReq types.OpenAIRequest
-		if err := utils.FastUnmarshal(body, &openaiReq); err != nil {
+		if err := utils.SafeUnmarshal(body, &openaiReq); err != nil {
 			logger.Error("解析OpenAI请求体失败", logger.Err(err))
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
 			return

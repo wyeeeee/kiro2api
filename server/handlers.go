@@ -297,7 +297,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 								// 如果有累积的参数数据，解析并更新工具输入
 								if partialJsonStr != "" {
 									toolInput := map[string]any{}
-									if err := utils.FastUnmarshal([]byte(partialJsonStr), &toolInput); err != nil {
+									if err := utils.SafeUnmarshal([]byte(partialJsonStr), &toolInput); err != nil {
 										logger.Error("JSON解析失败",
 											logger.String("tool_name", toolName),
 											logger.String("tool_use_id", toolUseId),
@@ -356,7 +356,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 	if strings.Contains(string(body), "Improperly formed request.") {
 		// 增强错误日志记录
-		reqBodyBytes, _ := utils.FastMarshal(anthropicReq)
+		reqBodyBytes, _ := utils.SafeMarshal(anthropicReq)
 		hash := sha256.Sum256(reqBodyBytes)
 		logger.Error("CodeWhisperer返回格式错误",
 			logger.String("response", respBodyStr),

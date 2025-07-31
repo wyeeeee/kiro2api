@@ -23,10 +23,15 @@ func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken 
 		return nil, fmt.Errorf("构建CodeWhisperer请求失败: %v", err)
 	}
 	
-	cwReqBody, err := utils.FastMarshal(cwReq)
+	cwReqBody, err := utils.SafeMarshal(cwReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化请求失败: %v", err)
 	}
+
+	// 临时调试：记录发送给CodeWhisperer的请求内容
+	logger.Debug("发送给CodeWhisperer的请求",
+		logger.String("request_body", string(cwReqBody)),
+		logger.Int("request_size", len(cwReqBody)))
 
 	req, err := http.NewRequest("POST", config.CodeWhispererURL, bytes.NewReader(cwReqBody))
 	if err != nil {
@@ -88,7 +93,7 @@ func (s *AnthropicStreamSender) SendEvent(c *gin.Context, data any) error {
 		}
 	}
 
-	json, err := utils.FastMarshal(data)
+	json, err := utils.SafeMarshal(data)
 	if err != nil {
 		return err
 	}
@@ -118,7 +123,7 @@ func (s *AnthropicStreamSender) SendError(c *gin.Context, message string, _ erro
 type OpenAIStreamSender struct{}
 
 func (s *OpenAIStreamSender) SendEvent(c *gin.Context, data any) error {
-	json, err := utils.FastMarshal(data)
+	json, err := utils.SafeMarshal(data)
 	if err != nil {
 		return err
 	}
