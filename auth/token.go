@@ -12,16 +12,14 @@ import (
 	"os"
 	"strings"
 	"sync"
-
-	"github.com/bytedance/sonic"
 )
 
 // 全局token池和缓存实例
 var (
-	tokenPool  *types.TokenPool
-	tokenCache *types.TokenCache
-	poolOnce   sync.Once
-	cacheOnce  sync.Once
+	tokenPool   *types.TokenPool
+	atomicCache *utils.AtomicTokenCache // 使用原子缓存替代传统缓存
+	poolOnce    sync.Once
+	cacheOnce   sync.Once
 )
 
 // initTokenPool 初始化token池
@@ -56,17 +54,18 @@ func getTokenPool() *types.TokenPool {
 	return tokenPool
 }
 
-// initTokenCache 初始化token缓存
+// initTokenCache 初始化原子token缓存
 func initTokenCache() {
-	// token缓存时间现在基于token自身的ExpiresAt字段
-	tokenCache = types.NewTokenCache()
-	logger.Info("Token缓存初始化完成", logger.String("expiry_mode", "基于token自身过期时间"))
+	atomicCache = utils.NewAtomicTokenCache()
+	// 启动后台清理协程
+	atomicCache.StartCleanupRoutine()
+	logger.Info("原子Token缓存初始化完成", logger.String("type", "atomic_cache"))
 }
 
-// getTokenCache 获取token缓存实例
-func getTokenCache() *types.TokenCache {
+// getAtomicCache 获取原子缓存实例
+func getAtomicCache() *utils.AtomicTokenCache {
 	cacheOnce.Do(initTokenCache)
-	return tokenCache
+	return atomicCache
 }
 
 // RefreshTokenForServer 刷新token，用于服务器模式，返回错误而不是退出程序
@@ -115,7 +114,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 		RefreshToken: refreshToken,
 	}
 
-	reqBody, err := sonic.Marshal(refreshReq)
+	reqBody, err := utils.FastMarshal(refreshReq)
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("序列化请求失败: %v", err)
 	}
@@ -149,7 +148,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 
 	logger.Debug("API响应内容", logger.String("response_body", string(body)))
 
-	if err := sonic.Unmarshal(body, &refreshResp); err != nil {
+	if err := utils.FastUnmarshal(body, &refreshResp); err != nil {
 		return types.TokenInfo{}, fmt.Errorf("解析刷新响应失败: %v", err)
 	}
 
@@ -171,7 +170,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 // GetToken 获取当前token，支持多token轮换使用
 func GetToken() (types.TokenInfo, error) {
 	pool := getTokenPool()
-	cache := getTokenCache()
+	cache := getAtomicCache()
 
 	// 如果没有token池，回退到原有逻辑
 	if pool == nil {
@@ -183,13 +182,13 @@ func GetToken() (types.TokenInfo, error) {
 }
 
 // getSingleToken 单token模式（向后兼容）
-func getSingleToken(cache *types.TokenCache) (types.TokenInfo, error) {
-	// 尝试从缓存获取token
-	if cachedToken, exists := cache.Get(); exists {
-		logger.Debug("使用缓存的Access Token",
+func getSingleToken(cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
+	// 尝试从热点缓存获取token（最快路径）
+	if cachedToken, exists := cache.GetHot(); exists {
+		logger.Debug("使用热点缓存的Access Token",
 			logger.String("access_token", cachedToken.AccessToken),
 			logger.String("expires_at", cachedToken.ExpiresAt.Format("2006-01-02 15:04:05")))
-		return cachedToken, nil
+		return *cachedToken, nil
 	}
 
 	// 缓存中没有或已过期，刷新token
@@ -199,30 +198,27 @@ func getSingleToken(cache *types.TokenCache) (types.TokenInfo, error) {
 		return types.TokenInfo{}, err
 	}
 
-	// 缓存新的token
-	cache.Set(tokenInfo)
-	logger.Debug("新token已缓存", logger.String("expires_at", tokenInfo.ExpiresAt.Format("2006-01-02 15:04:05")))
+	// 缓存新的token为热点缓存
+	cache.SetHot(0, &tokenInfo)
+	logger.Debug("新token已缓存为热点", logger.String("expires_at", tokenInfo.ExpiresAt.Format("2006-01-02 15:04:05")))
 
 	return tokenInfo, nil
 }
 
 // getRotatedToken 多token轮换模式
-func getRotatedToken(pool *types.TokenPool, cache *types.TokenCache) (types.TokenInfo, error) {
+func getRotatedToken(pool *types.TokenPool, cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
 	// 获取下一个访问索引
 	accessIdx := pool.GetNextAccessIndex()
 
-	// 设置缓存的当前索引
-	cache.SetCurrentIndex(accessIdx)
-
 	logger.Debug("使用轮换索引", logger.Int("access_index", accessIdx))
 
-	// 尝试从缓存获取对应索引的token
-	if cachedToken, exists := cache.GetByIndex(accessIdx); exists {
+	// 尝试从原子缓存获取对应索引的token
+	if cachedToken, exists := cache.Get(accessIdx); exists {
 		logger.Debug("使用缓存的Access Token",
 			logger.Int("token_index", accessIdx),
 			logger.String("access_token", cachedToken.AccessToken),
 			logger.String("expires_at", cachedToken.ExpiresAt.Format("2006-01-02 15:04:05")))
-		return cachedToken, nil
+		return *cachedToken, nil
 	}
 
 	// 缓存中没有或已过期，需要刷新对应的token
@@ -241,8 +237,8 @@ func getRotatedToken(pool *types.TokenPool, cache *types.TokenCache) (types.Toke
 		return fallbackToAvailableToken(pool, cache)
 	}
 
-	// 刷新成功，缓存新的token
-	cache.SetByIndex(accessIdx, tokenInfo)
+	// 刷新成功，缓存新的token（设为热点）
+	cache.SetHot(accessIdx, &tokenInfo)
 	pool.MarkTokenSuccess(accessIdx)
 
 	logger.Info("Token刷新成功", logger.Int("token_index", accessIdx))
@@ -275,33 +271,30 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 	return tryRefreshToken(refreshToken)
 }
 
-// fallbackToAvailableToken 当前token失败时，回退到其他可用token
-func fallbackToAvailableToken(_ *types.TokenPool, cache *types.TokenCache) (types.TokenInfo, error) {
-	// 检查是否有其他缓存的有效token
-	for _, idx := range cache.GetAllCachedIndexes() {
-		if cachedToken, exists := cache.GetByIndex(idx); exists {
-			logger.Info("回退使用缓存token", logger.Int("fallback_index", idx))
-			cache.SetCurrentIndex(idx)
-			return cachedToken, nil
-		}
+// fallbackToAvailableToken 回退到其他可用token
+func fallbackToAvailableToken(pool *types.TokenPool, cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
+	// 尝试使用refreshTokenAndReturn获取任何可用的token
+	tokenInfo, err := refreshTokenAndReturn()
+	if err != nil {
+		return types.TokenInfo{}, fmt.Errorf("所有token都无法使用: %v", err)
 	}
 
-	// 没有可用的缓存token，尝试刷新其他token
-	logger.Debug("没有可用缓存，尝试刷新其他token")
-	return refreshTokenAndReturn()
+	// 缓存为热点token（索引为-1表示备用）
+	cache.SetHot(-1, &tokenInfo)
+	return tokenInfo, nil
 }
 
 // ClearTokenCache 清除token缓存（用于强制刷新）
 func ClearTokenCache() {
-	cache := getTokenCache()
+	cache := getAtomicCache()
 	cache.Clear()
-	logger.Info("Token缓存已清除")
+	logger.Info("原子Token缓存已清除")
 }
 
 // ClearTokenCacheByIndex 清除指定索引的token缓存
 func ClearTokenCacheByIndex(idx int) {
-	cache := getTokenCache()
-	cache.ClearByIndex(idx)
+	cache := getAtomicCache()
+	cache.Delete(idx)
 	logger.Info("指定索引Token缓存已清除", logger.Int("index", idx))
 }
 
@@ -318,10 +311,12 @@ func GetTokenPoolStats() map[string]any {
 	stats := pool.GetStats()
 	stats["pool_enabled"] = true
 
-	// 添加缓存统计信息
-	cache := getTokenCache()
-	stats["cached_tokens"] = cache.GetCachedCount()
-	stats["cached_indexes"] = cache.GetAllCachedIndexes()
+	// 添加原子缓存统计信息
+	cache := getAtomicCache()
+	cacheStats := cache.GetStats()
+	for k, v := range cacheStats {
+		stats["cache_"+k] = v
+	}
 
 	return stats
 }
@@ -333,10 +328,10 @@ func ForceRefreshToken(idx int) error {
 		return fmt.Errorf("Token池未初始化")
 	}
 
-	cache := getTokenCache()
+	cache := getAtomicCache()
 
 	// 清除指定索引的缓存
-	cache.ClearByIndex(idx)
+	cache.Delete(idx)
 
 	// 刷新指定索引的token
 	tokenInfo, err := refreshTokenByIndex(pool, idx)
@@ -345,7 +340,7 @@ func ForceRefreshToken(idx int) error {
 	}
 
 	// 缓存新的token
-	cache.SetByIndex(idx, tokenInfo)
+	cache.Set(idx, &tokenInfo)
 	pool.MarkTokenSuccess(idx)
 
 	logger.Info("强制刷新Token成功", logger.Int("token_index", idx))

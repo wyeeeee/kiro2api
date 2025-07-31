@@ -11,7 +11,6 @@ import (
 	"kiro2api/types"
 	"kiro2api/utils"
 
-	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 )
 
@@ -110,7 +109,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 						// 解析完整的工具参数
 						if toolInputBuffer != "" {
 							toolInput := map[string]any{}
-							if err := sonic.Unmarshal([]byte(toolInputBuffer), &toolInput); err != nil {
+							if err := utils.FastUnmarshal([]byte(toolInputBuffer), &toolInput); err != nil {
 								logger.Error("JSON解析失败", logger.Err(err), logger.String("data", toolInputBuffer))
 								break
 							}
@@ -299,7 +298,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 }
 
 func sendOpenAIEvent(c *gin.Context, data any) {
-	json, err := sonic.Marshal(data)
+	json, err := utils.FastMarshal(data)
 	if err != nil {
 		logger.Error("序列化OpenAI事件失败", logger.Err(err))
 		return

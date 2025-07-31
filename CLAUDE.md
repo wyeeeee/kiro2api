@@ -185,6 +185,9 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 代理（流式 + 非流式）  
 - `GET /v1/models` - 返回可用模型列表
 - `GET /health` - 健康检查（绕过认证）
+- `GET /metrics` - 性能指标监控（绕过认证）
+- `GET /stats/*` - 各组件统计信息（绕过认证）
+- `GET /debug/pprof/*` - 性能分析端点（绕过认证）
 
 ## Docker 支持
 

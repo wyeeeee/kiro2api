@@ -84,6 +84,9 @@ docker-compose up -d
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流式和非流式）
 - `GET /v1/models` - 获取可用模型列表
 - `GET /health` - 健康检查（无需认证）
+- `GET /metrics` - 性能指标监控（无需认证）
+- `GET /stats/*` - 各组件统计信息（无需认证）
+- `GET /debug/pprof/*` - 性能分析端点（无需认证）
 
 ### 认证方式
 

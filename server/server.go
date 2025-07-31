@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"kiro2api/types"
 	"kiro2api/utils"
 
-	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,8 +23,23 @@ import (
 
 // StartServer 启动HTTP代理服务器
 func StartServer(port string, authToken string) {
+	// 启动性能监控
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	
+	go utils.GlobalPerformanceMonitor.StartMonitoring(ctx)
+	
+	
+	// 初始化全局工作池
+	utils.GetGlobalWorkerPool()
+	
 	// 设置 gin 模式
-	gin.SetMode(gin.ReleaseMode)
+	ginMode := os.Getenv("GIN_MODE")
+	if ginMode == "" {
+		ginMode = gin.ReleaseMode
+	}
+	gin.SetMode(ginMode)
+	
 	r := gin.New()
 
 	// 添加中间件
@@ -33,6 +48,9 @@ func StartServer(port string, authToken string) {
 	r.Use(corsMiddleware())
 	// 只对 /v1 开头的端点进行认证
 	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
+
+	// 设置监控路由
+	SetupMonitoringRoutes(r)
 
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
@@ -60,10 +78,14 @@ func StartServer(port string, authToken string) {
 	})
 
 	r.POST("/v1/messages", func(c *gin.Context) {
+		// 创建请求跟踪器
+		tracker := utils.NewRequestTracker(false) // 初始假设非流式，后续根据实际情况更新
+		
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
+			tracker.RecordFailure()
 			return
 		}
 
@@ -71,6 +93,7 @@ func StartServer(port string, authToken string) {
 		if err != nil {
 			logger.Error("读取请求体失败", logger.Err(err))
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("读取请求体失败: %v", err)})
+			tracker.RecordFailure()
 			return
 		}
 
@@ -79,11 +102,15 @@ func StartServer(port string, authToken string) {
 			logger.Int("body_size", len(body)))
 		// println("收到Anthropic请求: ", string(body))
 		var anthropicReq types.AnthropicRequest
-		if err := sonic.Unmarshal(body, &anthropicReq); err != nil {
+		if err := utils.FastUnmarshal(body, &anthropicReq); err != nil {
 			logger.Error("解析请求体失败", logger.Err(err))
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
+			tracker.RecordFailure()
 			return
 		}
+		
+		// 更新跟踪器的流式状态
+		tracker = utils.NewRequestTracker(anthropicReq.Stream)
 
 		logger.Debug("请求解析成功",
 			logger.String("model", anthropicReq.Model),
@@ -95,6 +122,7 @@ func StartServer(port string, authToken string) {
 			logger.Error("请求中没有消息")
 			print("请求中没有消息")
 			c.JSON(http.StatusBadRequest, gin.H{"error": "messages 数组不能为空"})
+			tracker.RecordFailure()
 			return
 		}
 
@@ -106,6 +134,7 @@ func StartServer(port string, authToken string) {
 				logger.Err(err),
 				logger.String("raw_content", fmt.Sprintf("%v", lastMsg.Content)))
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("获取消息内容失败: %v", err)})
+			tracker.RecordFailure()
 			return
 		}
 
@@ -115,15 +144,18 @@ func StartServer(port string, authToken string) {
 				logger.String("content", content),
 				logger.String("trimmed_content", trimmedContent))
 			c.JSON(http.StatusBadRequest, gin.H{"error": "消息内容不能为空"})
+			tracker.RecordFailure()
 			return
 		}
 
 		if anthropicReq.Stream {
 			handleStreamRequest(c, anthropicReq, token.AccessToken)
+			tracker.RecordSuccess() // 流式请求开始发送即视为成功
 			return
 		}
 
 		handleNonStreamRequest(c, anthropicReq, token.AccessToken)
+		tracker.RecordSuccess() // 非流式请求完成即视为成功
 	})
 
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
@@ -147,7 +179,7 @@ func StartServer(port string, authToken string) {
 			logger.Int("body_size", len(body)))
 
 		var openaiReq types.OpenAIRequest
-		if err := sonic.Unmarshal(body, &openaiReq); err != nil {
+		if err := utils.FastUnmarshal(body, &openaiReq); err != nil {
 			logger.Error("解析OpenAI请求体失败", logger.Err(err))
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
 			return
@@ -172,10 +204,6 @@ func StartServer(port string, authToken string) {
 		}
 
 		handleOpenAINonStreamRequest(c, anthropicReq, token.AccessToken)
-	})
-
-	r.GET("/health", func(c *gin.Context) {
-		c.String(http.StatusOK, "OK")
 	})
 
 	r.NoRoute(func(c *gin.Context) {

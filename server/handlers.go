@@ -12,7 +12,6 @@ import (
 	"kiro2api/types"
 	"kiro2api/utils"
 
-	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 )
 
@@ -88,8 +87,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		sender.SendEvent(c, event)
 	}
 
-	// 创建流式解析器并处理响应，添加工具去重跟踪
-	streamParser := parser.NewStreamParser()
+	// 从对象池获取流式解析器，处理完后放回池中
+	streamParser := parser.GlobalStreamParserPool.Get()
+	defer parser.GlobalStreamParserPool.Put(streamParser)
+	
 	outputTokens := 0
 	dedupManager := utils.NewToolDedupManager() // 请求级别的工具去重管理器
 
@@ -296,7 +297,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 								// 如果有累积的参数数据，解析并更新工具输入
 								if partialJsonStr != "" {
 									toolInput := map[string]any{}
-									if err := sonic.Unmarshal([]byte(partialJsonStr), &toolInput); err != nil {
+									if err := utils.FastUnmarshal([]byte(partialJsonStr), &toolInput); err != nil {
 										logger.Error("JSON解析失败",
 											logger.String("tool_name", toolName),
 											logger.String("tool_use_id", toolUseId),
@@ -355,7 +356,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 	if strings.Contains(string(body), "Improperly formed request.") {
 		// 增强错误日志记录
-		reqBodyBytes, _ := sonic.Marshal(anthropicReq)
+		reqBodyBytes, _ := utils.FastMarshal(anthropicReq)
 		hash := sha256.Sum256(reqBodyBytes)
 		logger.Error("CodeWhisperer返回格式错误",
 			logger.String("response", respBodyStr),

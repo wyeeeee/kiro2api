@@ -8,8 +8,6 @@ import (
 	"kiro2api/config"
 	"kiro2api/types"
 	"kiro2api/utils"
-
-	"github.com/bytedance/sonic"
 )
 
 // ConvertOpenAIToAnthropic 将OpenAI请求转换为Anthropic请求
@@ -98,7 +96,7 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 						if toolUseId, ok := textBlock["id"].(string); ok {
 							if toolName, ok := textBlock["name"].(string); ok {
 								if input, ok := textBlock["input"]; ok {
-									inputJson, _ := sonic.Marshal(input)
+									inputJson, _ := utils.FastMarshal(input)
 									toolCall := types.OpenAIToolCall{
 										ID:   toolUseId,
 										Type: "function",
@@ -131,7 +129,7 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 					if toolUseId, ok := textBlock["id"].(string); ok {
 						if toolName, ok := textBlock["name"].(string); ok {
 							if input, ok := textBlock["input"]; ok {
-								inputJson, _ := sonic.Marshal(input)
+								inputJson, _ := utils.FastMarshal(input)
 								toolCall := types.OpenAIToolCall{
 									ID:   toolUseId,
 									Type: "function",
@@ -655,9 +653,9 @@ func cleanAndValidateToolParameters(params map[string]any, toolName string) (map
 	}
 
 	// 深拷贝避免修改原始数据
-	cleanedParams, _ := sonic.Marshal(params)
+	cleanedParams, _ := utils.FastMarshal(params)
 	var tempParams map[string]any
-	if err := sonic.Unmarshal(cleanedParams, &tempParams); err != nil {
+	if err := utils.FastUnmarshal(cleanedParams, &tempParams); err != nil {
 		return nil, fmt.Errorf("参数序列化失败: %v", err)
 	}
 

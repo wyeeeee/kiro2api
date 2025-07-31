@@ -11,8 +11,8 @@ import (
 	"kiro2api/converter"
 	"kiro2api/logger"
 	"kiro2api/types"
+	"kiro2api/utils"
 
-	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 )
 
@@ -23,7 +23,7 @@ func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken 
 		return nil, fmt.Errorf("构建CodeWhisperer请求失败: %v", err)
 	}
 	
-	cwReqBody, err := sonic.Marshal(cwReq)
+	cwReqBody, err := utils.FastMarshal(cwReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化请求失败: %v", err)
 	}
@@ -88,7 +88,7 @@ func (s *AnthropicStreamSender) SendEvent(c *gin.Context, data any) error {
 		}
 	}
 
-	json, err := sonic.Marshal(data)
+	json, err := utils.FastMarshal(data)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (s *AnthropicStreamSender) SendError(c *gin.Context, message string, _ erro
 type OpenAIStreamSender struct{}
 
 func (s *OpenAIStreamSender) SendEvent(c *gin.Context, data any) error {
-	json, err := sonic.Marshal(data)
+	json, err := utils.FastMarshal(data)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func (s *OpenAIStreamSender) SendError(c *gin.Context, message string, _ error) 
 		},
 	}
 
-	json, err := sonic.Marshal(errorResp)
+	json, err := utils.FastMarshal(errorResp)
 	if err != nil {
 		return err
 	}

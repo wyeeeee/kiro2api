@@ -6,6 +6,7 @@ import (
 	"io"
 	"kiro2api/logger"
 	"strings"
+	"sync"
 
 	"github.com/bytedance/sonic"
 )
@@ -188,13 +189,52 @@ func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
 // StreamParser 处理流式EventStream数据
 type StreamParser struct {
 	buffer []byte
+	events []SSEEvent // 预分配事件切片，复用内存
+}
+
+// StreamParserPool 对象池，用于复用StreamParser实例，减少内存分配
+type StreamParserPool struct {
+	pool sync.Pool
+}
+
+// 全局StreamParser对象池
+var GlobalStreamParserPool = &StreamParserPool{
+	pool: sync.Pool{
+		New: func() interface{} {
+			return &StreamParser{
+				buffer: make([]byte, 0, 4096),  // 预分配4KB缓冲区
+				events: make([]SSEEvent, 0, 16), // 预分配16个事件空间
+			}
+		},
+	},
+}
+
+// Get 从对象池获取StreamParser实例
+func (spp *StreamParserPool) Get() *StreamParser {
+	return spp.pool.Get().(*StreamParser)
+}
+
+// Put 将StreamParser实例放回对象池
+func (spp *StreamParserPool) Put(sp *StreamParser) {
+	// 重置但保留容量
+	sp.buffer = sp.buffer[:0]
+	sp.events = sp.events[:0]
+	spp.pool.Put(sp)
 }
 
 // NewStreamParser 创建新的流式解析器
+// 推荐使用 GlobalStreamParserPool.Get() 来获取复用实例
 func NewStreamParser() *StreamParser {
 	return &StreamParser{
-		buffer: make([]byte, 0),
+		buffer: make([]byte, 0, 1024), // 默认1KB缓冲区
+		events: make([]SSEEvent, 0, 8), // 默认8个事件空间
 	}
+}
+
+// Reset 重置StreamParser状态，用于复用
+func (sp *StreamParser) Reset() {
+	sp.buffer = sp.buffer[:0]
+	sp.events = sp.events[:0]
 }
 
 // ParseStream 解析流式数据，返回解析出的事件
@@ -202,7 +242,8 @@ func (sp *StreamParser) ParseStream(data []byte) []SSEEvent {
 	// 将新数据添加到缓冲区
 	sp.buffer = append(sp.buffer, data...)
 
-	events := []SSEEvent{}
+	// 重置事件切片但保留容量
+	sp.events = sp.events[:0]
 
 	for {
 		if len(sp.buffer) < 12 {
@@ -225,8 +266,8 @@ func (sp *StreamParser) ParseStream(data []byte) []SSEEvent {
 
 		// 解析这个消息
 		messageEvents := ParseEvents(messageData)
-		events = append(events, messageEvents...)
+		sp.events = append(sp.events, messageEvents...)
 	}
 
-	return events
+	return sp.events
 }
