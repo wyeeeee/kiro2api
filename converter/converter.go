@@ -38,6 +38,11 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 		stream = *openaiReq.Stream
 	}
 
+	// 如果环境变量禁用了流式传输，则强制设置为false
+	if config.IsStreamDisabled() {
+		stream = false
+	}
+
 	anthropicReq := types.AnthropicRequest{
 		Model:     openaiReq.Model,
 		MaxTokens: maxTokens,

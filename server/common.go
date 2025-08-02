@@ -24,6 +24,15 @@ func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken 
 		return nil, fmt.Errorf("序列化请求失败: %v", err)
 	}
 
+	// 记录转发给服务端的请求内容
+	logger.Info("转发请求到CodeWhisperer",
+		logger.String("url", config.CodeWhispererURL),
+		logger.String("method", "POST"),
+		logger.Bool("stream", isStream),
+		logger.String("model", anthropicReq.Model),
+		logger.Int("request_size", len(cwReqBody)),
+		logger.String("request_body", string(cwReqBody)))
+
 	req, err := http.NewRequest("POST", config.CodeWhispererURL, bytes.NewReader(cwReqBody))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
