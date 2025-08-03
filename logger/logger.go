@@ -1,14 +1,17 @@
 package logger
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -38,13 +41,31 @@ type Field struct {
 	Value interface{}
 }
 
-// Logger 简化的日志器
+// Logger 优化的日志器
 type Logger struct {
-	level     Level
-	logger    *log.Logger
-	mutex     sync.RWMutex
-	logFile   *os.File
-	writers   []io.Writer
+	level        int64           // 使用原子操作的日志级别
+	logger       *log.Logger
+	mutex        sync.Mutex      // 改为写锁，减少读锁竞争
+	logFile      *os.File
+	writers      []io.Writer
+	enableCaller bool            // 控制是否获取调用栈信息
+	callerSkip   int             // 调用栈深度
+	enablePool   bool            // 控制是否启用对象池
+}
+
+// JSON编码器对象池
+var jsonEncoderPool = sync.Pool{
+	New: func() interface{} {
+		buf := &bytes.Buffer{}
+		return json.NewEncoder(buf)
+	},
+}
+
+// 字节缓冲区对象池
+var bytesBufferPool = sync.Pool{
+	New: func() interface{} {
+		return &bytes.Buffer{}
+	},
 }
 
 var (
@@ -60,18 +81,34 @@ func init() {
 // createLogger 创建并配置logger实例
 func createLogger() *Logger {
 	logger := &Logger{
-		level:   INFO,
-		writers: []io.Writer{os.Stdout}, // 默认输出到控制台
+		level:        int64(INFO),
+		writers:      []io.Writer{os.Stdout}, // 默认输出到控制台
+		enableCaller: false,                   // 默认禁用调用栈获取
+		callerSkip:   3,                      // 默认调用栈深度
+		enablePool:   true,                   // 默认启用对象池
 	}
 	
 	// 从环境变量设置级别
 	if debug := os.Getenv("DEBUG"); debug != "" && (debug == "true" || debug == "1") {
-		logger.level = DEBUG
+		atomic.StoreInt64(&logger.level, int64(DEBUG))
 	}
 	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
 		if level, err := ParseLevel(logLevel); err == nil {
-			logger.level = level
+			atomic.StoreInt64(&logger.level, int64(level))
 		}
+	}
+	
+	// 从环境变量控制优化特性
+	if enableCaller := os.Getenv("LOG_ENABLE_CALLER"); enableCaller == "true" || enableCaller == "1" {
+		logger.enableCaller = true
+	}
+	if callerSkip := os.Getenv("LOG_CALLER_SKIP"); callerSkip != "" {
+		if skip, err := strconv.Atoi(callerSkip); err == nil && skip > 0 {
+			logger.callerSkip = skip
+		}
+	}
+	if disablePool := os.Getenv("LOG_DISABLE_POOL"); disablePool == "true" || disablePool == "1" {
+		logger.enablePool = false
 	}
 	
 	// 设置文件输出
@@ -114,23 +151,15 @@ func ParseLevel(s string) (Level, error) {
 	}
 }
 
-// shouldLog 检查是否应该记录指定级别的日志
+// shouldLog 检查是否应该记录指定级别的日志（优化：原子操作）
 func (l *Logger) shouldLog(level Level) bool {
-	l.mutex.RLock()
-	defer l.mutex.RUnlock()
-	return l.level <= level
+	return atomic.LoadInt64(&l.level) <= int64(level)
 }
 
-// log 内部日志记录方法
+// log 内部日志记录方法（优化版本）
 func (l *Logger) log(level Level, msg string, fields []Field) {
 	if !l.shouldLog(level) {
 		return
-	}
-
-	// 获取调用者信息
-	_, file, line, _ := runtime.Caller(3)
-	if idx := strings.LastIndex(file, "/"); idx >= 0 {
-		file = file[idx+1:]
 	}
 
 	// 构建日志条目
@@ -138,7 +167,16 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 		"timestamp": time.Now().Format("2006-01-02T15:04:05.000Z07:00"),
 		"level":     levelNames[level],
 		"message":   msg,
-		"file":      fmt.Sprintf("%s:%d", file, line),
+	}
+
+	// 按需获取调用者信息（优化：可配置）
+	if l.enableCaller {
+		if _, file, line, ok := runtime.Caller(l.callerSkip); ok {
+			if idx := strings.LastIndex(file, "/"); idx >= 0 {
+				file = file[idx+1:]
+			}
+			entry["file"] = fmt.Sprintf("%s:%d", file, line)
+		}
 	}
 
 	// 添加字段
@@ -146,9 +184,29 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 		entry[field.Key] = field.Value
 	}
 
-	// JSON格式输出
-	jsonData, _ := json.Marshal(entry)
+	// 优化的JSON序列化（使用对象池）
+	var jsonData []byte
+	if l.enablePool {
+		buf := bytesBufferPool.Get().(*bytes.Buffer)
+		buf.Reset()
+		defer bytesBufferPool.Put(buf)
+		
+		encoder := json.NewEncoder(buf)
+		encoder.Encode(entry)
+		jsonData = buf.Bytes()
+		// 移除最后的换行符（Encode会自动添加）
+		if len(jsonData) > 0 && jsonData[len(jsonData)-1] == '\n' {
+			jsonData = jsonData[:len(jsonData)-1]
+		}
+	} else {
+		// 退化到原始实现
+		jsonData, _ = json.Marshal(entry)
+	}
+
+	// 输出日志（优化：减少锁竞争）
+	l.mutex.Lock()
 	l.logger.Println(string(jsonData))
+	l.mutex.Unlock()
 
 	// Fatal级别退出程序
 	if level == FATAL {
@@ -156,11 +214,28 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 	}
 }
 
-// SetLevel 设置日志级别
+// SetLevel 设置日志级别（优化：原子操作）
 func SetLevel(level Level) {
+	atomic.StoreInt64(&defaultLogger.level, int64(level))
+}
+
+// SetCallerEnabled 设置是否启用调用栈信息（新增优化选项）
+func SetCallerEnabled(enabled bool) {
 	defaultLogger.mutex.Lock()
-	defer defaultLogger.mutex.Unlock()
-	defaultLogger.level = level
+	defaultLogger.enableCaller = enabled
+	defaultLogger.mutex.Unlock()
+}
+
+// SetPoolEnabled 设置是否启用对象池（新增优化选项）
+func SetPoolEnabled(enabled bool) {
+	defaultLogger.mutex.Lock()
+	defaultLogger.enablePool = enabled
+	defaultLogger.mutex.Unlock()
+}
+
+// GetLevel 获取当前日志级别（新增）
+func GetLevel() Level {
+	return Level(atomic.LoadInt64(&defaultLogger.level))
 }
 
 // 全局日志函数
@@ -222,6 +297,33 @@ func Reinitialize() {
 		defaultLogger.logFile.Close()
 	}
 	defaultLogger = createLogger()
+}
+
+// OptimizationConfig 优化配置结构（新增）
+type OptimizationConfig struct {
+	EnableCaller bool `json:"enable_caller"`
+	EnablePool   bool `json:"enable_pool"`
+	CallerSkip   int  `json:"caller_skip"`
+}
+
+// GetOptimizationConfig 获取当前优化配置（新增）
+func GetOptimizationConfig() OptimizationConfig {
+	defaultLogger.mutex.Lock()
+	defer defaultLogger.mutex.Unlock()
+	return OptimizationConfig{
+		EnableCaller: defaultLogger.enableCaller,
+		EnablePool:   defaultLogger.enablePool,
+		CallerSkip:   defaultLogger.callerSkip,
+	}
+}
+
+// ApplyOptimizationConfig 应用优化配置（新增）
+func ApplyOptimizationConfig(config OptimizationConfig) {
+	defaultLogger.mutex.Lock()
+	defaultLogger.enableCaller = config.EnableCaller
+	defaultLogger.enablePool = config.EnablePool
+	defaultLogger.callerSkip = config.CallerSkip
+	defaultLogger.mutex.Unlock()
 }
 
 // Config 配置结构（兼容性）
