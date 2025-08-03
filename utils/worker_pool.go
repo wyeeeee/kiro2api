@@ -26,12 +26,12 @@ type WorkerPool struct {
 	workerTimeout time.Duration // 工作协程超时时间
 
 	// 运行时状态
-	jobs       chan Job          // 任务队列
-	results    chan error        // 结果队列
-	ctx        context.Context   // 上下文
-	cancel     context.CancelFunc // 取消函数
-	wg         sync.WaitGroup    // 等待组
-	once       sync.Once         // 确保只启动一次
+	jobs    chan Job           // 任务队列
+	results chan error         // 结果队列
+	ctx     context.Context    // 上下文
+	cancel  context.CancelFunc // 取消函数
+	wg      sync.WaitGroup     // 等待组
+	once    sync.Once          // 确保只启动一次
 
 	// 统计信息
 	activeWorkers int64 // 活跃工作协程数量
@@ -104,19 +104,19 @@ func (wp *WorkerPool) Start() {
 // Stop 停止工作池
 func (wp *WorkerPool) Stop() {
 	logger.Info("正在停止工作池...")
-	
+
 	// 关闭任务队列
 	close(wp.jobs)
-	
+
 	// 等待所有工作协程完成
 	wp.wg.Wait()
-	
+
 	// 取消上下文
 	wp.cancel()
-	
+
 	// 关闭结果队列
 	close(wp.results)
-	
+
 	logger.Info("工作池已停止")
 }
 
@@ -166,21 +166,21 @@ func (wp *WorkerPool) SubmitWithTimeout(job Job, timeout time.Duration) error {
 // worker 工作协程
 func (wp *WorkerPool) worker(id int) {
 	defer wp.wg.Done()
-	
-	logger.Debug("工作协程启动", logger.Int("worker_id", id))
-	defer logger.Debug("工作协程停止", logger.Int("worker_id", id))
+
+	// logger.Debug("工作协程启动", logger.Int("worker_id", id))
+	// defer logger.Debug("工作协程停止", logger.Int("worker_id", id))
 
 	for job := range wp.jobs {
 		atomic.AddInt64(&wp.activeWorkers, 1)
-		
+
 		// 创建带超时的上下文
 		jobCtx, cancel := context.WithTimeout(wp.ctx, wp.workerTimeout)
-		
+
 		// 执行任务
 		start := time.Now()
 		err := job.Execute(jobCtx)
 		duration := time.Since(start)
-		
+
 		cancel()
 		atomic.AddInt64(&wp.activeWorkers, -1)
 
@@ -217,12 +217,12 @@ func (wp *WorkerPool) resultHandler() {
 			if !ok {
 				return // 结果队列已关闭
 			}
-			
+
 			if err != nil {
 				// 可以在这里添加错误处理逻辑
 				// 比如发送到监控系统、重试等
 			}
-			
+
 		case <-wp.ctx.Done():
 			return
 		}
@@ -256,14 +256,14 @@ func (wp *WorkerPool) GetStats() map[string]interface{} {
 	defer wp.mu.RUnlock()
 
 	return map[string]interface{}{
-		"max_workers":     wp.maxWorkers,
-		"active_workers":  atomic.LoadInt64(&wp.activeWorkers),
-		"total_jobs":      atomic.LoadInt64(&wp.totalJobs),
-		"completed_jobs":  atomic.LoadInt64(&wp.completedJobs),
-		"failed_jobs":     atomic.LoadInt64(&wp.failedJobs),
-		"queue_size":      len(wp.jobs),
-		"max_queue_size":  wp.maxQueueSize,
-		"worker_timeout":  wp.workerTimeout.String(),
+		"max_workers":    wp.maxWorkers,
+		"active_workers": atomic.LoadInt64(&wp.activeWorkers),
+		"total_jobs":     atomic.LoadInt64(&wp.totalJobs),
+		"completed_jobs": atomic.LoadInt64(&wp.completedJobs),
+		"failed_jobs":    atomic.LoadInt64(&wp.failedJobs),
+		"queue_size":     len(wp.jobs),
+		"max_queue_size": wp.maxQueueSize,
+		"worker_timeout": wp.workerTimeout.String(),
 	}
 }
 
@@ -288,16 +288,16 @@ func GetGlobalWorkerPool() *WorkerPool {
 	workerPoolOnce.Do(func() {
 		config := WorkerPoolConfig{
 			MaxWorkers:    runtime.NumCPU() * 2, // CPU核心数*2
-			MaxQueueSize:  2000,                  // 2000个任务队列
+			MaxQueueSize:  2000,                 // 2000个任务队列
 			WorkerTimeout: 5 * time.Minute,      // 5分钟超时
 		}
-		
+
 		GlobalWorkerPool = NewWorkerPool(config)
 		GlobalWorkerPool.Start()
-		
+
 		logger.Info("全局工作池已初始化")
 	})
-	
+
 	return GlobalWorkerPool
 }
 
@@ -306,9 +306,9 @@ func InitGlobalWorkerPool(config WorkerPoolConfig) *WorkerPool {
 	workerPoolOnce.Do(func() {
 		GlobalWorkerPool = NewWorkerPool(config)
 		GlobalWorkerPool.Start()
-		
+
 		logger.Info("全局工作池已初始化（自定义配置）")
 	})
-	
+
 	return GlobalWorkerPool
 }
