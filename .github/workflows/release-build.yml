@@ -1,16 +1,14 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: [main]
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build and push'
+        description: 'Tag to build and push (must start with v)'
         required: true
-        default: 'latest'
+        default: 'v1.0.0'
 
 env:
   REGISTRY: ghcr.io
@@ -19,6 +17,10 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # 只有在发布的标签以 v 开头，或者手动触发时输入的标签以 v 开头时才执行
+    if: >-
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')) ||
+      (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v'))
     permissions:
       contents: read
       packages: write
@@ -45,14 +47,12 @@ jobs:
       with:
         images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
         tags: |
-          type=ref,event=branch
           type=ref,event=tag
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
-          type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=latest,enable=${{ github.event_name == 'release' }}
           type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-          type=sha,prefix={{branch}}-
 
     - name: Build and push Docker image
       id: push
