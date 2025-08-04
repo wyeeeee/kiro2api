@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 这是 `kiro2api`，一个基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
-**当前版本**: v2.8.1 - 修复工具调用中 `tool_result` 嵌套内容结构处理问题，彻底解决多模态环境下的 "Improperly formed request" 错误，优化调试日志系统。
+**当前版本**: 开发版本 - 基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口。
 
 ## 快速开始
 
@@ -198,10 +198,6 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - `POST /v1/messages` - Anthropic Claude API 代理（流式 + 非流式）
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 代理（流式 + 非流式）  
 - `GET /v1/models` - 返回可用模型列表
-- `GET /health` - 健康检查（绕过认证）
-- `GET /metrics` - 性能指标监控（绕过认证）
-- `GET /stats/*` - 各组件统计信息（绕过认证）
-- `GET /debug/pprof/*` - 性能分析端点（绕过认证）
 
 ## Docker 支持
 
@@ -252,7 +248,6 @@ docker run -d \
 
 **认证**: 采用基于路径的认证策略（PathBasedAuthMiddleware）
 - **需要认证**: `/v1/*` 开头的所有端点，需要在 `Authorization: Bearer <token>` 或 `x-api-key: <token>` 头中提供 API 密钥
-- **无需认证**: `/health` 等非API端点
 
 **模型映射**: 公开模型名称通过 `config.ModelMap` 映射到内部 CodeWhisperer ID：
 - `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
@@ -333,98 +328,6 @@ kiro2api 在设计上特别注重性能优化，采用多种技术来提升并�
 - **并发优化**: sync.Pool, sync.Map, 原子操作
 - **Go 版本**: 1.23.3
 
-## 最近重构 (v2.8.0+)
-
-持续优化和功能增强：
-
-### 多模态图片支持 (v2.8.0)
-- **完整图片处理管道**: 新增 `utils/image.go`，提供完整的图片处理功能
-- **格式自动检测**: 支持PNG、JPEG、GIF、WebP、BMP等主流图片格式的自动检测
-- **OpenAI↔Anthropic转换**: 自动转换OpenAI `image_url`格式到Anthropic `image`格式
-- **data URL支持**: 完整支持data URL格式的图片输入（`data:image/png;base64,...`）
-- **严格验证机制**: 图片格式验证、大小限制（20MB）、编码完整性检查
-- **CodeWhisperer集成**: 自动转换为CodeWhisperer所需的图片格式
-- **错误处理增强**: 详细的图片处理错误信息和调试支持
-
-### 结构化日志系统优化 (v2.7.0+)
-- **JSON格式输出**: 标准 JSON 格式，便于日志分析和监控集成
-- **简化架构**: 移除复杂的 writer 接口，提升性能和可维护性
-- **多输出支持**: 支持控制台、文件或同时输出到多个目标
-- **环境变量配置**: 支持 `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_CONSOLE` 配置
-- **调用者信息**: 自动记录文件名和行号，便于调试
-- **性能优化**: 使用原子操作进行日志级别判断、对象池复用字节缓冲区、可配置的调用栈获取
-
-### Docker 和部署增强
-- **多平台构建**: 支持不同架构的Docker镜像构建
-- **安全优化**: 非root用户运行，最小权限原则
-- **健康检查**: 内置容器健康检查机制
-- **Docker Compose**: 提供完整的编排配置文件
-
-## 重要历史重构记录
-
-### v2.5.3 - 工具调用去重机制标准化
-**符合 Anthropic 最佳实践的精确去重**：
-- **标准化去重**: 从 `name+input` 哈希改为基于 `tool_use_id` 的标准去重
-- **精确识别**: 使用 Anthropic 官方推荐的唯一标识符，避免参数哈希误判
-- **一致性保证**: 流式和非流式处理统一使用相同去重逻辑
-- **性能提升**: 简化去重算法，移除复杂的 JSON 序列化和 SHA256 计算
-- **标准合规**: 完全遵循 Anthropic 工具调用最佳实践
-
-### v2.5.2 - 全局状态污染修复
-**请求隔离和状态管理优化**：
-- **状态隔离**: 移除全局工具跟踪器，避免跨请求工具调用干扰
-- **去重策略改进**: 请求级别的 `tool_use_id` 去重，确保逻辑正确性
-- **并发安全**: 每个请求独立维护工具去重状态
-- **代码简化**: 移除不必要的全局 mutex 和同步逻辑
-
-### v2.5.1 - 工具调用稳定性增强
-**工具处理流程优化**：
-- **去重逻辑优化**: 使用 `name+input` 组合创建唯一标识符
-- **代码清理**: 移除调试日志，提升代码可读性
-- **稳定性保证**: 确保工具调用只处理一次，解决重复执行问题
-
-### v2.5.0 - 智能请求处理系统
-**全面的请求分析和资源管理**：
-- **复杂度分析**: 多因素评估请求复杂度（token数量、内容长度、工具使用等）
-- **动态超时**: 智能调整超时时间，复杂请求15分钟，简单请求2分钟
-- **Token池管理**: 多token池化管理和自动轮换机制
-- **错误处理增强**: 改进工具结果内容解析和请求验证
-- **性能监控**: 请求处理时间监控和性能指标记录
-
-## 历史重构 (v2.4.0)
-
-代码库移除文件依赖重构：
-- **移除文件读取**: 完全移除对`~/.aws/sso/cache/kiro-auth-token.json`文件的依赖
-- **强制环境变量**: `AWS_REFRESHTOKEN`现在为必需的环境变量，程序启动时检查
-- **简化认证逻辑**: 统一使用环境变量作为唯一配置源，提高可预测性
-- **快速失败模式**: 程序启动时立即检查必需环境变量，缺失时给出清晰提示并退出
-- **清理代码**: 移除`getTokenFilePath()`函数和`path/filepath`导入
-- **向后不兼容**: 不再支持文件方式读取token，需要迁移到环境变量配置
-
-## 历史重构 (v2.3.0)
-
-代码库经历了环境变量配置重构：
-- **环境变量优先**: clientToken从命令行参数改为环境变量`KIRO_CLIENT_TOKEN`（默认值123456）
-- **AWS Token灵活性**: 优先使用环境变量`AWS_REFRESHTOKEN`，不再强制依赖`~/.aws/sso/cache/kiro-auth-token.json`文件
-- **.env文件支持**: 自动加载项目根目录的`.env`文件，支持配置管理
-- **配置层次化**: 环境变量 > .env文件 > 命令行参数 > 默认值
-- **依赖更新**: 添加`github.com/joho/godotenv`依赖用于.env文件加载
-- **向后兼容**: 保持原有文件读取方式作为备选方案
-
-## 历史重构 (v2.2.0)
-
-代码库经历了结构优化重构：
-- **struct合并优化**: 消除了相似结构的重复定义
-  - 合并 `TokenData` 和 `RefreshResponse` 为统一的 `TokenInfo`
-  - 统一 `Usage` 结构支持Anthropic和OpenAI格式转换
-  - 创建 `BaseTool` 工具抽象和 `ToolSpec` 接口
-- **类型别名清理**: 移除了临时兼容性别名，简化类型系统
-- **代码重复消除**: 
-  - 将三个 `getMessageContent` 副本整合为 `utils.GetMessageContent`
-  - 用统一的 `AuthMiddleware` 替换重复的 API 验证
-  - 集中化 HTTP 响应读取和客户端管理
-- 改善了可维护性并减少了技术债务
-
 ## 常见开发任务
 
 ### 添加新的模型支持
@@ -490,31 +393,6 @@ kiro2api 在设计上特别注重性能优化，采用多种技术来提升并�
 
 ## 故障排除
 
-### "Improperly formed request" 错误
-这个错误通常出现在工具调用场景中，特别是多模态请求。排查步骤：
-
-1. **检查工具结果内容**：确认 `tool_result` 内容块是否包含嵌套结构
-   ```json
-   {
-     "type": "tool_result",
-     "content": [{"text": "实际内容"}]  // 嵌套数组结构
-   }
-   ```
-
-2. **启用调试日志**：在环境变量中设置详细日志级别
-   ```bash
-   export LOG_LEVEL=debug
-   ./kiro2api
-   ```
-
-3. **检查消息内容处理**：查看日志中的 "消息内容处理结果为空" 条目
-   - 如果 `text_parts_count=0` 且 `images_count=0`，说明内容提取失败
-   - 检查内容结构是否符合预期格式
-
-4. **验证JSON序列化**：确保使用 `utils.SafeMarshal` 而非 `utils.FastMarshal`
-
-**修复历史**：v2.8.1 版本已修复 `tool_result` 嵌套内容结构处理问题。
-
 ### Token刷新失败
 1. 检查 `AWS_REFRESHTOKEN` 环境变量是否正确设置
 2. 验证token池配置和轮换机制
@@ -529,24 +407,4 @@ kiro2api 在设计上特别注重性能优化，采用多种技术来提升并�
 ### Docker 部署调试
 1. 验证 `Dockerfile` 多平台构建配置
 2. 测试 `docker-compose.yml` 环境变量传递
-3. 检查容器健康检查机制（`/health` 端点）
-4. 监控容器日志和性能指标
-
-### 性能监控和统计
-kiro2api 提供多个监控端点来跟踪系统性能：
-
-**Token池监控**:
-- 端点：`GET /stats/token-pool`
-- 信息：token总数、失败计数、缓存命中率、热点token状态
-
-**性能指标**:
-- 端点：`GET /metrics`
-- 信息：请求处理时间、并发连接数、内存使用情况
-
-**健康检查**:
-- 端点：`GET /health`
-- 功能：检查服务可用性和基本功能状态
-
-**性能分析**:
-- 端点：`GET /debug/pprof/*`
-- 功能：Go pprof性能分析工具
+3. 监控容器日志和性能指标

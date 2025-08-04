@@ -2,16 +2,16 @@
 
 一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
-**当前版本**: v2.8.1 - 修复工具调用中 `tool_result` 嵌套内容结构处理问题，彻底解决多模态环境下的 "Improperly formed request" 错误，优化调试日志系统。
+**当前版本**: 开发版本 - 基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口。
 
 ## 功能特性
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
 - **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑
-- **多模态图片支持**：完整支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持PNG、JPEG、GIF、WebP、BMP等格式
+- **多模态图片支持**：支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持PNG、JPEG、GIF、WebP、BMP等格式
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
 - **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
-- **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期令牌
+- **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期token
 - **Token池管理**：支持多个refresh token轮换使用，提供故障转移和负载均衡
 - **智能请求分析**：自动分析请求复杂度，动态调整超时时间和客户端配置
 - **结构化日志系统**：采用JSON格式输出，支持环境变量配置日志级别
@@ -19,7 +19,6 @@
 - **完善的中间件**：统一的认证、CORS 和日志处理
 - **容器化支持**：提供 Dockerfile 和 docker-compose.yml，支持多平台构建和容器化部署
 - **高性能优化**：对象池模式、原子操作Token缓存、热点数据无锁访问
-- **监控支持**：内置性能指标、健康检查和pprof性能分析端点
 
 ## 技术栈
 
@@ -89,14 +88,10 @@ docker-compose up -d
 - `POST /v1/messages` - Anthropic Claude API 兼容接口（支持流式和非流式）
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流式和非流式）
 - `GET /v1/models` - 获取可用模型列表
-- `GET /health` - 健康检查（无需认证）
-- `GET /metrics` - 性能指标监控（无需认证）
-- `GET /stats/*` - 各组件统计信息（无需认证）
-- `GET /debug/pprof/*` - 性能分析端点（无需认证）
 
 ### 认证方式
 
-所有 API 端点（除 `/health`）都需要在请求头中提供认证信息：
+所有 API 端点都需要在请求头中提供认证信息：
 
 ```bash
 # 使用 Authorization Bearer 认证
@@ -519,40 +514,7 @@ kiro2api/
     └── uuid.go                  # UUID生成工具
 ```
 
-## 版本历史
-
-### v2.8.1 - 最新版本
-
-**多模态图片处理优化**：
-- 修复工具调用中 `tool_result` 嵌套内容结构处理问题
-- 彻底解决多模态环境下的 "Improperly formed request" 错误
-- 优化调试日志系统，提供更详细的错误信息
-- 增强图片处理管道的稳定性和兼容性
-
-### v2.8.0 - 多模态图片支持
-
-**新增功能**：
-- 完整图片处理管道：支持PNG、JPEG、GIF、WebP、BMP等格式
-- OpenAI↔Anthropic格式自动转换
-- data URL支持和严格验证机制
-- 图片大小限制（20MB）和编码完整性检查
-
-### v2.7.0+ - 结构化日志系统
-
-**日志系统重构**：
-- JSON格式输出，便于日志分析和监控集成
-- 简化架构，移除复杂的writer接口
-- 多输出支持：控制台、文件或同时输出
-- 性能优化：原子操作、对象池、可配置调用栈获取
-
-### v2.5.3 - 工具调用去重标准化
-
-**符合Anthropic最佳实践**：
-- 从`name+input`哈希改为基于`tool_use_id`的标准去重
-- 精确识别，避免参数哈希误判
-- 流式和非流式处理统一去重逻辑
-
-## 架构说明
+## 开发指南
 
 ### 双API代理架构
 
@@ -619,7 +581,7 @@ docker-compose down
 
 ### 健康检查
 
-容器支持健康检查，通过 `/health` 端点监控服务状态：
+容器支持健康检查，通过 Docker 内置检查机制监控服务状态：
 ```bash
 # 检查容器健康状态
 docker ps
@@ -651,16 +613,6 @@ docker inspect kiro2api | grep -A 10 "Health"
 
 ### 常见问题和解决方案
 
-#### "Improperly formed request" 错误
-这个错误通常出现在工具调用场景中，特别是多模态请求：
-
-1. **检查工具结果内容**：确认 `tool_result` 内容块是否包含嵌套结构
-2. **启用调试日志**：设置 `LOG_LEVEL=debug` 获取详细信息
-3. **检查消息内容处理**：查看日志中的内容提取状态
-4. **验证JSON序列化**：确保使用正确的序列化方法
-
-**修复历史**：v2.8.1 版本已修复 `tool_result` 嵌套内容结构处理问题。
-
 #### Token刷新失败
 1. 检查 `AWS_REFRESHTOKEN` 环境变量是否正确设置
 2. 验证token池配置和轮换机制
@@ -680,12 +632,6 @@ docker inspect kiro2api | grep -A 10 "Health"
 4. 查看图片格式检测日志
 
 ### 监控和调试
-
-#### 性能监控端点
-- **Token池监控**: `GET /stats/token-pool` - token状态和缓存命中率
-- **性能指标**: `GET /metrics` - 请求处理时间和资源使用
-- **健康检查**: `GET /health` - 服务可用性状态
-- **性能分析**: `GET /debug/pprof/*` - Go pprof性能分析
 
 #### 日志调试
 ```bash
@@ -751,22 +697,6 @@ go run main.go
 - **问题反馈**: 通过 GitHub Issues 报告问题
 - **功能请求**: 通过 GitHub Issues 提交功能建议
 - **代码贡献**: 欢迎提交 Pull Request
-
-## 性能基准
-
-### 典型性能指标
-
-- **响应时间**: < 100ms (简单请求)
-- **并发支持**: > 1000 并发连接
-- **内存使用**: < 100MB (空闲状态)
-- **流式延迟**: < 50ms (首字符延迟)
-
-### 优化建议
-
-- 使用多个refresh token提升可用性
-- 合理配置超时时间避免资源浪费
-- 启用JSON格式日志便于性能分析
-- 监控Token缓存命中率和清理效果
 
 ## 许可证
 
