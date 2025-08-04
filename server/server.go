@@ -23,9 +23,6 @@ import (
 // StartServer 启动HTTP代理服务器
 func StartServer(port string, authToken string) {
 
-	// 初始化全局工作池
-	utils.GetGlobalWorkerPool()
-
 	// 设置 gin 模式
 	ginMode := os.Getenv("GIN_MODE")
 	if ginMode == "" {
@@ -72,25 +69,24 @@ func StartServer(port string, authToken string) {
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
+			respondInternalServerErrorf(c, "获取token失败: %v", err)
 			return
 		}
 
 		body, err := c.GetRawData()
 		if err != nil {
 			logger.Error("读取请求体失败", logger.Err(err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("读取请求体失败: %v", err)})
+			respondBadRequestf(c, "读取请求体失败: %v", err)
 			return
 		}
 
 		logger.Debug("收到Anthropic请求",
 			logger.String("body", string(body)),
 			logger.Int("body_size", len(body)))
-		// println("收到Anthropic请求: ", string(body))
 		var anthropicReq types.AnthropicRequest
 		if err := utils.SafeUnmarshal(body, &anthropicReq); err != nil {
 			logger.Error("解析请求体失败", logger.Err(err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
+			respondBadRequestf(c, "解析请求体失败: %v", err)
 			return
 		}
 
@@ -112,8 +108,7 @@ func StartServer(port string, authToken string) {
 		// 验证请求的有效性
 		if len(anthropicReq.Messages) == 0 {
 			logger.Error("请求中没有消息")
-			print("请求中没有消息")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "messages 数组不能为空"})
+			respondBadRequest(c, "messages 数组不能为空")
 			return
 		}
 
@@ -124,7 +119,7 @@ func StartServer(port string, authToken string) {
 			logger.Error("获取消息内容失败",
 				logger.Err(err),
 				logger.String("raw_content", fmt.Sprintf("%v", lastMsg.Content)))
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("获取消息内容失败: %v", err)})
+			respondBadRequestf(c, "获取消息内容失败: %v", err)
 			return
 		}
 
@@ -133,7 +128,7 @@ func StartServer(port string, authToken string) {
 			logger.Error("消息内容为空或无效",
 				logger.String("content", content),
 				logger.String("trimmed_content", trimmedContent))
-			c.JSON(http.StatusBadRequest, gin.H{"error": "消息内容不能为空"})
+			respondBadRequest(c, "消息内容不能为空")
 			return
 		}
 
@@ -155,14 +150,14 @@ func StartServer(port string, authToken string) {
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
-			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("获取token失败: %v", err)})
+			respondInternalServerErrorf(c, "获取token失败: %v", err)
 			return
 		}
 
 		body, err := c.GetRawData()
 		if err != nil {
 			logger.Error("读取请求体失败", logger.Err(err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("读取请求体失败: %v", err)})
+			respondBadRequestf(c, "读取请求体失败: %v", err)
 			return
 		}
 
@@ -173,7 +168,7 @@ func StartServer(port string, authToken string) {
 		var openaiReq types.OpenAIRequest
 		if err := utils.SafeUnmarshal(body, &openaiReq); err != nil {
 			logger.Error("解析OpenAI请求体失败", logger.Err(err))
-			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
+			respondBadRequestf(c, "解析请求体失败: %v", err)
 			return
 		}
 
@@ -207,7 +202,7 @@ func StartServer(port string, authToken string) {
 		logger.Warn("访问未知端点",
 			logger.String("path", c.Request.URL.Path),
 			logger.String("method", c.Request.Method))
-		c.JSON(http.StatusNotFound, gin.H{"error": "404 未找到"})
+		respondNotFound(c, "404 未找到")
 	})
 
 	logger.Info("启动Anthropic API代理服务器",

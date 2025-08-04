@@ -16,6 +16,41 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// 统一错误响应函数
+func respondWithError(c *gin.Context, statusCode int, message string) {
+	c.JSON(statusCode, gin.H{"error": message})
+}
+
+func respondWithErrorf(c *gin.Context, statusCode int, format string, args ...interface{}) {
+	message := fmt.Sprintf(format, args...)
+	c.JSON(statusCode, gin.H{"error": message})
+}
+
+// 常用错误响应快捷函数
+func respondBadRequest(c *gin.Context, message string) {
+	respondWithError(c, http.StatusBadRequest, message)
+}
+
+func respondBadRequestf(c *gin.Context, format string, args ...interface{}) {
+	respondWithErrorf(c, http.StatusBadRequest, format, args...)
+}
+
+func respondUnauthorized(c *gin.Context, message string) {
+	respondWithError(c, http.StatusUnauthorized, message)
+}
+
+func respondInternalServerError(c *gin.Context, message string) {
+	respondWithError(c, http.StatusInternalServerError, message)
+}
+
+func respondInternalServerErrorf(c *gin.Context, format string, args ...interface{}) {
+	respondWithErrorf(c, http.StatusInternalServerError, format, args...)
+}
+
+func respondNotFound(c *gin.Context, message string) {
+	respondWithError(c, http.StatusNotFound, message)
+}
+
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
 func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken string, isStream bool) (*http.Request, error) {
 	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq)
