@@ -49,7 +49,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	contexts := []map[string]any{}
 	currentToolUse := make(map[string]any)
 	toolInputBuffer := ""
-	currentBlockContent := "" // 当前块的文本内容
+	currentBlockContent := ""                   // 当前块的文本内容
 	dedupManager := utils.NewToolDedupManager() // OpenAI端点的工具去重管理器
 
 	for _, event := range events {

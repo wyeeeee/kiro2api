@@ -302,7 +302,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 
 			assistantMsg := types.HistoryAssistantMessage{}
 			assistantMsg.AssistantResponseMessage.Content = "OK"
-			assistantMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
+			assistantMsg.AssistantResponseMessage.ToolUses = nil
 			history = append(history, assistantMsg)
 		}
 
@@ -335,7 +335,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 					} else {
 						assistantMsg.AssistantResponseMessage.Content = ""
 					}
-					assistantMsg.AssistantResponseMessage.ToolUses = make([]any, 0)
+					assistantMsg.AssistantResponseMessage.ToolUses = nil
 					history = append(history, assistantMsg)
 					i++ // 跳过已处理的助手消息
 				}
@@ -629,15 +629,6 @@ func parseContentBlock(block map[string]any) (types.ContentBlock, error) {
 func generateToolSystemPrompt(tools []types.AnthropicTool) string {
 	prompt := "你是一个AI助手。如果用户的请求可以通过使用提供的工具来完成，你应该调用相应的工具。"
 	return prompt
-}
-
-// getMapKeys 获取map的所有键，用于调试
-func getMapKeys(m map[string]any) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	return keys
 }
 
 // validateAndProcessTools 验证和处理工具定义

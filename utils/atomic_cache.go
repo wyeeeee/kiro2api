@@ -6,6 +6,7 @@ import (
 	"time"
 	"unsafe"
 
+	"kiro2api/logger"
 	"kiro2api/types"
 )
 
@@ -55,7 +56,7 @@ func (atc *AtomicTokenCache) GetHot() (*types.TokenInfo, bool) {
 func (atc *AtomicTokenCache) SetHot(idx int, token *types.TokenInfo) {
 	atomic.StorePointer(&atc.hot, unsafe.Pointer(token))
 	atomic.StoreInt64(&atc.hotIdx, int64(idx))
-	
+
 	// 同时更新冷缓存
 	atc.cache.Store(idx, token)
 }
@@ -108,11 +109,11 @@ func (atc *AtomicTokenCache) Delete(idx int) {
 
 // Clear 清除所有缓存
 func (atc *AtomicTokenCache) Clear() {
-	atc.cache.Range(func(key, value interface{}) bool {
+	atc.cache.Range(func(key, value any) bool {
 		atc.cache.Delete(key)
 		return true
 	})
-	
+
 	atomic.StorePointer(&atc.hot, nil)
 	atomic.StoreInt64(&atc.hotIdx, 0)
 }
@@ -120,56 +121,53 @@ func (atc *AtomicTokenCache) Clear() {
 // CleanupExpired 清理过期的token（后台定期调用）
 func (atc *AtomicTokenCache) CleanupExpired() int {
 	cleaned := 0
-	
-	atc.cache.Range(func(key, value interface{}) bool {
+
+	atc.cache.Range(func(key, value any) bool {
 		token := value.(*types.TokenInfo)
 		if token.IsExpired() {
 			idx := key.(int)
 			atc.cache.Delete(idx)
-			
+
 			// 如果是热点token，也清除
 			if atomic.LoadInt64(&atc.hotIdx) == int64(idx) {
 				atomic.StorePointer(&atc.hot, nil)
 				atomic.StoreInt64(&atc.hotIdx, 0)
 			}
-			
+
 			cleaned++
 		}
 		return true
 	})
-	
+
 	return cleaned
 }
 
 // GetStats 获取缓存统计信息
-func (atc *AtomicTokenCache) GetStats() map[string]interface{} {
+func (atc *AtomicTokenCache) GetStats() map[string]any {
 	hits := atomic.LoadInt64(&atc.hits)
 	misses := atomic.LoadInt64(&atc.misses)
 	total := hits + misses
-	
+
 	hitRate := float64(0)
 	if total > 0 {
 		hitRate = float64(hits) / float64(total)
 	}
 
 	size := 0
-	atc.cache.Range(func(key, value interface{}) bool {
+	atc.cache.Range(func(key, value any) bool {
 		size++
 		return true
 	})
 
-	return map[string]interface{}{
-		"hits":      hits,
-		"misses":    misses,
-		"hit_rate":  hitRate,
-		"size":      size,
-		"hot_idx":   atomic.LoadInt64(&atc.hotIdx),
-		"has_hot":   atomic.LoadPointer(&atc.hot) != nil,
+	return map[string]any{
+		"hits":     hits,
+		"misses":   misses,
+		"hit_rate": hitRate,
+		"size":     size,
+		"hot_idx":  atomic.LoadInt64(&atc.hotIdx),
+		"has_hot":  atomic.LoadPointer(&atc.hot) != nil,
 	}
 }
-
-// 全局原子Token缓存实例
-var GlobalAtomicTokenCache = NewAtomicTokenCache()
 
 // StartCleanupRoutine 启动后台清理协程
 func (atc *AtomicTokenCache) StartCleanupRoutine() {
@@ -180,8 +178,7 @@ func (atc *AtomicTokenCache) StartCleanupRoutine() {
 		for range ticker.C {
 			cleaned := atc.CleanupExpired()
 			if cleaned > 0 {
-				// 可以记录清理日志
-				_ = cleaned
+				logger.Debug("缓存清理完成", logger.Int("cleaned_count", cleaned))
 			}
 		}
 	}()

@@ -200,9 +200,9 @@ type StreamParserPool struct {
 // 全局StreamParser对象池
 var GlobalStreamParserPool = &StreamParserPool{
 	pool: sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return &StreamParser{
-				buffer: make([]byte, 0, 4096),  // 预分配4KB缓冲区
+				buffer: make([]byte, 0, 4096),   // 预分配4KB缓冲区
 				events: make([]SSEEvent, 0, 16), // 预分配16个事件空间
 			}
 		},
@@ -226,7 +226,7 @@ func (spp *StreamParserPool) Put(sp *StreamParser) {
 // 推荐使用 GlobalStreamParserPool.Get() 来获取复用实例
 func NewStreamParser() *StreamParser {
 	return &StreamParser{
-		buffer: make([]byte, 0, 1024), // 默认1KB缓冲区
+		buffer: make([]byte, 0, 1024),  // 默认1KB缓冲区
 		events: make([]SSEEvent, 0, 8), // 默认8个事件空间
 	}
 }

@@ -22,7 +22,7 @@ func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, accessToken 
 	if err != nil {
 		return nil, fmt.Errorf("构建CodeWhisperer请求失败: %v", err)
 	}
-	
+
 	cwReqBody, err := utils.SafeMarshal(cwReq)
 	if err != nil {
 		return nil, fmt.Errorf("序列化请求失败: %v", err)

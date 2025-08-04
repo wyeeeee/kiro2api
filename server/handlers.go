@@ -90,7 +90,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	// 从对象池获取流式解析器，处理完后放回池中
 	streamParser := parser.GlobalStreamParserPool.Get()
 	defer parser.GlobalStreamParserPool.Put(streamParser)
-	
+
 	outputTokens := 0
 	dedupManager := utils.NewToolDedupManager() // 请求级别的工具去重管理器
 

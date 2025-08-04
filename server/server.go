@@ -22,17 +22,17 @@ import (
 
 // StartServer 启动HTTP代理服务器
 func StartServer(port string, authToken string) {
-	
+
 	// 初始化全局工作池
 	utils.GetGlobalWorkerPool()
-	
+
 	// 设置 gin 模式
 	ginMode := os.Getenv("GIN_MODE")
 	if ginMode == "" {
 		ginMode = gin.ReleaseMode
 	}
 	gin.SetMode(ginMode)
-	
+
 	r := gin.New()
 
 	// 添加中间件
@@ -41,7 +41,6 @@ func StartServer(port string, authToken string) {
 	r.Use(corsMiddleware())
 	// 只对 /v1 开头的端点进行认证
 	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
-
 
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
@@ -69,7 +68,7 @@ func StartServer(port string, authToken string) {
 	})
 
 	r.POST("/v1/messages", func(c *gin.Context) {
-		
+
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
@@ -94,7 +93,6 @@ func StartServer(port string, authToken string) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("解析请求体失败: %v", err)})
 			return
 		}
-		
 
 		logger.Debug("请求解析成功",
 			logger.String("model", anthropicReq.Model),
@@ -216,12 +214,12 @@ func StartServer(port string, authToken string) {
 		logger.String("port", port),
 		logger.String("auth_token", "***"))
 	logger.Info("AuthToken 验证已启用")
-	logger.Println("可用端点:")
-	logger.Println("  GET  /v1/models           - 模型列表")
-	logger.Println("  POST /v1/messages         - Anthropic API代理")
-	logger.Println("  POST /v1/chat/completions - OpenAI API代理")
-	logger.Println("  GET  /health              - 健康检查")
-	logger.Println("按Ctrl+C停止服务器")
+	logger.Info("可用端点:")
+	logger.Info("  GET  /v1/models           - 模型列表")
+	logger.Info("  POST /v1/messages         - Anthropic API代理")
+	logger.Info("  POST /v1/chat/completions - OpenAI API代理")
+	logger.Info("  GET  /health              - 健康检查")
+	logger.Info("按Ctrl+C停止服务器")
 
 	// 获取服务器超时配置
 	readTimeout := getServerTimeoutFromEnv("SERVER_READ_TIMEOUT_MINUTES", 16) * time.Minute

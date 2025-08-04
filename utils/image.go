@@ -3,9 +3,7 @@ package utils
 import (
 	"encoding/base64"
 	"fmt"
-	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -64,64 +62,6 @@ func DetectImageFormat(data []byte) (string, error) {
 	}
 
 	return "", fmt.Errorf("不支持的图片格式")
-}
-
-// ReadImageFromFile 从文件路径读取图片并编码为 base64
-func ReadImageFromFile(imagePath string) (*types.ImageSource, error) {
-	// 检查文件是否存在
-	if _, err := os.Stat(imagePath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("图片文件不存在: %s", imagePath)
-	}
-
-	// 打开文件
-	file, err := os.Open(imagePath)
-	if err != nil {
-		return nil, fmt.Errorf("无法打开图片文件: %v", err)
-	}
-	defer file.Close()
-
-	// 检查文件大小
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("无法获取文件信息: %v", err)
-	}
-	if fileInfo.Size() > MaxImageSize {
-		return nil, fmt.Errorf("图片文件过大: %d 字节，最大支持 %d 字节", fileInfo.Size(), MaxImageSize)
-	}
-
-	// 读取文件内容
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, fmt.Errorf("无法读取图片文件: %v", err)
-	}
-
-	return ProcessImageData(data, imagePath)
-}
-
-// ReadImageFromURL 从 URL 读取图片并编码为 base64
-func ReadImageFromURL(imageURL string) (*types.ImageSource, error) {
-	resp, err := http.Get(imageURL)
-	if err != nil {
-		return nil, fmt.Errorf("无法下载图片: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("下载图片失败，状态码: %d", resp.StatusCode)
-	}
-
-	// 检查文件大小
-	if resp.ContentLength > MaxImageSize {
-		return nil, fmt.Errorf("图片文件过大: %d 字节，最大支持 %d 字节", resp.ContentLength, MaxImageSize)
-	}
-
-	// 限制读取大小
-	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxImageSize))
-	if err != nil {
-		return nil, fmt.Errorf("无法读取图片数据: %v", err)
-	}
-
-	return ProcessImageData(data, imageURL)
 }
 
 // ProcessImageData 处理图片数据，检测格式并编码为 base64

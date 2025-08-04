@@ -227,11 +227,11 @@ func (wp *WorkerPool) resultHandler() {
 }
 
 // GetStats 获取工作池统计信息
-func (wp *WorkerPool) GetStats() map[string]interface{} {
+func (wp *WorkerPool) GetStats() map[string]any {
 	wp.mu.RLock()
 	defer wp.mu.RUnlock()
 
-	return map[string]interface{}{
+	return map[string]any{
 		"max_workers":    wp.maxWorkers,
 		"active_workers": atomic.LoadInt64(&wp.activeWorkers),
 		"total_jobs":     atomic.LoadInt64(&wp.totalJobs),
