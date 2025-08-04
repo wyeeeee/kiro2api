@@ -194,13 +194,13 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
 func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeWhispererRequest, error) {
 	cwReq := types.CodeWhispererRequest{
-		ProfileArn: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
+		// ProfileArn: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
 	}
-	
-	// 验证必需字段
-	if cwReq.ProfileArn == "" {
-		return cwReq, fmt.Errorf("ProfileArn不能为空")
-	}
+
+	// // 验证必需字段
+	// if cwReq.ProfileArn == "" {
+	// 	return cwReq, fmt.Errorf("ProfileArn不能为空")
+	// }
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
 
@@ -208,14 +208,14 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 	if len(anthropicReq.Messages) == 0 {
 		return cwReq, fmt.Errorf("消息列表为空")
 	}
-	
+
 	lastMessage := anthropicReq.Messages[len(anthropicReq.Messages)-1]
-	
+
 	// 调试：记录原始消息内容
 	logger.Debug("处理用户消息",
 		logger.String("role", lastMessage.Role),
 		logger.String("content_type", fmt.Sprintf("%T", lastMessage.Content)))
-	
+
 	textContent, images, err := processMessageContent(lastMessage.Content)
 	if err != nil {
 		return cwReq, fmt.Errorf("处理消息内容失败: %v", err)
@@ -242,14 +242,14 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 		logger.Debug("开始处理工具配置",
 			logger.Int("tools_count", len(anthropicReq.Tools)),
 			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
-		
+
 		var tools []types.CodeWhispererTool
 		for i, tool := range anthropicReq.Tools {
 			logger.Debug("转换工具定义",
 				logger.Int("tool_index", i),
 				logger.String("tool_name", tool.Name),
 				logger.String("tool_description", tool.Description))
-			
+
 			cwTool := types.CodeWhispererTool{}
 			cwTool.ToolSpecification.Name = tool.Name
 			cwTool.ToolSpecification.Description = tool.Description
@@ -259,7 +259,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 			tools = append(tools, cwTool)
 		}
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools = tools
-		
+
 		logger.Info("工具配置完成",
 			logger.Int("converted_tools_count", len(tools)),
 			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
@@ -286,7 +286,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 		// 如果有工具，添加工具使用系统提示
 		if len(anthropicReq.Tools) > 0 {
 			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.Tools)
-			
+
 			if systemContentBuilder.Len() > 0 {
 				systemContentBuilder.WriteString("\n\n")
 			}
@@ -356,11 +356,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
 		return cwReq, fmt.Errorf("用户消息内容处理异常：内容和图片都为空，原始内容长度=%d", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content))
 	}
-	
+
 	if cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId == "" {
 		return cwReq, fmt.Errorf("ModelId不能为空")
 	}
-	
+
 	logger.Debug("构建CodeWhisperer请求完成",
 		logger.String("conversation_id", cwReq.ConversationState.ConversationId),
 		logger.String("model_id", cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId),
@@ -458,8 +458,8 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 					}
 				}
 			} else {
-				logger.Warn("内容块不是map[string]any类型", 
-					logger.Int("index", i), 
+				logger.Warn("内容块不是map[string]any类型",
+					logger.Int("index", i),
 					logger.String("actual_type", fmt.Sprintf("%T", item)))
 			}
 		}
@@ -534,7 +534,7 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 	}
 
 	result := strings.Join(textParts, "")
-	
+
 	// 保留关键调试信息用于问题定位
 	if result == "" && len(images) == 0 {
 		logger.Debug("消息内容处理结果为空",
@@ -554,7 +554,7 @@ func parseContentBlock(block map[string]any) (types.ContentBlock, error) {
 	if blockType, ok := block["type"].(string); ok {
 		contentBlock.Type = blockType
 	} else {
-		logger.Error("内容块缺少type字段或type不是字符串", 
+		logger.Error("内容块缺少type字段或type不是字符串",
 			logger.String("type_value", fmt.Sprintf("%v", block["type"])),
 			logger.String("type_type", fmt.Sprintf("%T", block["type"])))
 		return contentBlock, fmt.Errorf("缺少内容块类型")

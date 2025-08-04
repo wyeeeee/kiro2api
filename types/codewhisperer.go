@@ -7,10 +7,10 @@ type CodeWhispererRequest struct {
 		ConversationId  string `json:"conversationId"`
 		CurrentMessage  struct {
 			UserInputMessage struct {
-				Content                 string                    `json:"content"`
-				ModelId                 string                    `json:"modelId"`
-				Origin                  string                    `json:"origin"`
-				Images                  []CodeWhispererImage      `json:"images,omitempty"`
+				Content                 string               `json:"content"`
+				ModelId                 string               `json:"modelId"`
+				Origin                  string               `json:"origin"`
+				Images                  []CodeWhispererImage `json:"images,omitempty"`
 				UserInputMessageContext struct {
 					ToolResults []struct {
 						Content []struct {
@@ -25,7 +25,7 @@ type CodeWhispererRequest struct {
 		} `json:"currentMessage"`
 		History []any `json:"history"`
 	} `json:"conversationState"`
-	ProfileArn string `json:"profileArn"`
+	// ProfileArn string `json:"profileArn"`
 }
 
 // CodeWhispererImage 表示 CodeWhisperer API 的图片结构
@@ -59,10 +59,10 @@ type CodeWhispererTool struct {
 // HistoryUserMessage 表示历史记录中的用户消息
 type HistoryUserMessage struct {
 	UserInputMessage struct {
-		Content string                    `json:"content"`
-		ModelId string                    `json:"modelId"`
-		Origin  string                    `json:"origin"`
-		Images  []CodeWhispererImage      `json:"images,omitempty"`
+		Content string               `json:"content"`
+		ModelId string               `json:"modelId"`
+		Origin  string               `json:"origin"`
+		Images  []CodeWhispererImage `json:"images,omitempty"`
 	} `json:"userInputMessage"`
 }
 
