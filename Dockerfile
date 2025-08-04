@@ -50,9 +50,5 @@ USER appuser
 # 暴露默认端口
 EXPOSE 8080
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
-
 # 设置默认命令
 CMD ["./kiro2api", "server"]

@@ -75,7 +75,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 		}
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools = tools
 
-		logger.Info("工具配置完成",
+		logger.Debug("工具配置完成",
 			logger.Int("converted_tools_count", len(tools)),
 			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
 	}

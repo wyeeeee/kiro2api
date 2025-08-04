@@ -213,7 +213,6 @@ func StartServer(port string, authToken string) {
 	logger.Info("  GET  /v1/models           - 模型列表")
 	logger.Info("  POST /v1/messages         - Anthropic API代理")
 	logger.Info("  POST /v1/chat/completions - OpenAI API代理")
-	logger.Info("  GET  /health              - 健康检查")
 	logger.Info("按Ctrl+C停止服务器")
 
 	// 获取服务器超时配置
