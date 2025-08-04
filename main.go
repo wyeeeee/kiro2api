@@ -13,7 +13,7 @@ import (
 func main() {
 	// 自动加载.env文件
 	if err := godotenv.Load(); err != nil {
-		fmt.Printf("警告: 无法加载.env文件: %v\n", err)
+		logger.Fatal("无法加载.env文件", logger.Err(err))
 	}
 
 	// 重新初始化logger以使用.env文件中的配置
