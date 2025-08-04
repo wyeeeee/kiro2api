@@ -100,7 +100,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 
 		// 如果有工具，添加工具使用系统提示
 		if len(anthropicReq.Tools) > 0 {
-			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.Tools)
+			toolSystemPrompt := generateToolSystemPrompt()
 
 			if systemContentBuilder.Len() > 0 {
 				systemContentBuilder.WriteString("\n\n")
@@ -194,7 +194,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 }
 
 // generateToolSystemPrompt 生成工具使用的系统提示
-func generateToolSystemPrompt(tools []types.AnthropicTool) string {
+func generateToolSystemPrompt() string {
 	prompt := "你是一个AI助手。如果用户的请求可以通过使用提供的工具来完成，你应该调用相应的工具。"
 	return prompt
 }

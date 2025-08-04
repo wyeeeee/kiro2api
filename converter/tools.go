@@ -61,7 +61,7 @@ func validateAndProcessTools(tools []types.OpenAITool) ([]types.AnthropicTool, e
 }
 
 // cleanAndValidateToolParameters 清理和验证工具参数
-func cleanAndValidateToolParameters(params map[string]any, toolName string) (map[string]any, error) {
+func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string]any, error) {
 	if params == nil {
 		return nil, fmt.Errorf("参数不能为nil")
 	}

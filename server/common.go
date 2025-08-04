@@ -35,14 +35,6 @@ func respondBadRequestf(c *gin.Context, format string, args ...interface{}) {
 	respondWithErrorf(c, http.StatusBadRequest, format, args...)
 }
 
-func respondUnauthorized(c *gin.Context, message string) {
-	respondWithError(c, http.StatusUnauthorized, message)
-}
-
-func respondInternalServerError(c *gin.Context, message string) {
-	respondWithError(c, http.StatusInternalServerError, message)
-}
-
 func respondInternalServerErrorf(c *gin.Context, format string, args ...interface{}) {
 	respondWithErrorf(c, http.StatusInternalServerError, format, args...)
 }
