@@ -2,6 +2,8 @@
 
 一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
+**当前版本**: v2.8.1 - 修复工具调用中 `tool_result` 嵌套内容结构处理问题，彻底解决多模态环境下的 "Improperly formed request" 错误，优化调试日志系统。
+
 ## 功能特性
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
@@ -15,15 +17,19 @@
 - **结构化日志系统**：采用JSON格式输出，支持环境变量配置日志级别
 - **增强验证机制**：完善的图片格式验证、请求内容验证和工具结果解析机制
 - **完善的中间件**：统一的认证、CORS 和日志处理
-- **容器化支持**：提供 Dockerfile 和 docker-compose.yml，支持容器化部署
+- **容器化支持**：提供 Dockerfile 和 docker-compose.yml，支持多平台构建和容器化部署
+- **高性能优化**：对象池模式、原子操作Token缓存、热点数据无锁访问
+- **监控支持**：内置性能指标、健康检查和pprof性能分析端点
 
 ## 技术栈
 
 - **Web框架**: gin-gonic/gin v1.10.1
-- **JSON处理**: bytedance/sonic v1.14.0
+- **JSON处理**: bytedance/sonic v1.14.0（高性能JSON库）
 - **环境变量**: github.com/joho/godotenv v1.5.1
 - **Go版本**: 1.23.3
 - **流式解析**: 自定义 AWS EventStream 二进制协议解析器
+- **并发优化**: sync.Pool, sync.Map, 原子操作
+- **HTTP**: 标准 net/http 与共享客户端池
 
 ## 快速开始
 
@@ -369,6 +375,9 @@ export LOG_LEVEL="info"                       # 日志级别：debug, info, warn
 export LOG_FORMAT="json"                      # 日志格式：text, json（默认：json）
 export LOG_FILE="/path/to/log/file"           # 日志文件路径（可选）
 export LOG_CONSOLE="true"                     # 是否输出到控制台（默认：true）
+
+# 功能控制
+export DISABLE_STREAM="false"                 # 是否禁用流式响应（默认：false）
 export GIN_MODE="release"                     # Gin模式：debug, release, test（默认：release）
 
 # 超时配置
@@ -392,11 +401,14 @@ PORT=8080
 AWS_REFRESHTOKEN=your_refresh_token_here
 LOG_LEVEL=info
 LOG_FORMAT=json
+LOG_FILE=/var/log/kiro2api.log
+LOG_CONSOLE=true
 GIN_MODE=release
 REQUEST_TIMEOUT_MINUTES=15
 SIMPLE_REQUEST_TIMEOUT_MINUTES=2
 SERVER_READ_TIMEOUT_MINUTES=16
 SERVER_WRITE_TIMEOUT_MINUTES=16
+DISABLE_STREAM=false
 ```
 
 ### Token 池管理
@@ -507,7 +519,47 @@ kiro2api/
     └── uuid.go                  # UUID生成工具
 ```
 
+## 版本历史
+
+### v2.8.1 - 最新版本
+
+**多模态图片处理优化**：
+- 修复工具调用中 `tool_result` 嵌套内容结构处理问题
+- 彻底解决多模态环境下的 "Improperly formed request" 错误
+- 优化调试日志系统，提供更详细的错误信息
+- 增强图片处理管道的稳定性和兼容性
+
+### v2.8.0 - 多模态图片支持
+
+**新增功能**：
+- 完整图片处理管道：支持PNG、JPEG、GIF、WebP、BMP等格式
+- OpenAI↔Anthropic格式自动转换
+- data URL支持和严格验证机制
+- 图片大小限制（20MB）和编码完整性检查
+
+### v2.7.0+ - 结构化日志系统
+
+**日志系统重构**：
+- JSON格式输出，便于日志分析和监控集成
+- 简化架构，移除复杂的writer接口
+- 多输出支持：控制台、文件或同时输出
+- 性能优化：原子操作、对象池、可配置调用栈获取
+
+### v2.5.3 - 工具调用去重标准化
+
+**符合Anthropic最佳实践**：
+- 从`name+input`哈希改为基于`tool_use_id`的标准去重
+- 精确识别，避免参数哈希误判
+- 流式和非流式处理统一去重逻辑
+
 ## 架构说明
+
+### 双API代理架构
+
+kiro2api是一个**双API代理服务器**，在三种格式之间进行转换：
+- **输入**: Anthropic Claude API 或 OpenAI ChatCompletion API 
+- **输出**: AWS CodeWhisperer EventStream 格式
+- **响应**: 实时流式或标准 JSON 响应
 
 ### 请求处理流程
 
@@ -521,18 +573,24 @@ kiro2api/
 8. **格式转换** - 将响应转换回客户端请求的格式（Anthropic/OpenAI）
 9. **返回响应** - 以流式或非流式方式返回给客户端
 
-### 核心特性
+### 高性能特性
 
 - **零延迟流式**: 使用滑动窗口缓冲区的自定义 EventStream 解析器
 - **智能Token管理**: 多token池支持，自动轮换和故障转移
 - **请求复杂度分析**: 根据请求特征动态调整超时和客户端配置
-- **统一中间件**: 集中式的认证、CORS 和错误处理
-- **高性能处理**: 共享 HTTP 客户端和优化的 JSON 序列化
-- **容错设计**: 自动令牌刷新和优雅的错误处理
-- **多模态图片处理**: 完整的图片处理管道，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持多种图片格式和严格的验证机制
+- **对象池优化**: `sync.Pool` 复用StreamParser和字节缓冲区，减少GC压力
+- **原子操作缓存**: Token缓存使用热点+冷缓存两级架构，最常用token无锁访问
+- **高性能JSON**: 使用bytedance/sonic替代标准库，提升处理性能
+- **并发安全设计**: 读写分离、无锁设计、后台清理机制
+
+### 核心功能模块
+
+- **多模态图片处理**: 完整的图片处理管道，自动转换OpenAI `image_url`格式到Anthropic `image`格式
 - **精确工具去重**: 基于 `tool_use_id` 的工具调用去重，符合 Anthropic 标准
 - **结构化日志**: JSON格式日志输出，便于监控和分析
-- **增强验证机制**: 全面的请求验证、工具结果解析和图片内容验证，包括格式检测、大小限制和编码验证
+- **增强验证机制**: 全面的请求验证、工具结果解析和图片内容验证
+- **统一中间件**: 集中式的认证、CORS 和错误处理
+- **容错设计**: 自动令牌刷新和优雅的错误处理
 
 ## Docker 部署
 
@@ -589,11 +647,126 @@ docker inspect kiro2api | grep -A 10 "Health"
 }
 ```
 
-## 注意事项
+## 故障排除
 
-- 流式响应使用自定义的二进制 EventStream 解析，不是缓冲解析
-- 程序启动时会初始化结构化日志系统
-- 健康检查端点 `/health` 不需要认证
+### 常见问题和解决方案
+
+#### "Improperly formed request" 错误
+这个错误通常出现在工具调用场景中，特别是多模态请求：
+
+1. **检查工具结果内容**：确认 `tool_result` 内容块是否包含嵌套结构
+2. **启用调试日志**：设置 `LOG_LEVEL=debug` 获取详细信息
+3. **检查消息内容处理**：查看日志中的内容提取状态
+4. **验证JSON序列化**：确保使用正确的序列化方法
+
+**修复历史**：v2.8.1 版本已修复 `tool_result` 嵌套内容结构处理问题。
+
+#### Token刷新失败
+1. 检查 `AWS_REFRESHTOKEN` 环境变量是否正确设置
+2. 验证token池配置和轮换机制
+3. 查看token过期时间和自动刷新日志
+4. 确保token格式正确且未过期
+
+#### 流式响应中断
+1. 检查客户端连接稳定性
+2. 验证 EventStream 解析器状态
+3. 查看工具调用去重逻辑是否影响流式输出
+4. 检查网络超时配置
+
+#### 图片处理错误
+1. 确认图片格式是否支持（PNG、JPEG、GIF、WebP、BMP）
+2. 检查图片大小是否超过20MB限制
+3. 验证base64编码是否正确
+4. 查看图片格式检测日志
+
+### 监控和调试
+
+#### 性能监控端点
+- **Token池监控**: `GET /stats/token-pool` - token状态和缓存命中率
+- **性能指标**: `GET /metrics` - 请求处理时间和资源使用
+- **健康检查**: `GET /health` - 服务可用性状态
+- **性能分析**: `GET /debug/pprof/*` - Go pprof性能分析
+
+#### 日志调试
+```bash
+# 启用详细日志
+export LOG_LEVEL=debug
+export LOG_FORMAT=json
+export LOG_FILE=/var/log/kiro2api.log
+export LOG_CONSOLE=true
+
+# 启动服务
+./kiro2api
+```
+
+## 贡献指南
+
+### 本地开发环境搭建
+
+1. **克隆项目**：
+```bash
+git clone <repository-url>
+cd kiro2api
+```
+
+2. **安装依赖**：
+```bash
+go mod download
+```
+
+3. **配置环境变量**：
+```bash
+cp .env.example .env
+# 编辑 .env 文件，设置必要的配置
+```
+
+4. **运行测试**：
+```bash
+go test ./...
+```
+
+5. **启动开发服务器**：
+```bash
+go run main.go
+```
+
+### 代码规范
+
+- 遵循 Go 官方代码规范
+- 使用 `go fmt` 格式化代码
+- 使用 `go vet` 进行静态检查
+- 为新功能编写测试
+- 更新相关文档
+
+### 提交规范
+
+- 使用清晰的commit信息
+- 每个commit只包含一个逻辑变更
+- 在提交前运行测试
+- 更新版本信息和CHANGELOG
+
+## 支持和文档
+
+- **项目文档**: 查看 `CLAUDE.md` 了解详细的开发指南
+- **问题反馈**: 通过 GitHub Issues 报告问题
+- **功能请求**: 通过 GitHub Issues 提交功能建议
+- **代码贡献**: 欢迎提交 Pull Request
+
+## 性能基准
+
+### 典型性能指标
+
+- **响应时间**: < 100ms (简单请求)
+- **并发支持**: > 1000 并发连接
+- **内存使用**: < 100MB (空闲状态)
+- **流式延迟**: < 50ms (首字符延迟)
+
+### 优化建议
+
+- 使用多个refresh token提升可用性
+- 合理配置超时时间避免资源浪费
+- 启用JSON格式日志便于性能分析
+- 监控Token缓存命中率和清理效果
 
 ## 许可证
 

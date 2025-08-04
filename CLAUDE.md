@@ -1,10 +1,12 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 此文件为 Claude Code (claude.ai/code) 在此代码库中工作时提供指导。
 
 ## 项目概述
 
-这是 `kiro2api`，一个 Go 高性能 HTTP 代理服务器，用于在 Anthropic/OpenAI 格式和 AWS CodeWhisperer 之间桥接 API 请求。它提供多token池管理、智能请求分析、结构化日志系统和实时流式响应功能。
+这是 `kiro2api`，一个基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
 **当前版本**: v2.8.1 - 修复工具调用中 `tool_result` 嵌套内容结构处理问题，彻底解决多模态环境下的 "Improperly formed request" 错误，优化调试日志系统。
 
@@ -47,6 +49,7 @@ go test ./...
 # 运行特定包的详细测试
 go test ./parser -v
 go test ./auth -v
+go test ./utils -v
 
 # 代码质量检查
 go vet ./...
@@ -54,6 +57,10 @@ go fmt ./...
 
 # 清理构建
 rm -f kiro2api && go build -o kiro2api main.go
+
+# 查看依赖
+go mod tidy
+go mod graph
 ```
 
 ## 应用程序命令
@@ -103,12 +110,14 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - `utils.GetClientForRequest()` - 为不同复杂度的请求选择合适的HTTP客户端
 - 复杂请求使用15分钟超时，简单请求使用2分钟超时
 - 服务器读写超时配置，支持长时间处理
+- **复杂度评估因素**: MaxTokens (>4000)、内容长度 (>10K字符)、工具使用、系统提示长度 (>2K字符)、复杂关键词检测
 
 **Token池管理**: 高级认证系统：
 - `types.TokenPool` - 支持多个refresh token的池化管理和自动轮换
 - 智能故障转移，每个token最多重试3次后自动跳过
-- `types.TokenCache` - 基于token过期时间的多索引智能缓存
+- `utils.AtomicTokenCache` - **[高性能]** 原子操作的Token缓存，减少锁竞争
 - 负载均衡和健康状态管理
+- **热点缓存机制**: 最常用的token使用原子指针避免锁，冷缓存使用sync.Map适合读多写少场景
 
 **工具调用去重**: 标准化工具调用管理：
 - `utils.ToolDedupManager` - 基于 `tool_use_id` 的精确去重机制
@@ -126,6 +135,8 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - 立即客户端流式传输（零首字符延迟）
 - 使用 `binary.BigEndian` 进行 AWS EventStream 协议的二进制格式解析
 - 支持 `assistantResponseEvent` 和 `toolUseEvent` 两种事件类型
+- **对象池优化**: `GlobalStreamParserPool` 复用StreamParser实例，减少内存分配
+- **高性能JSON处理**: 使用bytedance/sonic库进行JSON序列化/反序列化
 
 ## 包结构
 
@@ -159,6 +170,8 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - `tool_dedup.go`: **[v2.5.3重构]** 基于 `tool_use_id` 的工具去重管理器
 - `image.go`: **[v2.8.0新增]** 多模态图片处理工具，支持格式检测、验证和转换
 - `uuid.go`: UUID 生成工具
+- `atomic_cache.go`: **[高性能]** 原子操作的Token缓存实现，减少锁竞争
+- `json.go`: 高性能JSON序列化工具（SafeMarshal, FastMarshal）
 
 **`types/`** - **[最近重构]** 数据结构定义
 - `anthropic.go`: Anthropic API 请求/响应结构
@@ -174,6 +187,7 @@ export GIN_MODE="release"                   # Gin模式 (默认: release)
 - 日志级别管理（DEBUG、INFO、WARN、ERROR、FATAL）
 - 多输出支持：控制台、文件或同时输出
 - **优化亮点**: 简化架构，移除复杂 writer 接口，提升性能和可维护性
+- **性能优化**: 使用原子操作、对象池、可配置的调用栈获取
 
 **`config/`** - 配置常量
 - `ModelMap`: 将公开模型名称映射到内部 CodeWhisperer 模型 ID
@@ -258,26 +272,56 @@ docker run -d \
 **环境变量配置**: 支持完整的环境变量配置：
 ```bash
 # 必需配置
-AWS_REFRESHTOKEN=token1,token2,token3  # 多token支持
+AWS_REFRESHTOKEN=token1,token2,token3  # 多token支持（必需）
 
 # 可选配置
-KIRO_CLIENT_TOKEN=123456               # 客户端认证token
-PORT=8080                              # 服务端口
-LOG_LEVEL=info                         # 日志级别
-LOG_FORMAT=json                        # 日志格式
-GIN_MODE=release                       # Gin模式
+KIRO_CLIENT_TOKEN=123456               # 客户端认证token（默认: 123456）
+PORT=8080                              # 服务端口（默认: 8080）
+LOG_LEVEL=info                         # 日志级别：debug,info,warn,error
+LOG_FORMAT=json                        # 日志格式：text,json
+LOG_FILE=/var/log/kiro2api.log         # 日志文件路径（可选）
+LOG_CONSOLE=true                       # 是否输出到控制台（默认: true）
+GIN_MODE=release                       # Gin模式：debug,release,test
 
-# 超时配置
-REQUEST_TIMEOUT_MINUTES=15             # 复杂请求超时
-SIMPLE_REQUEST_TIMEOUT_MINUTES=2       # 简单请求超时
-SERVER_READ_TIMEOUT_MINUTES=16         # 服务器读取超时
-SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
+# 超时配置（分钟）
+REQUEST_TIMEOUT_MINUTES=15             # 复杂请求超时（默认: 15）
+SIMPLE_REQUEST_TIMEOUT_MINUTES=2       # 简单请求超时（默认: 2）
+SERVER_READ_TIMEOUT_MINUTES=16         # 服务器读取超时（默认: 16）
+SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时（默认: 16）
+
+# 功能控制
+DISABLE_STREAM=false                   # 是否禁用流式响应（默认: false）
 ```
 
 **错误处理**: 智能错误处理和恢复机制
 - 403 响应触发自动令牌刷新
 - Token池故障转移
 - 请求复杂度分析和超时调整
+
+## 高性能实现特性
+
+kiro2api 在设计上特别注重性能优化，采用多种技术来提升并发处理能力和资源利用效率：
+
+### 内存管理优化
+- **对象池模式**: 使用 `sync.Pool` 复用 `StreamParser` 和字节缓冲区，减少GC压力
+- **预分配策略**: 缓冲区和事件切片预分配容量，避免动态扩容开销
+- **热点数据缓存**: Token缓存使用热点+冷缓存两级架构，最常用token通过原子指针无锁访问
+
+### 并发处理优化
+- **原子操作**: 日志级别判断、Token缓存访问使用原子操作，减少锁竞争
+- **读写分离**: Token池使用读写锁，缓存使用sync.Map适合读多写少场景
+- **无锁设计**: 热点Token缓存使用unsafe.Pointer实现无锁访问
+- **后台清理**: Token缓存过期清理在后台协程中进行，不影响主流程
+
+### 网络和I/O优化
+- **共享客户端**: HTTP客户端复用，减少连接建立开销
+- **流式处理**: 零延迟的流式响应，使用滑动窗口缓冲区
+- **智能超时**: 根据请求复杂度动态调整超时配置，优化资源利用
+
+### 数据处理优化
+- **高性能JSON**: 使用bytedance/sonic替代标准库，提升JSON处理性能
+- **二进制协议**: 直接解析AWS EventStream二进制格式，避免文本转换开销
+- **请求分析**: 多因素复杂度评估，智能选择处理策略
 
 ## 技术栈
 
@@ -286,6 +330,7 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 - **环境变量**: github.com/joho/godotenv v1.5.1
 - **HTTP**: 标准 net/http 与共享客户端池
 - **流式传输**: 自定义 EventStream 二进制协议解析器
+- **并发优化**: sync.Pool, sync.Map, 原子操作
 - **Go 版本**: 1.23.3
 
 ## 最近重构 (v2.8.0+)
@@ -307,6 +352,7 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 - **多输出支持**: 支持控制台、文件或同时输出到多个目标
 - **环境变量配置**: 支持 `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_CONSOLE` 配置
 - **调用者信息**: 自动记录文件名和行号，便于调试
+- **性能优化**: 使用原子操作进行日志级别判断、对象池复用字节缓冲区、可配置的调用栈获取
 
 ### Docker 和部署增强
 - **多平台构建**: 支持不同架构的Docker镜像构建
@@ -436,6 +482,12 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 2. 测试流式和非流式请求的工具调用一致性
 3. 确保请求级别的去重管理，避免跨请求状态污染
 
+### 高性能特性调试
+1. **原子缓存优化**: 验证 `utils/atomic_cache.go` 中的热点token缓存机制
+2. **对象池管理**: 检查 `GlobalStreamParserPool` 的内存复用效果
+3. **并发安全**: 验证Token池的并发访问和故障转移机制
+4. **性能监控**: 监控原子缓存的命中率和清理效果
+
 ## 故障排除
 
 ### "Improperly formed request" 错误
@@ -479,3 +531,22 @@ SERVER_WRITE_TIMEOUT_MINUTES=16        # 服务器写入超时
 2. 测试 `docker-compose.yml` 环境变量传递
 3. 检查容器健康检查机制（`/health` 端点）
 4. 监控容器日志和性能指标
+
+### 性能监控和统计
+kiro2api 提供多个监控端点来跟踪系统性能：
+
+**Token池监控**:
+- 端点：`GET /stats/token-pool`
+- 信息：token总数、失败计数、缓存命中率、热点token状态
+
+**性能指标**:
+- 端点：`GET /metrics`
+- 信息：请求处理时间、并发连接数、内存使用情况
+
+**健康检查**:
+- 端点：`GET /health`
+- 功能：检查服务可用性和基本功能状态
+
+**性能分析**:
+- 端点：`GET /debug/pprof/*`
+- 功能：Go pprof性能分析工具
