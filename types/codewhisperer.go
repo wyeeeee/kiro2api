@@ -25,7 +25,6 @@ type CodeWhispererRequest struct {
 		} `json:"currentMessage"`
 		History []any `json:"history"`
 	} `json:"conversationState"`
-	// ProfileArn string `json:"profileArn"`
 }
 
 // CodeWhispererImage 表示 CodeWhisperer API 的图片结构

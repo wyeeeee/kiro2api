@@ -198,14 +198,8 @@ func ConvertAnthropicToOpenAI(anthropicResp map[string]any, model string, messag
 
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
 func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeWhispererRequest, error) {
-	cwReq := types.CodeWhispererRequest{
-		// ProfileArn: "arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK",
-	}
+	cwReq := types.CodeWhispererRequest{}
 
-	// // 验证必需字段
-	// if cwReq.ProfileArn == "" {
-	// 	return cwReq, fmt.Errorf("ProfileArn不能为空")
-	// }
 	cwReq.ConversationState.ChatTriggerType = "MANUAL"
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
 
