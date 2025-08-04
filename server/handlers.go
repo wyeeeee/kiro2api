@@ -57,22 +57,12 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 	messageId := fmt.Sprintf("msg_%s", time.Now().Format("20060102150405"))
 
-	req, err := buildCodeWhispererRequest(anthropicReq, accessToken, true)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, accessToken, true)
 	if err != nil {
 		sender.SendError(c, "构建请求失败", err)
 		return
 	}
-
-	resp, err := utils.DoSmartRequest(req, &anthropicReq)
-	if err != nil {
-		sender.SendError(c, "CodeWhisperer request error", fmt.Errorf("request error: %s", err.Error()))
-		return
-	}
 	defer resp.Body.Close()
-
-	if handleCodeWhispererError(c, resp) {
-		return
-	}
 
 	// 立即刷新响应头
 	c.Writer.Flush()
@@ -184,30 +174,16 @@ func createAnthropicFinalEvents(outputTokens int) []map[string]any {
 
 // handleNonStreamRequest 处理非流式请求
 func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
-	req, err := buildCodeWhispererRequest(anthropicReq, accessToken, false)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, accessToken, false)
 	if err != nil {
-		logger.Error("构建请求失败", logger.Err(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("构建请求失败: %v", err)})
-		return
-	}
-
-	resp, err := utils.DoSmartRequest(req, &anthropicReq)
-	if err != nil {
-		logger.Error("发送请求失败", logger.Err(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("发送请求失败: %v", err)})
 		return
 	}
 	defer resp.Body.Close()
 
-	if handleCodeWhispererError(c, resp) {
-		return
-	}
-
 	// 读取响应体
 	body, err := utils.ReadHTTPResponse(resp.Body)
 	if err != nil {
-		logger.Error("读取响应体失败", logger.Err(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("读取响应体失败: %v", err)})
+		handleResponseReadError(c, err)
 		return
 	}
 
@@ -313,25 +289,14 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 									}
 								}
 
-								// 基于 tool_use_id 的请求级别去重
-								var currentToolUseId string
-
-								if id, hasId := currentToolUse["id"].(string); hasId {
-									currentToolUseId = id
-								}
-
-								if currentToolUseId != "" {
-									// 检查工具是否已被处理（基于 tool_use_id）
-									if dedupManager.IsToolProcessed(currentToolUseId) {
-										// 重置工具状态但不添加到contexts
-										currentToolUse = make(map[string]any)
-										partialJsonStr = ""
-										toolUseId = ""
-										toolName = ""
-										break // 跳过重复工具
-									}
-									// 标记工具为已处理
-									dedupManager.MarkToolProcessed(currentToolUseId)
+								// 使用通用工具去重处理
+								if processToolDeduplication(currentToolUse, dedupManager) {
+									// 重置工具状态但不添加到contexts
+									currentToolUse = make(map[string]any)
+									partialJsonStr = ""
+									toolUseId = ""
+									toolName = ""
+									break // 跳过重复工具
 								}
 
 								// 添加完整的工具使用块到contexts
