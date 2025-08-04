@@ -95,9 +95,6 @@ func (wp *WorkerPool) Start() {
 
 		// 启动结果处理协程
 		go wp.resultHandler()
-
-		// 启动监控协程
-		go wp.monitor()
 	})
 }
 
@@ -229,27 +226,6 @@ func (wp *WorkerPool) resultHandler() {
 	}
 }
 
-// monitor 监控协程
-func (wp *WorkerPool) monitor() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			stats := wp.GetStats()
-			logger.Info("工作池状态",
-				logger.Int64("active_workers", stats["active_workers"].(int64)),
-				logger.Int64("total_jobs", stats["total_jobs"].(int64)),
-				logger.Int64("completed_jobs", stats["completed_jobs"].(int64)),
-				logger.Int64("failed_jobs", stats["failed_jobs"].(int64)),
-				logger.Int("queue_size", stats["queue_size"].(int)))
-		case <-wp.ctx.Done():
-			return
-		}
-	}
-}
-
 // GetStats 获取工作池统计信息
 func (wp *WorkerPool) GetStats() map[string]interface{} {
 	wp.mu.RLock()
@@ -295,7 +271,7 @@ func GetGlobalWorkerPool() *WorkerPool {
 		GlobalWorkerPool = NewWorkerPool(config)
 		GlobalWorkerPool.Start()
 
-		logger.Info("全局工作池已初始化")
+		logger.Debug("全局工作池已初始化")
 	})
 
 	return GlobalWorkerPool
@@ -307,7 +283,7 @@ func InitGlobalWorkerPool(config WorkerPoolConfig) *WorkerPool {
 		GlobalWorkerPool = NewWorkerPool(config)
 		GlobalWorkerPool.Start()
 
-		logger.Info("全局工作池已初始化（自定义配置）")
+		logger.Debug("全局工作池已初始化（自定义配置）")
 	})
 
 	return GlobalWorkerPool
