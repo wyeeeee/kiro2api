@@ -82,7 +82,7 @@ func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string
 	delete(tempParams, "definitions")
 	delete(tempParams, "$defs")
 
-	// 处理超长参数名 - CodeWhisperer限制参数名长度
+	// 处理超长参数名 - CodeWhisperer限制参数名长度；保留原名映射
 	if properties, ok := tempParams["properties"].(map[string]any); ok {
 		cleanedProperties := make(map[string]any)
 		for paramName, paramDef := range properties {
@@ -118,6 +118,11 @@ func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string
 			}
 			tempParams["required"] = cleanedRequired
 		}
+	}
+
+	// 确保 schema 明确声明顶级 type=object，符合Claude/CodeWhisperer工具schema约定
+	if _, exists := tempParams["type"]; !exists {
+		tempParams["type"] = "object"
 	}
 
 	// 验证必需的字段

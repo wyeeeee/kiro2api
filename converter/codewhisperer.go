@@ -100,7 +100,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 
 		// 如果有工具，添加工具使用系统提示
 		if len(anthropicReq.Tools) > 0 {
-			toolSystemPrompt := generateToolSystemPrompt()
+			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.ToolChoice, anthropicReq.Tools)
 
 			if systemContentBuilder.Len() > 0 {
 				systemContentBuilder.WriteString("\n\n")
@@ -193,8 +193,69 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 	return cwReq, nil
 }
 
-// generateToolSystemPrompt 生成工具使用的系统提示
-func generateToolSystemPrompt() string {
-	prompt := "你是一个AI助手。如果用户的请求可以通过使用提供的工具来完成，你应该调用相应的工具。"
-	return prompt
+// generateToolSystemPrompt 生成工具使用的系统提示（强化工具优先策略）
+func generateToolSystemPrompt(toolChoice *types.ToolChoice, tools []types.AnthropicTool) string {
+	var b strings.Builder
+
+	b.WriteString("你是一个严格遵循工具优先策略的AI助手。\n")
+	b.WriteString("- 当输入中明确要求使用某个工具，或当提供的工具可以完成用户请求时，必须调用工具，而不是给出自然语言回答。\n")
+
+	// 根据tool_choice给出更强约束
+	if toolChoice != nil {
+		switch toolChoice.Type {
+		case "any", "tool":
+			b.WriteString("- 当前会话工具策略: 必须使用工具完成任务。\n")
+		case "auto":
+			b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。即使信息不完整，也应先发起工具调用。\n")
+		default:
+			b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
+		}
+	} else {
+		b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
+	}
+
+	b.WriteString("- 参数缺失时：仍然先发起工具调用，缺失字段可暂时留空或使用合理占位值（例如空字符串或false），随后再向用户补充询问信息。\n")
+	b.WriteString("- 触发工具时：避免额外解释性文本，直接给出工具调用。\n")
+
+	// 列出可用工具及关键必填项，帮助模型映射参数
+	if len(tools) > 0 {
+		b.WriteString("- 可用工具与必填参数：\n")
+		for _, t := range tools {
+			b.WriteString("  • ")
+			b.WriteString(t.Name)
+			if t.Description != "" {
+				b.WriteString("：")
+				b.WriteString(t.Description)
+			}
+			// 提取必填字段
+			required := extractRequiredFields(t.InputSchema)
+			if len(required) > 0 {
+				b.WriteString("（必填: ")
+				b.WriteString(strings.Join(required, ", "))
+				b.WriteString(")")
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
+
+// extractRequiredFields 从输入schema中提取必填字段名称
+func extractRequiredFields(schema map[string]any) []string {
+	if schema == nil {
+		return nil
+	}
+	if reqAny, ok := schema["required"]; ok && reqAny != nil {
+		if arr, ok := reqAny.([]any); ok {
+			fields := make([]string, 0, len(arr))
+			for _, v := range arr {
+				if s, ok := v.(string); ok && s != "" {
+					fields = append(fields, s)
+				}
+			}
+			return fields
+		}
+	}
+	return nil
 }

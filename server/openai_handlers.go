@@ -129,11 +129,18 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 
 	// 构建Anthropic响应
 	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
+	stopReason := "end_turn"
+	for _, blk := range contexts {
+		if t, ok := blk["type"].(string); ok && t == "tool_use" {
+			stopReason = "tool_use"
+			break
+		}
+	}
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
 		"role":          "assistant",
-		"stop_reason":   "end_turn",
+		"stop_reason":   stopReason,
 		"stop_sequence": nil,
 		"type":          "message",
 		"usage": map[string]any{
@@ -188,6 +195,13 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	streamParser := parser.NewStreamParser()
 	dedupManager := utils.NewToolDedupManager() // OpenAI流式端点的工具去重管理器
 
+	// OpenAI 工具调用增量状态
+	toolIndexByToolUseId := make(map[string]int)  // tool_use_id -> tool_calls 数组索引
+	toolUseIdByBlockIndex := make(map[int]string) // 内容块 index -> tool_use_id
+	nextToolIndex := 0
+	sawToolUse := false
+	sentFinal := false
+
 	buf := make([]byte, 1024)
 	for {
 		n, err := resp.Body.Read(buf)
@@ -225,25 +239,150 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 											}
 											sendOpenAIEvent(c, contentEvent)
 										}
+									} else if deltaMap["type"] == "input_json_delta" {
+										// 工具调用参数增量
+										// 找到对应的tool_use和OpenAI tool_calls索引
+										toolBlockIndex := 0
+										if idxAny, ok := dataMap["index"]; ok {
+											switch v := idxAny.(type) {
+											case int:
+												toolBlockIndex = v
+											case int32:
+												toolBlockIndex = int(v)
+											case int64:
+												toolBlockIndex = int(v)
+											case float64:
+												toolBlockIndex = int(v)
+											}
+										}
+										if toolUseId, ok := toolUseIdByBlockIndex[toolBlockIndex]; ok {
+											if toolIdx, ok := toolIndexByToolUseId[toolUseId]; ok {
+												var partial string
+												if pj, ok := deltaMap["partial_json"]; ok {
+													switch s := pj.(type) {
+													case string:
+														partial = s
+													case *string:
+														if s != nil {
+															partial = *s
+														}
+													}
+												}
+												if partial != "" {
+													toolDelta := map[string]any{
+														"id":      messageId,
+														"object":  "chat.completion.chunk",
+														"created": time.Now().Unix(),
+														"model":   anthropicReq.Model,
+														"choices": []map[string]any{
+															{
+																"index": 0,
+																"delta": map[string]any{
+																	"tool_calls": []map[string]any{
+																		{
+																			"index": toolIdx,
+																			"type":  "function",
+																			"function": map[string]any{
+																				"arguments": partial,
+																			},
+																		},
+																	},
+																},
+																"finish_reason": nil,
+															},
+														},
+													}
+													sendOpenAIEvent(c, toolDelta)
+												}
+											}
+										}
+									}
+								}
+							}
+						case "content_block_start":
+							if contentBlock, ok := dataMap["content_block"]; ok {
+								if blockMap, ok := contentBlock.(map[string]any); ok {
+									if blockType, _ := blockMap["type"].(string); blockType == "tool_use" {
+										toolUseId, _ := blockMap["id"].(string)
+										toolName, _ := blockMap["name"].(string)
+										// 获取内容块索引
+										toolBlockIndex := 0
+										if idxAny, ok := dataMap["index"]; ok {
+											switch v := idxAny.(type) {
+											case int:
+												toolBlockIndex = v
+											case int32:
+												toolBlockIndex = int(v)
+											case int64:
+												toolBlockIndex = int(v)
+											case float64:
+												toolBlockIndex = int(v)
+											}
+										}
+										if toolUseId != "" {
+											if _, exists := toolIndexByToolUseId[toolUseId]; !exists {
+												toolIndexByToolUseId[toolUseId] = nextToolIndex
+												nextToolIndex++
+											}
+											toolUseIdByBlockIndex[toolBlockIndex] = toolUseId
+											sawToolUse = true
+											toolIdx := toolIndexByToolUseId[toolUseId]
+											// 发送OpenAI工具调用开始增量
+											toolStart := map[string]any{
+												"id":      messageId,
+												"object":  "chat.completion.chunk",
+												"created": time.Now().Unix(),
+												"model":   anthropicReq.Model,
+												"choices": []map[string]any{
+													{
+														"index": 0,
+														"delta": map[string]any{
+															"tool_calls": []map[string]any{
+																{
+																	"index": toolIdx,
+																	"id":    toolUseId,
+																	"type":  "function",
+																	"function": map[string]any{
+																		"name":      toolName,
+																		"arguments": "",
+																	},
+																},
+															},
+														},
+														"finish_reason": nil,
+													},
+												},
+											}
+											sendOpenAIEvent(c, toolStart)
+										}
+									}
+								}
+							}
+						case "message_delta":
+							// 将Claude的tool_use结束映射为OpenAI的finish_reason=tool_calls
+							if sawToolUse && !sentFinal {
+								if delta, ok := dataMap["delta"].(map[string]any); ok {
+									if sr, ok := delta["stop_reason"].(string); ok && sr == "tool_use" {
+										endEvent := map[string]any{
+											"id":      messageId,
+											"object":  "chat.completion.chunk",
+											"created": time.Now().Unix(),
+											"model":   anthropicReq.Model,
+											"choices": []map[string]any{
+												{
+													"index":         0,
+													"delta":         map[string]any{},
+													"finish_reason": "tool_calls",
+												},
+											},
+										}
+										sendOpenAIEvent(c, endEvent)
+										sentFinal = true
 									}
 								}
 							}
 						case "content_block_stop":
-							// 发送结束事件
-							endEvent := map[string]any{
-								"id":      messageId,
-								"object":  "chat.completion.chunk",
-								"created": time.Now().Unix(),
-								"model":   anthropicReq.Model,
-								"choices": []map[string]any{
-									{
-										"index":         0,
-										"delta":         map[string]any{},
-										"finish_reason": "stop",
-									},
-								},
-							}
-							sendOpenAIEvent(c, endEvent)
+							// 忽略，最终结束由message_delta驱动
 						}
 					}
 				}

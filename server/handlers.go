@@ -319,6 +319,14 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 			}
 		}
 	}
+	// 如果解析到任何tool_use块，则设置stop_reason为tool_use
+	stopReason := "end_turn"
+	for _, blk := range contexts {
+		if t, ok := blk["type"].(string); ok && t == "tool_use" {
+			stopReason = "tool_use"
+			break
+		}
+	}
 	if strings.Contains(string(body), "Improperly formed request.") {
 		// 增强错误日志记录
 		reqBodyBytes, _ := utils.SafeMarshal(anthropicReq)
@@ -340,7 +348,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		"content":       contexts,
 		"model":         anthropicReq.Model,
 		"role":          "assistant",
-		"stop_reason":   "end_turn",
+		"stop_reason":   stopReason,
 		"stop_sequence": nil,
 		"type":          "message",
 		"usage": map[string]any{

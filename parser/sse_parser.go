@@ -35,6 +35,9 @@ func ParseEvents(resp []byte) []SSEEvent {
 
 	events := []SSEEvent{}
 
+	// 维护每个tool_use的内容块索引，确保符合Anthropic规范：每个内容块索引唯一且稳定
+	state := newToolIndexState()
+
 	r := bytes.NewReader(resp)
 	for {
 		if r.Len() < 12 {
@@ -103,7 +106,10 @@ func ParseEvents(resp []byte) []SSEEvent {
 			}
 		}
 
-		events = append(events, convertAssistantEventToSSE(evt))
+		converted := convertAssistantEventToSSE(evt, state)
+		if len(converted) > 0 {
+			events = append(events, converted...)
+		}
 		addToolUseStopEvent(&events, evt)
 	}
 
@@ -127,63 +133,96 @@ func addToolUseStopEvent(events *[]SSEEvent, evt assistantResponseEvent) {
 	}
 }
 
-func convertAssistantEventToSSE(evt assistantResponseEvent) SSEEvent {
-	if evt.Content != "" {
-		return SSEEvent{
-			Event: "content_block_delta",
-			Data: map[string]any{
-				"type":  "content_block_delta",
-				"index": 0, // 文本内容块总是使用index 0
-				"delta": map[string]any{
-					"type": "text_delta",
-					"text": evt.Content,
-				},
-			},
-		}
-	} else if evt.ToolUseId != "" && evt.Name != "" && !evt.Stop {
-		// 工具使用块应该使用递增的index，但这里简化为固定值
-		// 在实际实现中，应该维护一个全局的block index计数器
-		toolBlockIndex := 1
+// 工具内容块索引状态
+type toolIndexState struct {
+	toolIndexById map[string]int
+	nextIndex     int
+}
 
-		if evt.Input == nil {
-			return SSEEvent{
-				Event: "content_block_start",
-				Data: map[string]any{
-					"type":  "content_block_start",
-					"index": toolBlockIndex,
-					"content_block": map[string]any{
-						"type":  "tool_use",
-						"id":    evt.ToolUseId,
-						"name":  evt.Name,
-						"input": map[string]any{},
-					},
-				},
-			}
-		} else {
-			return SSEEvent{
+func newToolIndexState() *toolIndexState {
+	return &toolIndexState{toolIndexById: make(map[string]int), nextIndex: 1}
+}
+
+func (s *toolIndexState) getOrAssignIndex(toolUseId string) int {
+	if idx, ok := s.toolIndexById[toolUseId]; ok {
+		return idx
+	}
+	idx := s.nextIndex
+	s.toolIndexById[toolUseId] = idx
+	s.nextIndex++
+	return idx
+}
+
+// convertAssistantEventToSSE 根据事件内容生成符合Anthropic规范的SSE事件序列
+func convertAssistantEventToSSE(evt assistantResponseEvent, state *toolIndexState) []SSEEvent {
+	// 文本内容增量，固定为索引0
+	if evt.Content != "" {
+		return []SSEEvent{
+			{
 				Event: "content_block_delta",
 				Data: map[string]any{
 					"type":  "content_block_delta",
-					"index": toolBlockIndex,
+					"index": 0,
+					"delta": map[string]any{
+						"type": "text_delta",
+						"text": evt.Content,
+					},
+				},
+			},
+		}
+	}
+
+	// 工具使用：开始与输入增量
+	if evt.ToolUseId != "" && evt.Name != "" && !evt.Stop {
+		blockIndex := state.getOrAssignIndex(evt.ToolUseId)
+		if evt.Input == nil {
+			return []SSEEvent{
+				{
+					Event: "content_block_start",
+					Data: map[string]any{
+						"type":  "content_block_start",
+						"index": blockIndex,
+						"content_block": map[string]any{
+							"type":  "tool_use",
+							"id":    evt.ToolUseId,
+							"name":  evt.Name,
+							"input": map[string]any{},
+						},
+					},
+				},
+			}
+		}
+		// 输入增量
+		return []SSEEvent{
+			{
+				Event: "content_block_delta",
+				Data: map[string]any{
+					"type":  "content_block_delta",
+					"index": blockIndex,
 					"delta": map[string]any{
 						"type":         "input_json_delta",
 						"partial_json": *evt.Input,
 					},
 				},
-			}
-		}
-
-	} else if evt.Stop {
-		return SSEEvent{
-			Event: "content_block_stop",
-			Data: map[string]any{
-				"type":  "content_block_stop",
-				"index": 1, // 对应工具使用块的index
 			},
 		}
 	}
 
-	return SSEEvent{}
+	// 工具结束：停止对应索引
+	if evt.Stop && evt.ToolUseId != "" {
+		blockIndex := state.getOrAssignIndex(evt.ToolUseId)
+		return []SSEEvent{
+			{
+				Event: "content_block_stop",
+				Data: map[string]any{
+					"type":  "content_block_stop",
+					"index": blockIndex,
+				},
+			},
+		}
+	}
+
+	return nil
 }
 
 // StreamParser 处理流式EventStream数据
