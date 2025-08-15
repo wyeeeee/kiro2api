@@ -9,11 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// AuthMiddleware 创建API密钥验证中间件（已废弃，使用PathBasedAuthMiddleware）
-func AuthMiddleware(authToken string) gin.HandlerFunc {
-	return PathBasedAuthMiddleware(authToken, []string{"/v1"})
-}
-
 // PathBasedAuthMiddleware 创建基于路径的API密钥验证中间件
 func PathBasedAuthMiddleware(authToken string, protectedPrefixes []string) gin.HandlerFunc {
 	return func(c *gin.Context) {

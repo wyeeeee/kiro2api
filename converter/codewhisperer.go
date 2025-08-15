@@ -1,6 +1,7 @@
 package converter
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -10,13 +11,363 @@ import (
 	"kiro2api/utils"
 )
 
+// ValidateAssistantResponseEvent 验证助手响应事件
+func ValidateAssistantResponseEvent(event map[string]interface{}) error {
+	// 对于流式响应或部分响应，放宽验证要求
+	hasContent := false
+	hasToolFields := false
+	hasOtherValidFields := false
+
+	if content, exists := event["content"]; exists {
+		if contentStr, ok := content.(string); ok && contentStr != "" {
+			hasContent = true
+		}
+	}
+
+	// 检查工具相关字段
+	if _, exists := event["toolUseId"]; exists {
+		hasToolFields = true
+	}
+	if _, exists := event["codeQuery"]; exists {
+		hasToolFields = true
+	}
+	if _, exists := event["name"]; exists {
+		hasToolFields = true
+	}
+
+	// 检查其他有效字段
+	if _, exists := event["supplementaryWebLinks"]; exists {
+		hasOtherValidFields = true
+	}
+	if _, exists := event["references"]; exists {
+		hasOtherValidFields = true
+	}
+	if _, exists := event["followupPrompt"]; exists {
+		hasOtherValidFields = true
+	}
+
+	// 如果是流式响应（只有content），不需要严格验证ID字段
+	if hasContent && !hasToolFields {
+		// 流式文本响应，不需要conversationId和messageId
+		// 继续验证枚举字段
+		goto ValidateEnums
+	}
+
+	// 如果是工具调用事件，也不需要严格验证ID字段
+	if hasToolFields {
+		// 工具调用事件，可能没有conversationId和messageId
+		goto ValidateEnums
+	}
+
+	// 如果有其他有效字段，也放宽验证
+	if hasOtherValidFields {
+		goto ValidateEnums
+	}
+
+	// 对于完整的响应，才需要验证必需字段
+	// 但如果没有任何有效内容，则要求至少有基本字段
+	if !hasContent && !hasToolFields && !hasOtherValidFields {
+		if _, exists := event["conversationId"]; !exists {
+			return fmt.Errorf("缺少必需字段: conversationId")
+		}
+
+		if _, exists := event["messageId"]; !exists {
+			return fmt.Errorf("缺少必需字段: messageId")
+		}
+
+		if _, exists := event["content"]; !exists {
+			return fmt.Errorf("缺少必需字段: content")
+		}
+	}
+
+ValidateEnums:
+
+	// 验证枚举字段
+	if messageStatus, exists := event["messageStatus"]; exists {
+		if status, ok := messageStatus.(string); ok {
+			switch types.MessageStatus(status) {
+			case types.MessageStatusCompleted, types.MessageStatusInProgress, types.MessageStatusError:
+				// 有效值
+			default:
+				return fmt.Errorf("无效的messageStatus: %s", status)
+			}
+		}
+	}
+
+	if contentType, exists := event["contentType"]; exists {
+		if ct, ok := contentType.(string); ok {
+			switch types.ContentType(ct) {
+			case types.ContentTypeMarkdown, types.ContentTypePlain, types.ContentTypeJSON:
+				// 有效值
+			default:
+				return fmt.Errorf("无效的contentType: %s", ct)
+			}
+		}
+	}
+
+	if userIntent, exists := event["userIntent"]; exists {
+		if ui, ok := userIntent.(string); ok {
+			switch types.UserIntent(ui) {
+			case types.UserIntentExplainCodeSelection, types.UserIntentSuggestAlternateImpl,
+				types.UserIntentApplyCommonBestPractices, types.UserIntentImproveCode,
+				types.UserIntentShowExamples, types.UserIntentCiteSources, types.UserIntentExplainLineByLine:
+				// 有效值
+			default:
+				return fmt.Errorf("无效的userIntent: %s", ui)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ConvertToAssistantResponseEvent 转换任意数据为标准的AssistantResponseEvent
+func ConvertToAssistantResponseEvent(data interface{}) (*types.AssistantResponseEvent, error) {
+	var dataMap map[string]interface{}
+
+	switch v := data.(type) {
+	case map[string]interface{}:
+		dataMap = v
+	case []byte:
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal(v, &jsonData); err != nil {
+			return nil, fmt.Errorf("JSON解析失败: %w", err)
+		}
+		dataMap = jsonData
+	case string:
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal([]byte(v), &jsonData); err != nil {
+			return nil, fmt.Errorf("JSON解析失败: %w", err)
+		}
+		dataMap = jsonData
+	default:
+		return nil, fmt.Errorf("不支持的数据类型: %T", data)
+	}
+
+	// 检查是否是嵌套在assistantResponseEvent中
+	if eventData, ok := dataMap["assistantResponseEvent"].(map[string]interface{}); ok {
+		dataMap = eventData
+	}
+
+	// 验证数据 - 对于流式响应和工具调用，使用宽松验证
+	if err := ValidateAssistantResponseEvent(dataMap); err != nil {
+		// 只记录警告，不阻止处理
+		logger.Warn("数据验证警告（非严格模式）", logger.Err(err))
+		// 继续处理而不是返回错误
+	}
+
+	// 创建AssistantResponseEvent
+	event := &types.AssistantResponseEvent{}
+	if err := event.FromDict(dataMap); err != nil {
+		return nil, fmt.Errorf("转换失败: %w", err)
+	}
+
+	// 最终验证 - 使用事件自身的验证逻辑（已经支持流式响应）
+	if err := event.Validate(); err != nil {
+		// 只记录警告，不阻止处理
+		logger.Warn("最终验证警告（非严格模式）", logger.Err(err))
+		// 继续处理而不是返回错误
+	}
+
+	return event, nil
+}
+
+// NormalizeAssistantResponseEvent 标准化助手响应事件（填充默认值等）
+func NormalizeAssistantResponseEvent(event *types.AssistantResponseEvent) *types.AssistantResponseEvent {
+	// 设置默认值
+	if event.ContentType == "" {
+		event.ContentType = types.ContentTypeMarkdown
+	}
+
+	if event.MessageStatus == "" {
+		event.MessageStatus = types.MessageStatusCompleted
+	}
+
+	// 清理空白字符
+	event.Content = strings.TrimSpace(event.Content)
+	event.ConversationID = strings.TrimSpace(event.ConversationID)
+	event.MessageID = strings.TrimSpace(event.MessageID)
+
+	// 验证和清理引用链接
+	event.SupplementaryWebLinks = normalizeWebLinks(event.SupplementaryWebLinks)
+	event.References = normalizeReferences(event.References)
+	event.CodeReference = normalizeReferences(event.CodeReference)
+
+	return event
+}
+
+// normalizeWebLinks 标准化网页链接
+func normalizeWebLinks(links []types.SupplementaryWebLink) []types.SupplementaryWebLink {
+	var normalized []types.SupplementaryWebLink
+
+	for _, link := range links {
+		if strings.TrimSpace(link.URL) == "" {
+			continue // 跳过空URL
+		}
+
+		// 清理字段
+		link.URL = strings.TrimSpace(link.URL)
+		if link.Title != nil {
+			trimmed := strings.TrimSpace(*link.Title)
+			if trimmed == "" {
+				link.Title = nil
+			} else {
+				link.Title = &trimmed
+			}
+		}
+		if link.Snippet != nil {
+			trimmed := strings.TrimSpace(*link.Snippet)
+			if trimmed == "" {
+				link.Snippet = nil
+			} else {
+				link.Snippet = &trimmed
+			}
+		}
+
+		normalized = append(normalized, link)
+	}
+
+	return normalized
+}
+
+// normalizeReferences 标准化引用
+func normalizeReferences(refs []types.Reference) []types.Reference {
+	var normalized []types.Reference
+
+	for _, ref := range refs {
+		// 至少需要有URL或repository
+		hasValidData := false
+		if ref.URL != nil && strings.TrimSpace(*ref.URL) != "" {
+			hasValidData = true
+		}
+		if ref.Repository != nil && strings.TrimSpace(*ref.Repository) != "" {
+			hasValidData = true
+		}
+
+		if !hasValidData {
+			continue // 跳过无效引用
+		}
+
+		// 清理字段
+		if ref.URL != nil {
+			trimmed := strings.TrimSpace(*ref.URL)
+			if trimmed == "" {
+				ref.URL = nil
+			} else {
+				ref.URL = &trimmed
+			}
+		}
+		if ref.Repository != nil {
+			trimmed := strings.TrimSpace(*ref.Repository)
+			if trimmed == "" {
+				ref.Repository = nil
+			} else {
+				ref.Repository = &trimmed
+			}
+		}
+		if ref.Information != nil {
+			trimmed := strings.TrimSpace(*ref.Information)
+			if trimmed == "" {
+				ref.Information = nil
+			} else {
+				ref.Information = &trimmed
+			}
+		}
+
+		normalized = append(normalized, ref)
+	}
+
+	return normalized
+}
+
 // CodeWhisperer格式转换器
 
+// determineChatTriggerType 智能确定聊天触发类型 (SOLID-SRP: 单一责任)
+func determineChatTriggerType(anthropicReq types.AnthropicRequest) string {
+	// 如果有工具调用，通常是自动触发的
+	if len(anthropicReq.Tools) > 0 {
+		// 检查tool_choice是否强制要求使用工具
+		if anthropicReq.ToolChoice != nil {
+			if tc, ok := anthropicReq.ToolChoice.(*types.ToolChoice); ok && tc != nil {
+				if tc.Type == "any" || tc.Type == "tool" {
+					return "AUTO" // 自动工具调用
+				}
+			} else if tcMap, ok := anthropicReq.ToolChoice.(map[string]any); ok {
+				if tcType, exists := tcMap["type"].(string); exists {
+					if tcType == "any" || tcType == "tool" {
+						return "AUTO" // 自动工具调用
+					}
+				}
+			}
+		}
+	}
+
+	// 默认为手动触发
+	return "MANUAL"
+}
+
+// determineOrigin 智能确定请求来源 (SOLID-OCP: 开放扩展，封闭修改)
+func determineOrigin(anthropicReq types.AnthropicRequest) string {
+	// 检查metadata中是否指定了来源
+	if anthropicReq.Metadata != nil {
+		if origin, exists := anthropicReq.Metadata["origin"]; exists {
+			if originStr, ok := origin.(string); ok && originStr != "" {
+				return originStr
+			}
+		}
+	}
+
+	// 根据请求特征智能判断来源
+	if len(anthropicReq.Tools) > 0 {
+		return "AI_AGENT" // 有工具的通常是AI代理
+	}
+
+	// 默认为AI编辑器
+	return "AI_EDITOR"
+}
+
+// validateCodeWhispererRequest 验证CodeWhisperer请求的完整性 (SOLID-SRP: 单一责任验证)
+func validateCodeWhispererRequest(cwReq *types.CodeWhispererRequest) error {
+	// 验证必需字段
+	if cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId == "" {
+		return fmt.Errorf("ModelId不能为空")
+	}
+
+	if cwReq.ConversationState.ConversationId == "" {
+		return fmt.Errorf("ConversationId不能为空")
+	}
+
+	// 验证内容完整性 (KISS: 简化内容验证)
+	trimmedContent := strings.TrimSpace(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)
+	hasImages := len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images) > 0
+	hasTools := len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools) > 0
+
+	// 如果没有内容但有工具，注入占位内容 (YAGNI: 只在需要时处理)
+	if trimmedContent == "" && !hasImages && hasTools {
+		placeholder := "执行工具任务"
+		cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = placeholder
+		logger.Warn("注入占位内容以触发工具调用",
+			logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+			logger.Int("tools_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools)))
+		trimmedContent = placeholder
+	}
+
+	// 验证至少有内容或图片
+	if trimmedContent == "" && !hasImages {
+		return fmt.Errorf("用户消息内容和图片都为空")
+	}
+
+	return nil
+}
+
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
-func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeWhispererRequest, error) {
+func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn string) (types.CodeWhispererRequest, error) {
+	// logger.Debug("构建CodeWhisperer请求", logger.String("profile_arn", profileArn))
+
 	cwReq := types.CodeWhispererRequest{}
 
-	cwReq.ConversationState.ChatTriggerType = "MANUAL"
+	// 智能设置ChatTriggerType (KISS: 简化逻辑但保持准确性)
+	cwReq.ConversationState.ChatTriggerType = determineChatTriggerType(anthropicReq)
 	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
 
 	// 处理最后一条消息，包括图片
@@ -27,9 +378,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 	lastMessage := anthropicReq.Messages[len(anthropicReq.Messages)-1]
 
 	// 调试：记录原始消息内容
-	logger.Debug("处理用户消息",
-		logger.String("role", lastMessage.Role),
-		logger.String("content_type", fmt.Sprintf("%T", lastMessage.Content)))
+	// logger.Debug("处理用户消息",
+	// 	logger.String("role", lastMessage.Role),
+	// 	logger.String("content_type", fmt.Sprintf("%T", lastMessage.Content)))
 
 	textContent, images, err := processMessageContent(lastMessage.Content)
 	if err != nil {
@@ -37,8 +388,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 	}
 
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = textContent
+	// 确保Images字段始终是数组，即使为空
 	if len(images) > 0 {
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.Images = images
+	} else {
+		cwReq.ConversationState.CurrentMessage.UserInputMessage.Images = []types.CodeWhispererImage{}
 	}
 
 	// 确保ModelId不为空，如果映射不存在则使用默认模型
@@ -50,34 +404,57 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 			logger.String("default_model", modelId))
 	}
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = modelId
-	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR"
+	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR
 
-	// 处理 tools 信息
+	// 处理 tools 信息 - 根据req.json实际结构优化工具转换
 	if len(anthropicReq.Tools) > 0 {
-		logger.Debug("开始处理工具配置",
-			logger.Int("tools_count", len(anthropicReq.Tools)),
-			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
+		// logger.Debug("开始处理工具配置",
+		// 	logger.Int("tools_count", len(anthropicReq.Tools)),
+		// 	logger.String("conversation_id", cwReq.ConversationState.ConversationId))
 
 		var tools []types.CodeWhispererTool
 		for i, tool := range anthropicReq.Tools {
-			logger.Debug("转换工具定义",
-				logger.Int("tool_index", i),
-				logger.String("tool_name", tool.Name),
-				logger.String("tool_description", tool.Description))
+			// 验证工具定义的完整性 (SOLID-SRP: 单一责任验证)
+			if tool.Name == "" {
+				logger.Warn("跳过无名称的工具", logger.Int("tool_index", i))
+				continue
+			}
 
+			// logger.Debug("转换工具定义",
+			// 	logger.Int("tool_index", i),
+			// 	logger.String("tool_name", tool.Name),
+			// logger.String("tool_description", tool.Description)
+			// )
+
+			// 根据req.json的实际结构，确保JSON Schema完整性
 			cwTool := types.CodeWhispererTool{}
 			cwTool.ToolSpecification.Name = tool.Name
 			cwTool.ToolSpecification.Description = tool.Description
+
+			// 直接使用原始的InputSchema，避免过度处理 (恢复v0.4兼容性)
 			cwTool.ToolSpecification.InputSchema = types.InputSchema{
 				Json: tool.InputSchema,
 			}
 			tools = append(tools, cwTool)
 		}
+
+		// 工具配置放在 UserInputMessageContext.Tools 中 (符合req.json结构)
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools = tools
 
-		logger.Debug("工具配置完成",
-			logger.Int("converted_tools_count", len(tools)),
-			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
+		// logger.Debug("工具配置已添加到UserInputMessageContext",
+		// 	logger.Int("converted_tools_count", len(tools)),
+		// 	logger.String("conversation_id", cwReq.ConversationState.ConversationId))
+
+		// 记录工具名称预览
+		// var toolNames []string
+		// for _, t := range tools {
+		// 	if t.ToolSpecification.Name != "" {
+		// 		toolNames = append(toolNames, t.ToolSpecification.Name)
+		// 	}
+		// }
+		// logger.Debug("CW工具配置",
+		// 	logger.Int("tools_count", len(tools)),
+		// 	logger.String("tool_names", strings.Join(toolNames, ",")))
 	}
 
 	// 构建历史消息
@@ -98,22 +475,25 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 			}
 		}
 
-		// 如果有工具，添加工具使用系统提示
+		// 如果有工具，添加简化的工具使用系统提示
 		if len(anthropicReq.Tools) > 0 {
 			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.ToolChoice, anthropicReq.Tools)
 
-			if systemContentBuilder.Len() > 0 {
+			// 只有在有其他系统内容时才添加分隔符
+			if systemContentBuilder.Len() > 0 && toolSystemPrompt != "" {
 				systemContentBuilder.WriteString("\n\n")
 			}
-			systemContentBuilder.WriteString(toolSystemPrompt)
+			if toolSystemPrompt != "" {
+				systemContentBuilder.WriteString(toolSystemPrompt)
+			}
 		}
 
-		// 如果有系统内容，添加到历史记录
+		// 如果有系统内容，添加到历史记录 (恢复v0.4结构化类型)
 		if systemContentBuilder.Len() > 0 {
 			userMsg := types.HistoryUserMessage{}
 			userMsg.UserInputMessage.Content = strings.TrimSpace(systemContentBuilder.String())
 			userMsg.UserInputMessage.ModelId = modelId
-			userMsg.UserInputMessage.Origin = "AI_EDITOR"
+			userMsg.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR
 			history = append(history, userMsg)
 
 			assistantMsg := types.HistoryAssistantMessage{}
@@ -122,7 +502,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 			history = append(history, assistantMsg)
 		}
 
-		// 然后处理常规消息历史
+		// 然后处理常规消息历史 (恢复v0.4结构化类型)
 		for i := 0; i < len(anthropicReq.Messages)-1; i++ {
 			if anthropicReq.Messages[i].Role == "user" {
 				userMsg := types.HistoryUserMessage{}
@@ -138,8 +518,8 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 					userMsg.UserInputMessage.Content = ""
 				}
 
-				userMsg.UserInputMessage.ModelId = modelId // 使用验证后的modelId
-				userMsg.UserInputMessage.Origin = "AI_EDITOR"
+				userMsg.UserInputMessage.ModelId = modelId
+				userMsg.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR
 				history = append(history, userMsg)
 
 				// 检查下一条消息是否是助手回复
@@ -161,53 +541,63 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest) (types.CodeW
 		cwReq.ConversationState.History = history
 	}
 
-	// 最终验证请求完整性 - 恢复严格验证
-	// 正常情况下内容不应该为空，如果为空说明处理过程有问题
-	trimmedContent := strings.TrimSpace(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)
-	if trimmedContent == "" && len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images) == 0 {
-		logger.Error("用户消息内容和图片都为空，这不应该发生",
-			logger.String("original_content", fmt.Sprintf("%q", cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)),
-			logger.Int("content_length", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)),
-			logger.String("conversation_id", cwReq.ConversationState.ConversationId))
-		return cwReq, fmt.Errorf("用户消息内容处理异常：内容和图片都为空，原始内容长度=%d", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content))
+	// 最终验证请求完整性 (KISS: 简化验证逻辑)
+	if err := validateCodeWhispererRequest(&cwReq); err != nil {
+		return cwReq, fmt.Errorf("请求验证失败: %v", err)
 	}
 
-	if cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId == "" {
-		return cwReq, fmt.Errorf("ModelId不能为空")
-	}
-
-	logger.Debug("构建CodeWhisperer请求完成",
-		logger.String("conversation_id", cwReq.ConversationState.ConversationId),
-		logger.String("model_id", cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId),
-		logger.String("content_preview", func() string {
-			content := cwReq.ConversationState.CurrentMessage.UserInputMessage.Content
-			if len(content) > 100 {
-				return content[:100] + "..."
-			}
-			return content
-		}()),
-		logger.Int("images_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images)),
-		logger.Int("tools_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools)),
-		logger.Int("history_count", len(cwReq.ConversationState.History)))
+	// logger.Debug("构建CodeWhisperer请求完成",
+	// 	logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+	// 	logger.String("model_id", cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId),
+	// 	logger.String("content_preview", func() string {
+	// 		content := cwReq.ConversationState.CurrentMessage.UserInputMessage.Content
+	// 		if len(content) > 100 {
+	// 			return content[:100] + "..."
+	// 		}
+	// 		return content
+	// 	}()),
+	// 	logger.Int("images_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images)),
+	// 	logger.Int("tools_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools)),
+	// 	logger.Int("history_count", len(cwReq.ConversationState.History)),
+	// 	logger.Bool("has_tools", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools) > 0))
 
 	return cwReq, nil
 }
 
 // generateToolSystemPrompt 生成工具使用的系统提示（强化工具优先策略）
-func generateToolSystemPrompt(toolChoice *types.ToolChoice, tools []types.AnthropicTool) string {
+func generateToolSystemPrompt(toolChoice any, tools []types.AnthropicTool) string {
 	var b strings.Builder
 
 	b.WriteString("你是一个严格遵循工具优先策略的AI助手。\n")
 	b.WriteString("- 当输入中明确要求使用某个工具，或当提供的工具可以完成用户请求时，必须调用工具，而不是给出自然语言回答。\n")
 
-	// 根据tool_choice给出更强约束
+	// 根据tool_choice给出更强约束 (支持多种类型)
 	if toolChoice != nil {
-		switch toolChoice.Type {
-		case "any", "tool":
-			b.WriteString("- 当前会话工具策略: 必须使用工具完成任务。\n")
-		case "auto":
-			b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。即使信息不完整，也应先发起工具调用。\n")
-		default:
+		// 尝试转换为ToolChoice结构体
+		if tc, ok := toolChoice.(*types.ToolChoice); ok && tc != nil {
+			switch tc.Type {
+			case "any", "tool":
+				b.WriteString("- 当前会话工具策略: 必须使用工具完成任务。\n")
+			case "auto":
+				b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。即使信息不完整，也应先发起工具调用。\n")
+			default:
+				b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
+			}
+		} else if tcMap, ok := toolChoice.(map[string]any); ok {
+			// 处理map类型的tool_choice
+			if tcType, exists := tcMap["type"].(string); exists {
+				switch tcType {
+				case "any", "tool":
+					b.WriteString("- 当前会话工具策略: 必须使用工具完成任务。\n")
+				case "auto":
+					b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。即使信息不完整，也应先发起工具调用。\n")
+				default:
+					b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
+				}
+			} else {
+				b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
+			}
+		} else {
 			b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
 		}
 	} else {
@@ -258,4 +648,40 @@ func extractRequiredFields(schema map[string]any) []string {
 		}
 	}
 	return nil
+}
+
+// validateAndNormalizeJSONSchema 验证并标准化JSON Schema (SOLID-SRP: 单一责任)
+func validateAndNormalizeJSONSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return map[string]any{
+			"$schema":              "http://json-schema.org/draft-07/schema#",
+			"type":                 "object",
+			"additionalProperties": false,
+		}
+	}
+
+	normalized := make(map[string]any)
+	// 复制原始schema
+	for k, v := range schema {
+		normalized[k] = v
+	}
+
+	// 确保必需的JSON Schema字段存在 (KISS: 简化但完整的验证)
+	if _, exists := normalized["$schema"]; !exists {
+		normalized["$schema"] = "http://json-schema.org/draft-07/schema#"
+	}
+
+	// 如果有properties但没有type，默认为object
+	if _, hasType := normalized["type"]; !hasType {
+		if _, hasProps := normalized["properties"]; hasProps {
+			normalized["type"] = "object"
+		}
+	}
+
+	// 默认禁用额外属性以提高安全性
+	if _, exists := normalized["additionalProperties"]; !exists && normalized["type"] == "object" {
+		normalized["additionalProperties"] = false
+	}
+
+	return normalized
 }

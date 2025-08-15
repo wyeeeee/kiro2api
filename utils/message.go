@@ -9,9 +9,9 @@ import (
 	"github.com/bytedance/sonic"
 )
 
-// parseToolResultContent 解析tool_result的content字段
+// ParseToolResultContent 解析tool_result的content字段
 // 参考Python实现：parse_tool_result_content函数和Anthropic官方文档
-func parseToolResultContent(content any) string {
+func ParseToolResultContent(content any) string {
 	if content == nil {
 		return "No content provided"
 	}
@@ -116,7 +116,7 @@ func GetMessageContent(content any) (string, error) {
 						switch cb.Type {
 						case "tool_result":
 							if cb.Content != nil {
-								toolResultContent := parseToolResultContent(cb.Content)
+								toolResultContent := ParseToolResultContent(cb.Content)
 
 								// 检查是否为错误结果
 								if cb.IsError != nil && *cb.IsError {
@@ -160,7 +160,7 @@ func GetMessageContent(content any) (string, error) {
 			switch cb.Type {
 			case "tool_result":
 				if cb.Content != nil {
-					toolResultContent := parseToolResultContent(cb.Content)
+					toolResultContent := ParseToolResultContent(cb.Content)
 
 					// 检查是否为错误结果
 					if cb.IsError != nil && *cb.IsError {

@@ -26,6 +26,14 @@ func init() {
 	shortTimeout := getTimeoutFromEnv("SIMPLE_REQUEST_TIMEOUT_MINUTES", 2) * time.Minute
 	streamTimeout := getTimeoutFromEnv("STREAM_REQUEST_TIMEOUT_MINUTES", 30) * time.Minute
 
+	// 检查TLS配置并记录日志
+	skipTLS := shouldSkipTLSVerify()
+	if skipTLS {
+		// 仅在需要时导入logger包避免循环依赖
+		// 使用标准库日志记录TLS状态
+		os.Stderr.WriteString("[WARNING] TLS证书验证已禁用 - 仅适用于开发/调试环境\n")
+	}
+
 	// 创建高性能的基础传输配置
 	createBaseTransport := func() *http.Transport {
 		return &http.Transport{
@@ -45,9 +53,9 @@ func init() {
 			// TLS配置优化
 			TLSHandshakeTimeout: 15 * time.Second, // TLS握手超时
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-				MinVersion:         tls.VersionTLS12, // 最低TLS 1.2
-				MaxVersion:         tls.VersionTLS13, // 最高TLS 1.3
+				InsecureSkipVerify: shouldSkipTLSVerify(), // 基于环境动态控制
+				MinVersion:         tls.VersionTLS12,      // 最低TLS 1.2
+				MaxVersion:         tls.VersionTLS13,      // 最高TLS 1.3
 				CipherSuites: []uint16{
 					tls.TLS_AES_256_GCM_SHA384,
 					tls.TLS_CHACHA20_POLY1305_SHA256,
@@ -101,6 +109,12 @@ func getTimeoutFromEnv(envVar string, defaultMinutes int) time.Duration {
 	return time.Duration(defaultMinutes)
 }
 
+// shouldSkipTLSVerify 根据GIN_MODE决定是否跳过TLS证书验证
+// GIN_MODE=debug时跳过验证，其他模式启用验证
+func shouldSkipTLSVerify() bool {
+	return os.Getenv("GIN_MODE") == "debug"
+}
+
 // DoRequest 执行HTTP请求（使用默认客户端）
 func DoRequest(req *http.Request) (*http.Response, error) {
 	return SharedHTTPClient.Do(req)
@@ -150,25 +164,4 @@ func GetOptimalClient(anthropicReq *types.AnthropicRequest) *http.Client {
 	}
 
 	return SharedHTTPClient
-}
-
-// GetClientStats 获取所有HTTP客户端的统计信息
-func GetClientStats() map[string]interface{} {
-	return map[string]interface{}{
-		"shared_client": map[string]interface{}{
-			"timeout":   SharedHTTPClient.Timeout.String(),
-			"transport": "optimized",
-			"usage":     "simple_requests",
-		},
-		"long_request_client": map[string]interface{}{
-			"timeout":   LongRequestClient.Timeout.String(),
-			"transport": "long_timeout",
-			"usage":     "complex_requests",
-		},
-		"streaming_client": map[string]interface{}{
-			"timeout":   StreamingClient.Timeout.String(),
-			"transport": "streaming_optimized",
-			"usage":     "streaming_requests",
-		},
-	}
 }

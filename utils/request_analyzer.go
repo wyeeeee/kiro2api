@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"net/http"
 	"strings"
 
 	"kiro2api/types"
@@ -80,12 +79,4 @@ func AnalyzeRequestComplexity(req types.AnthropicRequest) RequestComplexity {
 		return ComplexRequest
 	}
 	return SimpleRequest
-}
-
-// GetClientForRequest 根据请求复杂度选择合适的HTTP客户端
-func GetClientForRequest(req types.AnthropicRequest) *http.Client {
-	if AnalyzeRequestComplexity(req) == ComplexRequest {
-		return LongRequestClient
-	}
-	return SharedHTTPClient
 }

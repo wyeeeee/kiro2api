@@ -55,39 +55,12 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 				case "tool_result":
 					// 处理工具结果，支持复杂的内容结构
 					if contentBlock.Content != nil {
-						// 处理不同类型的tool_result内容
-						switch content := contentBlock.Content.(type) {
-						case string:
-							// 简单字符串内容
-							textParts = append(textParts, content)
-						case []any:
-							// 内容数组，可能包含text对象
-							for _, item := range content {
-								if textObj, ok := item.(map[string]any); ok {
-									// 检查是否有text字段
-									if text, hasText := textObj["text"].(string); hasText {
-										textParts = append(textParts, text)
-									}
-								} else {
-									// 如果不是map，直接尝试转换为字符串
-									itemStr := fmt.Sprintf("%v", item)
-									if itemStr != "" && itemStr != "<nil>" {
-										textParts = append(textParts, itemStr)
-									}
-								}
-							}
-						case map[string]any:
-							// 单个map对象，可能是嵌套的text结构
-							if text, hasText := content["text"].(string); hasText {
-								textParts = append(textParts, text)
-							} else {
-								// 尝试转换整个map为字符串
-								textParts = append(textParts, fmt.Sprintf("%v", content))
-							}
-						default:
-							// 其他类型，尝试转换为字符串
-							textParts = append(textParts, fmt.Sprintf("%v", content))
+						parsedContent := utils.ParseToolResultContent(contentBlock.Content)
+						// 如果内容为空，提供默认值
+						if parsedContent == "" {
+							parsedContent = "Tool executed successfully"
 						}
+						textParts = append(textParts, parsedContent)
 					}
 				}
 			} else {
@@ -123,39 +96,12 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 			case "tool_result":
 				// 处理工具结果，支持复杂的内容结构
 				if block.Content != nil {
-					// 处理不同类型的tool_result内容
-					switch content := block.Content.(type) {
-					case string:
-						// 简单字符串内容
-						textParts = append(textParts, content)
-					case []any:
-						// 内容数组，可能包含text对象
-						for _, item := range content {
-							if textObj, ok := item.(map[string]any); ok {
-								// 检查是否有text字段
-								if text, hasText := textObj["text"].(string); hasText {
-									textParts = append(textParts, text)
-								}
-							} else {
-								// 如果不是map，直接尝试转换为字符串
-								itemStr := fmt.Sprintf("%v", item)
-								if itemStr != "" && itemStr != "<nil>" {
-									textParts = append(textParts, itemStr)
-								}
-							}
-						}
-					case map[string]any:
-						// 单个map对象，可能是嵌套的text结构
-						if text, hasText := content["text"].(string); hasText {
-							textParts = append(textParts, text)
-						} else {
-							// 尝试转换整个map为字符串
-							textParts = append(textParts, fmt.Sprintf("%v", content))
-						}
-					default:
-						// 其他类型，尝试转换为字符串
-						textParts = append(textParts, fmt.Sprintf("%v", content))
+					parsedContent := utils.ParseToolResultContent(block.Content)
+					// 如果内容为空，提供默认值
+					if parsedContent == "" {
+						parsedContent = "Tool executed successfully"
 					}
+					textParts = append(textParts, parsedContent)
 				}
 			}
 		}

@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"kiro2api/converter"
-	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
 	"kiro2api/utils"
@@ -15,8 +14,8 @@ import (
 )
 
 // handleOpenAINonStreamRequest 处理OpenAI非流式请求
-func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, accessToken, false)
+func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, tokenInfo, false)
 	if err != nil {
 		return
 	}
@@ -29,113 +28,45 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 		return
 	}
 
-	events := parser.ParseEvents(body)
-
-	allContent := "" // 累积所有文本内容
-	contexts := []map[string]any{}
-	currentToolUse := make(map[string]any)
-	toolInputBuffer := ""
-	currentBlockContent := ""                   // 当前块的文本内容
-	dedupManager := utils.NewToolDedupManager() // OpenAI端点的工具去重管理器
-
-	for _, event := range events {
-		if event.Data != nil {
-			if dataMap, ok := event.Data.(map[string]any); ok {
-				switch dataMap["type"] {
-				case "content_block_delta":
-					if delta, ok := dataMap["delta"]; ok {
-						if deltaMap, ok := delta.(map[string]any); ok {
-							switch deltaMap["type"] {
-							case "text_delta":
-								if text, ok := deltaMap["text"]; ok {
-									textStr := text.(string)
-									currentBlockContent += textStr
-									allContent += textStr
-								}
-							case "input_json_delta":
-								if partialJson, ok := deltaMap["partial_json"]; ok {
-									switch v := partialJson.(type) {
-									case string:
-										toolInputBuffer += v
-									case *string:
-										if v != nil {
-											toolInputBuffer += *v
-										}
-									}
-								}
-							}
-						}
-					}
-				case "content_block_start":
-					if contentBlock, ok := dataMap["content_block"]; ok {
-						if blockMap, ok := contentBlock.(map[string]any); ok {
-							switch blockMap["type"] {
-							case "tool_use":
-								currentToolUse = map[string]any{
-									"type": "tool_use",
-									"id":   blockMap["id"],
-									"name": blockMap["name"],
-								}
-								toolInputBuffer = ""
-							case "text":
-								currentBlockContent = "" // 重置当前块内容
-							}
-						}
-					}
-				case "content_block_stop":
-					if currentBlockContent != "" {
-						contexts = append(contexts, map[string]any{
-							"text": currentBlockContent,
-							"type": "text",
-						})
-						currentBlockContent = ""
-					}
-					// 完成工具使用块
-					if len(currentToolUse) > 0 {
-						// 解析完整的工具参数
-						if toolInputBuffer != "" {
-							toolInput := map[string]any{}
-							if err := utils.SafeUnmarshal([]byte(toolInputBuffer), &toolInput); err != nil {
-								logger.Error("JSON解析失败", logger.Err(err), logger.String("data", toolInputBuffer))
-								break
-							}
-							currentToolUse["input"] = toolInput
-						}
-
-						// 使用通用工具去重处理
-						if processToolDeduplication(currentToolUse, dedupManager) {
-							// 重置工具状态但不添加到contexts
-							currentToolUse = make(map[string]any)
-							toolInputBuffer = ""
-							break // 跳过重复工具
-						}
-
-						contexts = append(contexts, currentToolUse)
-						currentToolUse = make(map[string]any)
-						toolInputBuffer = ""
-					}
-				}
-			}
-		}
+	// 使用新的符合AWS规范的解析器
+	compliantParser := parser.NewCompliantEventStreamParser(false) // 宽松模式用于非流式处理
+	result, err := compliantParser.ParseResponse(body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "响应解析失败"})
+		return
 	}
 
-	// 处理剩余的文本内容（如果事件流没有明确的content_block_stop）
-	if currentBlockContent != "" {
+	// 转换为Anthropic格式
+	contexts := []map[string]any{}
+	allContent := result.GetCompletionText()
+	sawToolUse := len(result.GetToolCalls()) > 0
+
+	// 添加文本内容
+	if allContent != "" {
 		contexts = append(contexts, map[string]any{
-			"text": currentBlockContent,
 			"type": "text",
+			"text": allContent,
+		})
+	}
+
+	// 添加工具调用
+	for _, tool := range result.GetToolCalls() {
+		contexts = append(contexts, map[string]any{
+			"type":  "tool_use",
+			"id":    tool.ID,
+			"name":  tool.Name,
+			"input": tool.Arguments,
 		})
 	}
 
 	// 构建Anthropic响应
 	inputContent, _ := utils.GetMessageContent(anthropicReq.Messages[0].Content)
-	stopReason := "end_turn"
-	for _, blk := range contexts {
-		if t, ok := blk["type"].(string); ok && t == "tool_use" {
-			stopReason = "tool_use"
-			break
+	stopReason := func() string {
+		if sawToolUse {
+			return "tool_use"
 		}
-	}
+		return "end_turn"
+	}()
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
@@ -157,14 +88,14 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 }
 
 // handleOpenAIStreamRequest 处理OpenAI流式请求
-func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, accessToken string) {
+func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 
 	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
 
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, accessToken, true)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, tokenInfo, true)
 	if err != nil {
 		return
 	}
@@ -172,6 +103,8 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 
 	// 立即刷新响应头
 	c.Writer.Flush()
+
+	sender := &OpenAIStreamSender{}
 
 	// 发送初始OpenAI事件
 	initialEvent := map[string]any{
@@ -189,10 +122,11 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 			},
 		},
 	}
-	sendOpenAIEvent(c, initialEvent)
+	sender.SendEvent(c, initialEvent)
 
-	// 创建流式解析器和去重管理器
-	streamParser := parser.NewStreamParser()
+	// 创建符合AWS规范的流式解析器和去重管理器
+	compliantParser := parser.GlobalCompliantParserPool.Get()
+	defer parser.GlobalCompliantParserPool.Put(compliantParser)
 	dedupManager := utils.NewToolDedupManager() // OpenAI流式端点的工具去重管理器
 
 	// OpenAI 工具调用增量状态
@@ -206,7 +140,11 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
-			events := streamParser.ParseStream(buf[:n])
+			events, parseErr := compliantParser.ParseStream(buf[:n])
+			if parseErr != nil {
+				// 在宽松模式下继续处理
+				continue
+			}
 			for _, event := range events {
 				// 在流式处理中添加工具去重逻辑
 				if shouldSkipDuplicateToolEvent(event, dedupManager) {
@@ -219,7 +157,8 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 						case "content_block_delta":
 							if delta, ok := dataMap["delta"]; ok {
 								if deltaMap, ok := delta.(map[string]any); ok {
-									if deltaMap["type"] == "text_delta" {
+									switch deltaMap["type"] {
+									case "text_delta":
 										if text, ok := deltaMap["text"]; ok {
 											// 发送文本内容的增量
 											contentEvent := map[string]any{
@@ -237,9 +176,9 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 													},
 												},
 											}
-											sendOpenAIEvent(c, contentEvent)
+											sender.SendEvent(c, contentEvent)
 										}
-									} else if deltaMap["type"] == "input_json_delta" {
+									case "input_json_delta":
 										// 工具调用参数增量
 										// 找到对应的tool_use和OpenAI tool_calls索引
 										toolBlockIndex := 0
@@ -292,7 +231,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 															},
 														},
 													}
-													sendOpenAIEvent(c, toolDelta)
+													sender.SendEvent(c, toolDelta)
 												}
 											}
 										}
@@ -353,7 +292,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 													},
 												},
 											}
-											sendOpenAIEvent(c, toolStart)
+											sender.SendEvent(c, toolStart)
 										}
 									}
 								}
@@ -376,7 +315,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 												},
 											},
 										}
-										sendOpenAIEvent(c, endEvent)
+										sender.SendEvent(c, endEvent)
 										sentFinal = true
 									}
 								}
@@ -397,14 +336,4 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	// 发送结束标记
 	fmt.Fprintf(c.Writer, "data: [DONE]\n\n")
 	c.Writer.Flush()
-}
-
-func sendOpenAIEvent(c *gin.Context, data any) {
-	json, err := utils.SafeMarshal(data)
-	if err != nil {
-		logger.Error("序列化OpenAI事件失败", logger.Err(err))
-		return
-	}
-
-	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 }

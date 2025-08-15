@@ -1,13 +1,13 @@
 # kiro2api
 
-一个基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
+一个基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
-**当前版本**: 开发版本 - 基于 Go 的高性能 API 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口。
+**当前版本**: v2.8.0+ - 基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，最新优化了工具标记解析逻辑和请求处理机制。
 
 ## 功能特性
 
 - **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
-- **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑
+- **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑，增强工具标记解析和CodeWhisperer兼容性
 - **多模态图片支持**：支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持PNG、JPEG、GIF、WebP、BMP等格式
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
 - **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
@@ -55,6 +55,30 @@ export PORT="8080"
 cp .env.example .env
 # 编辑 .env 文件设置你的配置
 ./kiro2api
+```
+
+### 开发命令
+
+```bash
+# 构建项目
+go build ./...
+
+# 运行测试
+go test ./...
+
+# 运行特定包测试
+go test ./parser -v
+go test ./auth -v
+
+# 代码质量检查
+go vet ./...
+go fmt ./...
+
+# 依赖整理
+go mod tidy
+
+# 开发模式运行
+go run main.go
 ```
 
 ### 使用 Docker
@@ -450,6 +474,31 @@ export AWS_REFRESHTOKEN="token1,token2,token3"
 
 内部使用的刷新URL：`https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
 
+## 性能优化特性
+
+kiro2api 在设计上特别注重性能优化，采用多种技术来提升并发处理能力和资源利用效率：
+
+### 内存管理优化
+- **对象池模式**: 使用 `sync.Pool` 复用 `StreamParser` 和字节缓冲区，减少GC压力
+- **预分配策略**: 缓冲区和事件切片预分配容量，避免动态扩容开销
+- **热点数据缓存**: Token缓存使用热点+冷缓存两级架构，最常用token通过原子指针无锁访问
+
+### 并发处理优化
+- **原子操作**: 日志级别判断、Token缓存访问使用原子操作，减少锁竞争
+- **读写分离**: Token池使用读写锁，缓存使用sync.Map适合读多写少场景
+- **无锁设计**: 热点Token缓存使用unsafe.Pointer实现无锁访问
+- **后台清理**: Token缓存过期清理在后台协程中进行，不影响主流程
+
+### 网络和I/O优化
+- **共享客户端**: HTTP客户端复用，减少连接建立开销
+- **流式处理**: 零延迟的流式响应，使用滑动窗口缓冲区
+- **智能超时**: 根据请求复杂度动态调整超时配置，优化资源利用
+
+### 数据处理优化
+- **高性能JSON**: 使用bytedance/sonic替代标准库，提升JSON处理性能
+- **二进制协议**: 直接解析AWS EventStream二进制格式，避免文本转换开销
+- **请求分析**: 多因素复杂度评估，智能选择处理策略
+
 ## 开发指南
 
 ### 本地开发
@@ -473,7 +522,7 @@ go fmt ./...
 rm -f kiro2api && go build -o kiro2api main.go
 ```
 
-### 项目结构
+## 包结构
 
 ```
 kiro2api/
@@ -511,48 +560,115 @@ kiro2api/
     ├── message.go               # 消息内容提取工具，支持多模态内容
     ├── request_analyzer.go      # 请求复杂度分析
     ├── tool_dedup.go            # 工具调用去重管理
+    ├── atomic_cache.go          # 原子操作Token缓存实现
+    ├── json.go                  # 高性能JSON序列化工具
     └── uuid.go                  # UUID生成工具
 ```
 
-## 开发指南
+### 核心包职责
 
-### 双API代理架构
+**`server/`** - HTTP 服务器和 API 处理器
+- `server.go`: 路由配置、服务器启动、中间件链
+- `handlers.go`: Anthropic API 端点 (`/v1/messages`) 
+- `openai_handlers.go`: OpenAI 兼容性 (`/v1/chat/completions`, `/v1/models`)
+- `middleware.go`: **[重构后]** 统一 API 密钥验证中间件
+- `common.go`: 共享 HTTP 工具和 CodeWhisperer 错误处理
 
-kiro2api是一个**双API代理服务器**，在三种格式之间进行转换：
+**`converter/`** - 格式转换层
+- 处理 Anthropic ↔ OpenAI ↔ CodeWhisperer 请求/响应转换
+- 通过 `config.ModelMap` 进行模型名称映射
+- 工具调用格式转换
+
+**`parser/`** - 流处理
+- `sse_parser.go`: AWS EventStream 二进制协议解析器
+- `StreamParser`: 实时流式处理，支持部分数据处理；统一通过 `GlobalStreamParserPool`
+- 将 EventStream 事件转换为客户端的 SSE 格式
+
+**`auth/`** - 令牌管理  
+- **[v2.4.0后]** 完全依赖环境变量`AWS_REFRESHTOKEN`，不再读取文件
+- 通过 `RefreshTokenForServer()` 在 403 错误时自动刷新
+- 使用`utils.SharedHTTPClient`进行HTTP请求
+
+**`utils/`** - **[最近优化]** 集中化工具包
+- `message.go`: `GetMessageContent()` 函数（消除重复）
+- `http.go`: `ReadHTTPResponse()` 标准响应读取
+- `client.go`: 配置好的 `SharedHTTPClient`/`LongRequestClient`/`StreamingClient` 及 `DoSmartRequest()/GetOptimalClient()`
+- `request_analyzer.go`: **[核心功能]** 请求复杂度分析（客户端选择已转为 `DoSmartRequest`）
+- `tool_dedup.go`: **[v2.5.3重构]** 基于 `tool_use_id` 的工具去重管理器
+- `image.go`: **[v2.8.0新增]** 多模态图片处理工具，支持格式检测、验证和转换
+- `uuid.go`: UUID 生成工具
+- `atomic_cache.go`: **[高性能]** 原子操作的Token缓存实现，减少锁竞争
+- `json.go`: 高性能JSON序列化工具（SafeMarshal, FastMarshal）
+
+**`types/`** - **[最近重构]** 数据结构定义
+- `anthropic.go`: Anthropic API 请求/响应结构
+- `openai.go`: OpenAI API 格式结构  
+- `codewhisperer.go`: AWS CodeWhisperer API 结构
+- `model.go`: 模型映射和配置类型
+- `token.go`: **[增强]** 统一token管理结构（`TokenInfo`, `TokenPool`, `TokenCache`）
+- `common.go`: 通用结构定义（`Usage`统计）
+
+**`logger/`** - **[v2.6.0+优化]** 结构化日志系统
+- `logger.go`: 完整的日志系统实现，支持结构化字段和JSON格式输出
+- 支持环境变量配置：`LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_CONSOLE`
+- 日志级别管理（DEBUG、INFO、WARN、ERROR、FATAL）
+- 多输出支持：控制台、文件或同时输出
+- **优化亮点**: 简化架构，移除复杂 writer 接口，提升性能和可维护性
+- **性能优化**: 使用原子操作、对象池、可配置的调用栈获取
+
+**`config/`** - 配置常量
+- `ModelMap`: 将公开模型名称映射到内部 CodeWhisperer 模型 ID
+- `RefreshTokenURL`: Kiro 令牌刷新端点
+
+## 架构概述
+
+kiro2api 是一个**双API代理服务器**，在三种格式之间进行转换：
 - **输入**: Anthropic Claude API 或 OpenAI ChatCompletion API 
 - **输出**: AWS CodeWhisperer EventStream 格式
 - **响应**: 实时流式或标准 JSON 响应
 
-### 请求处理流程
+### 核心请求流程
+1. **认证**: `PathBasedAuthMiddleware` 验证来自 `Authorization` 或 `x-api-key` 头的 API 密钥（已统一）
+2. **请求分析**: `utils.AnalyzeRequestComplexity()` 分析请求复杂度；客户端选择统一由 `utils.DoSmartRequest()/GetOptimalClient()` 处理
+3. **格式转换**: `converter/` 包将请求转换为 CodeWhisperer 格式
+4. **代理**: 通过 `127.0.0.1:8080` 代理转发到 AWS CodeWhisperer
+5. **流处理**: `StreamParser` 处理实时 AWS EventStream 二进制解析
+6. **响应转换**: 转换回客户端请求的格式（Anthropic SSE 或 OpenAI 流式）
 
-1. **接收请求** - gin 路由器接收 HTTP 请求
-2. **认证验证** - PathBasedAuthMiddleware 验证 API 密钥
-3. **请求分析** - 智能分析请求复杂度，选择合适的客户端和超时配置
-4. **格式转换** - converter 包将请求转换为 CodeWhisperer 格式
-5. **Token管理** - 从Token池获取可用的access token，支持自动轮换
-6. **代理转发** - 转发到 AWS CodeWhisperer API
-7. **响应解析** - StreamParser 实时解析 AWS EventStream 二进制数据
-8. **格式转换** - 将响应转换回客户端请求的格式（Anthropic/OpenAI）
-9. **返回响应** - 以流式或非流式方式返回给客户端
+### 关键架构模式
 
-### 高性能特性
+**智能请求处理**: 全面的请求分析机制：
+- `utils.AnalyzeRequestComplexity()` - 根据token数量、内容长度、工具使用、关键词等因素评估复杂度
+- `utils.GetOptimalClient()`/`utils.DoSmartRequest()` - 选择合适的HTTP客户端（已统一）
+- 复杂请求使用15分钟超时，简单请求使用2分钟超时
+- 服务器读写超时配置，支持长时间处理
+- **复杂度评估因素**: MaxTokens (>4000)、内容长度 (>10K字符)、工具使用、系统提示长度 (>2K字符)、复杂关键词检测
 
-- **零延迟流式**: 使用滑动窗口缓冲区的自定义 EventStream 解析器
-- **智能Token管理**: 多token池支持，自动轮换和故障转移
-- **请求复杂度分析**: 根据请求特征动态调整超时和客户端配置
-- **对象池优化**: `sync.Pool` 复用StreamParser和字节缓冲区，减少GC压力
-- **原子操作缓存**: Token缓存使用热点+冷缓存两级架构，最常用token无锁访问
-- **高性能JSON**: 使用bytedance/sonic替代标准库，提升处理性能
-- **并发安全设计**: 读写分离、无锁设计、后台清理机制
+**Token池管理**: 高级认证系统：
+- `types.TokenPool` - 支持多个refresh token的池化管理和自动轮换
+- 智能故障转移，每个token最多重试3次后自动跳过
+- `utils.AtomicTokenCache` - **[高性能]** 原子操作的Token缓存，减少锁竞争
+- 负载均衡和健康状态管理
+- **热点缓存机制**: 最常用的token使用原子指针避免锁，冷缓存使用sync.Map适合读多写少场景
 
-### 核心功能模块
+**工具调用去重**: 标准化工具调用管理：
+- `utils.ToolDedupManager` - 基于 `tool_use_id` 的精确去重机制
+- 符合 Anthropic 标准，避免基于参数哈希的误判
+- 流式和非流式请求统一去重逻辑，确保一致性
+- 请求级别的去重管理，防止跨请求状态污染
 
-- **多模态图片处理**: 完整的图片处理管道，自动转换OpenAI `image_url`格式到Anthropic `image`格式
-- **精确工具去重**: 基于 `tool_use_id` 的工具调用去重，符合 Anthropic 标准
-- **结构化日志**: JSON格式日志输出，便于监控和分析
-- **增强验证机制**: 全面的请求验证、工具结果解析和图片内容验证
-- **统一中间件**: 集中式的认证、CORS 和错误处理
-- **容错设计**: 自动令牌刷新和优雅的错误处理
+**中间件链**: gin-gonic 服务器架构：
+- `gin.Logger()` 和 `gin.Recovery()` 提供基本功能
+- `corsMiddleware()` 处理 CORS
+- `PathBasedAuthMiddleware()` 基于路径的认证，仅对 `/v1/*` 端点验证 API 密钥
+
+**流处理架构**:
+- 使用滑动窗口缓冲区的 `StreamParser` 进行实时 EventStream 解析
+- 立即客户端流式传输（零首字符延迟）
+- 使用 `binary.BigEndian` 进行 AWS EventStream 协议的二进制格式解析
+- 支持 `assistantResponseEvent` 和 `toolUseEvent` 两种事件类型
+- **对象池优化**: `GlobalStreamParserPool` 复用StreamParser实例，减少内存分配
+- **高性能JSON处理**: 使用bytedance/sonic库进行JSON序列化/反序列化
 
 ## Docker 部署
 
@@ -611,25 +727,59 @@ docker inspect kiro2api | grep -A 10 "Health"
 
 ## 故障排除
 
+### 核心开发任务
+
+#### 调试流式响应和工具解析
+1. 检查 `parser/sse_parser.go` 中的 `StreamParser` 和 `ParseEvents`
+2. 确认二进制 EventStream 解析逻辑（BigEndian 格式）和工具标记解析优化
+3. 验证事件类型处理：`assistantResponseEvent` 和 `toolUseEvent`
+4. 测试客户端格式转换（Anthropic SSE vs OpenAI 流式）
+5. 调试工具标记的缓冲区大小限制和重复内容问题
+
+#### 调试Token池和缓存
+1. 检查 `auth/token.go` 中的Token池管理逻辑
+2. 验证多Token轮换和故障转移机制
+3. 监控Token缓存命中率和过期处理
+4. 使用环境变量配置多个refresh token测试
+
+#### 调试多模态图片处理
+1. 检查 `utils/image.go` 中的图片处理管道
+2. 验证图片格式检测和验证逻辑
+3. 测试OpenAI↔Anthropic格式转换功能
+4. 调试data URL解析和base64编码处理
+5. 监控图片大小限制和错误处理机制
+6. 验证CodeWhisperer图片格式转换
+
+#### 工具调用去重和CodeWhisperer兼容性调试
+1. 验证 `utils/tool_dedup.go` 中基于 `tool_use_id` 的去重逻辑
+2. 测试流式和非流式请求的工具调用一致性
+3. 确保请求级别的去重管理，避免跨请求状态污染
+4. 验证工具请求格式转换和schema兼容性处理
+
+#### 高性能特性调试
+1. **原子缓存优化**: 验证 `utils/atomic_cache.go` 中的热点token缓存机制
+2. **对象池管理**: 检查 `GlobalStreamParserPool` 的内存复用效果
+3. **并发安全**: 验证Token池的并发访问和故障转移机制
+4. **性能监控**: 监控原子缓存的命中率和清理效果
+
 ### 常见问题和解决方案
 
 #### Token刷新失败
 1. 检查 `AWS_REFRESHTOKEN` 环境变量是否正确设置
 2. 验证token池配置和轮换机制
 3. 查看token过期时间和自动刷新日志
-4. 确保token格式正确且未过期
 
-#### 流式响应中断
+#### 流式响应中断和工具解析问题
 1. 检查客户端连接稳定性
-2. 验证 EventStream 解析器状态
+2. 验证 EventStream 解析器状态和工具标记解析逻辑
 3. 查看工具调用去重逻辑是否影响流式输出
-4. 检查网络超时配置
+4. 检查工具调用错误处理和调试支持
+5. 验证缓冲区大小限制和重复内容添加的修复效果
 
-#### 图片处理错误
-1. 确认图片格式是否支持（PNG、JPEG、GIF、WebP、BMP）
-2. 检查图片大小是否超过20MB限制
-3. 验证base64编码是否正确
-4. 查看图片格式检测日志
+#### Docker 部署调试
+1. 验证 `Dockerfile` 多平台构建配置
+2. 测试 `docker-compose.yml` 环境变量传递
+3. 监控容器日志和性能指标
 
 ### 监控和调试
 
@@ -645,7 +795,7 @@ export LOG_CONSOLE=true
 ./kiro2api
 ```
 
-## 贡献指南
+## 开发指南
 
 ### 本地开发环境搭建
 
@@ -675,6 +825,28 @@ go test ./...
 ```bash
 go run main.go
 ```
+
+### 性能调优
+
+1. **HTTP客户端优化**：
+   - 监控连接池使用情况
+   - 调整超时配置以适应不同场景
+   - 使用流式客户端处理长时间请求
+
+2. **Token管理优化**：
+   - 配置多个refresh token提高可用性
+   - 监控token缓存命中率
+   - 调整token过期清理策略
+
+3. **内存管理优化**：
+   - 监控对象池使用情况
+   - 调整缓冲区大小
+   - 检查GC压力和内存使用情况
+
+4. **并发优化**：
+   - 监控原子缓存效果
+   - 检查锁竞争情况
+   - 优化热点数据访问
 
 ### 代码规范
 

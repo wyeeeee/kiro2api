@@ -104,7 +104,7 @@ func createLogger() *Logger {
 
 	// 设置文件输出
 	if logFile := os.Getenv("LOG_FILE"); logFile != "" {
-		if file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		if file, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644); err == nil {
 			logger.logFile = file
 			// 检查是否禁用控制台输出
 			if os.Getenv("LOG_CONSOLE") == "false" {

@@ -23,6 +23,8 @@ func (t *Token) ToTokenInfo() TokenInfo {
 		AccessToken:  t.AccessToken,
 		RefreshToken: t.RefreshToken,
 		ExpiresAt:    t.ExpiresAt,
+		ProfileArn:   t.ProfileArn, // 确保ProfileArn被包含在转换中
+		ExpiresIn:    t.ExpiresIn,
 	}
 }
 
@@ -196,4 +198,3 @@ func (tp *TokenPool) GetStats() map[string]any {
 
 	return stats
 }
-

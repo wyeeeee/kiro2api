@@ -64,21 +64,3 @@ type OpenAIResponse struct {
 	Choices []OpenAIChoice `json:"choices"`
 	Usage   Usage          `json:"usage"`
 }
-
-// OpenAI流式响应结构
-type OpenAIStreamChoice struct {
-	Index int `json:"index"`
-	Delta struct {
-		Role    string `json:"role,omitempty"`
-		Content string `json:"content,omitempty"`
-	} `json:"delta"`
-	FinishReason *string `json:"finish_reason"`
-}
-
-type OpenAIStreamResponse struct {
-	ID      string               `json:"id"`
-	Object  string               `json:"object"`
-	Created int64                `json:"created"`
-	Model   string               `json:"model"`
-	Choices []OpenAIStreamChoice `json:"choices"`
-}

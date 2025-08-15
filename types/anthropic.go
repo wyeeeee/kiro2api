@@ -20,7 +20,7 @@ type AnthropicRequest struct {
 	Messages    []AnthropicRequestMessage `json:"messages"`
 	System      []AnthropicSystemMessage  `json:"system,omitempty"`
 	Tools       []AnthropicTool           `json:"tools,omitempty"`
-	ToolChoice  *ToolChoice               `json:"tool_choice,omitempty"`
+	ToolChoice  any                       `json:"tool_choice,omitempty"` // 可以是string或ToolChoice对象
 	Stream      bool                      `json:"stream"`
 	Temperature *float64                  `json:"temperature,omitempty"`
 	Metadata    map[string]any            `json:"metadata,omitempty"`

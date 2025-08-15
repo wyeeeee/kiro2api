@@ -99,20 +99,8 @@ func ProcessImageData(data []byte, source string) (*types.ImageSource, error) {
 
 // IsSupportedImageFormat 检查是否为支持的图片格式
 func IsSupportedImageFormat(mediaType string) bool {
-	supportedTypes := []string{
-		"image/jpeg",
-		"image/png",
-		"image/gif",
-		"image/webp",
-		"image/bmp",
-	}
-
-	for _, supportedType := range supportedTypes {
-		if mediaType == supportedType {
-			return true
-		}
-	}
-	return false
+	// 以 GetImageFormatFromMediaType 为单一事实来源，避免多处维护
+	return GetImageFormatFromMediaType(mediaType) != ""
 }
 
 // GetImageFormatFromMediaType 从 media type 获取图片格式

@@ -69,46 +69,98 @@ func StartServer(port string, authToken string) {
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
-			respondInternalServerErrorf(c, "获取token失败: %v", err)
+			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
 			return
 		}
 
 		body, err := c.GetRawData()
 		if err != nil {
 			logger.Error("读取请求体失败", logger.Err(err))
-			respondBadRequestf(c, "读取请求体失败: %v", err)
+			respondError(c, http.StatusBadRequest, "读取请求体失败: %v", err)
 			return
 		}
 
 		logger.Debug("收到Anthropic请求",
 			logger.String("body", string(body)),
-			logger.Int("body_size", len(body)))
-		var anthropicReq types.AnthropicRequest
-		if err := utils.SafeUnmarshal(body, &anthropicReq); err != nil {
+			logger.Int("body_size", len(body)),
+			logger.String("remote_addr", c.ClientIP()),
+			logger.String("user_agent", c.GetHeader("User-Agent")))
+
+		// 先解析为通用map以便处理工具格式
+		var rawReq map[string]any
+		if err := utils.SafeUnmarshal(body, &rawReq); err != nil {
 			logger.Error("解析请求体失败", logger.Err(err))
-			respondBadRequestf(c, "解析请求体失败: %v", err)
+			respondError(c, http.StatusBadRequest, "解析请求体失败: %v", err)
 			return
 		}
 
-		logger.Debug("请求解析成功",
-			logger.String("model", anthropicReq.Model),
-			logger.Bool("stream", anthropicReq.Stream),
-			logger.Int("max_tokens", anthropicReq.MaxTokens),
-			logger.Int("messages_count", len(anthropicReq.Messages)))
-
-		// 详细记录消息内容以调试
-		for i, msg := range anthropicReq.Messages {
-			logger.Debug("消息详情",
-				logger.Int("index", i),
-				logger.String("role", msg.Role),
-				logger.String("content_type", fmt.Sprintf("%T", msg.Content)),
-				logger.String("content_preview", fmt.Sprintf("%.200v", msg.Content)))
+		// 标准化工具格式处理
+		if tools, exists := rawReq["tools"]; exists && tools != nil {
+			if toolsArray, ok := tools.([]any); ok {
+				normalizedTools := make([]map[string]any, 0, len(toolsArray))
+				for _, tool := range toolsArray {
+					if toolMap, ok := tool.(map[string]any); ok {
+						// 检查是否是简化的工具格式（直接包含name, description, input_schema）
+						if name, hasName := toolMap["name"]; hasName {
+							if description, hasDesc := toolMap["description"]; hasDesc {
+								if inputSchema, hasSchema := toolMap["input_schema"]; hasSchema {
+									// 转换为标准Anthropic工具格式
+									normalizedTool := map[string]any{
+										"name":         name,
+										"description":  description,
+										"input_schema": inputSchema,
+									}
+									normalizedTools = append(normalizedTools, normalizedTool)
+									continue
+								}
+							}
+						}
+						// 如果不是简化格式，保持原样
+						normalizedTools = append(normalizedTools, toolMap)
+					}
+				}
+				rawReq["tools"] = normalizedTools
+			}
 		}
+
+		// 重新序列化并解析为AnthropicRequest
+		normalizedBody, err := utils.SafeMarshal(rawReq)
+		if err != nil {
+			logger.Error("重新序列化请求失败", logger.Err(err))
+			respondError(c, http.StatusBadRequest, "处理请求格式失败: %v", err)
+			return
+		}
+
+		var anthropicReq types.AnthropicRequest
+		if err := utils.SafeUnmarshal(normalizedBody, &anthropicReq); err != nil {
+			logger.Error("解析标准化请求体失败", logger.Err(err))
+			respondError(c, http.StatusBadRequest, "解析请求体失败: %v", err)
+			return
+		}
+
+		// logger.Debug("请求解析成功",
+		// 	logger.String("model", anthropicReq.Model),
+		// 	logger.Bool("stream", anthropicReq.Stream),
+		// 	logger.Int("max_tokens", anthropicReq.MaxTokens),
+		// 	logger.Int("messages_count", len(anthropicReq.Messages)),
+		// 	logger.Int("tools_count", len(anthropicReq.Tools)))
+
+		// 详细记录工具信息以调试
+		// for i, tool := range anthropicReq.Tools {
+		// 	descPreview := tool.Description
+		// 	if len(descPreview) > 100 {
+		// 		descPreview = descPreview[:100] + "..."
+		// 	}
+		// 	logger.Debug("工具详情",
+		// 		logger.Int("index", i),
+		// 		logger.String("name", tool.Name),
+		// 		logger.String("description", descPreview))
+		// }
 
 		// 验证请求的有效性
 		if len(anthropicReq.Messages) == 0 {
 			logger.Error("请求中没有消息")
-			respondBadRequest(c, "messages 数组不能为空")
+			respondError(c, http.StatusBadRequest, "%s", "messages 数组不能为空")
 			return
 		}
 
@@ -119,7 +171,7 @@ func StartServer(port string, authToken string) {
 			logger.Error("获取消息内容失败",
 				logger.Err(err),
 				logger.String("raw_content", fmt.Sprintf("%v", lastMsg.Content)))
-			respondBadRequestf(c, "获取消息内容失败: %v", err)
+			respondError(c, http.StatusBadRequest, "获取消息内容失败: %v", err)
 			return
 		}
 
@@ -128,21 +180,23 @@ func StartServer(port string, authToken string) {
 			logger.Error("消息内容为空或无效",
 				logger.String("content", content),
 				logger.String("trimmed_content", trimmedContent))
-			respondBadRequest(c, "消息内容不能为空")
+			respondError(c, http.StatusBadRequest, "%s", "消息内容不能为空")
 			return
 		}
 
 		// 如果环境变量禁用了流式传输，则强制设置为false
 		if config.IsStreamDisabled() {
+			logger.Info("DISABLE_STREAM=true，强制禁用流式响应", 
+				logger.String("original_stream", fmt.Sprintf("%v", anthropicReq.Stream)))
 			anthropicReq.Stream = false
 		}
 
 		if anthropicReq.Stream {
-			handleStreamRequest(c, anthropicReq, token.AccessToken)
+			handleStreamRequest(c, anthropicReq, token)
 			return
 		}
 
-		handleNonStreamRequest(c, anthropicReq, token.AccessToken)
+		handleNonStreamRequest(c, anthropicReq, token)
 	})
 
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
@@ -150,14 +204,14 @@ func StartServer(port string, authToken string) {
 		token, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
-			respondInternalServerErrorf(c, "获取token失败: %v", err)
+			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
 			return
 		}
 
 		body, err := c.GetRawData()
 		if err != nil {
 			logger.Error("读取请求体失败", logger.Err(err))
-			respondBadRequestf(c, "读取请求体失败: %v", err)
+			respondError(c, http.StatusBadRequest, "读取请求体失败: %v", err)
 			return
 		}
 
@@ -168,7 +222,7 @@ func StartServer(port string, authToken string) {
 		var openaiReq types.OpenAIRequest
 		if err := utils.SafeUnmarshal(body, &openaiReq); err != nil {
 			logger.Error("解析OpenAI请求体失败", logger.Err(err))
-			respondBadRequestf(c, "解析请求体失败: %v", err)
+			respondError(c, http.StatusBadRequest, "解析请求体失败: %v", err)
 			return
 		}
 
@@ -187,22 +241,24 @@ func StartServer(port string, authToken string) {
 
 		// 如果环境变量禁用了流式传输，则强制设置为false
 		if config.IsStreamDisabled() {
+			logger.Info("DISABLE_STREAM=true，强制禁用流式响应", 
+				logger.String("original_stream", fmt.Sprintf("%v", anthropicReq.Stream)))
 			anthropicReq.Stream = false
 		}
 
 		if anthropicReq.Stream {
-			handleOpenAIStreamRequest(c, anthropicReq, token.AccessToken)
+			handleOpenAIStreamRequest(c, anthropicReq, token)
 			return
 		}
 
-		handleOpenAINonStreamRequest(c, anthropicReq, token.AccessToken)
+		handleOpenAINonStreamRequest(c, anthropicReq, token)
 	})
 
 	r.NoRoute(func(c *gin.Context) {
 		logger.Warn("访问未知端点",
 			logger.String("path", c.Request.URL.Path),
 			logger.String("method", c.Request.Method))
-		respondNotFound(c, "404 未找到")
+		respondError(c, http.StatusNotFound, "%s", "404 未找到")
 	})
 
 	logger.Info("启动Anthropic API代理服务器",

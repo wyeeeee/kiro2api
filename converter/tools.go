@@ -120,7 +120,7 @@ func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string
 		}
 	}
 
-	// 确保 schema 明确声明顶级 type=object，符合Claude/CodeWhisperer工具schema约定
+	// 确保 schema 明确声明顶级 type=object，符合 CodeWhisperer 工具schema约定
 	if _, exists := tempParams["type"]; !exists {
 		tempParams["type"] = "object"
 	}
@@ -135,12 +135,38 @@ func cleanAndValidateToolParameters(params map[string]any, _ string) (map[string
 		}
 	}
 
+	// CodeWhisperer 对 schema 的兼容性处理：
+	// - 仅允许标准 JSON Schema 字段：type, properties, required, description
+	// - 去除潜在不兼容的字段（上面已经逐步移除）
+	// - 保证 required 是字符串数组，properties 为对象
+	if req, ok := tempParams["required"]; ok && req != nil {
+		if arr, ok := req.([]any); ok {
+			cleaned := make([]string, 0, len(arr))
+			for _, v := range arr {
+				if s, ok := v.(string); ok && s != "" {
+					cleaned = append(cleaned, s)
+				}
+			}
+			tempParams["required"] = cleaned
+		} else {
+			delete(tempParams, "required")
+		}
+	}
+	if props, ok := tempParams["properties"]; ok {
+		if _, ok := props.(map[string]any); !ok {
+			delete(tempParams, "properties")
+			tempParams["properties"] = map[string]any{}
+		}
+	} else {
+		tempParams["properties"] = map[string]any{}
+	}
+
 	return tempParams, nil
 }
 
 // convertOpenAIToolChoiceToAnthropic 将OpenAI的tool_choice转换为Anthropic格式
 // 参考server.py中的转换逻辑以及Anthropic官方文档
-func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) *types.ToolChoice {
+func convertOpenAIToolChoiceToAnthropic(openaiToolChoice any) any {
 	if openaiToolChoice == nil {
 		return nil
 	}

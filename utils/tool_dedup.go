@@ -1,15 +1,25 @@
 package utils
 
+import (
+	"sync"
+	"time"
+)
+
 // ToolDedupManager 管理工具调用去重的结构
 // 使用 tool_use_id 进行去重，符合 Anthropic 标准
 type ToolDedupManager struct {
 	processedIds map[string]bool
+	executing    map[string]bool      // 正在执行的工具
+	lastAccess   map[string]time.Time // 最后访问时间
+	mu           sync.RWMutex         // 保护并发访问
 }
 
 // NewToolDedupManager 创建新的工具去重管理器
 func NewToolDedupManager() *ToolDedupManager {
 	return &ToolDedupManager{
 		processedIds: make(map[string]bool),
+		executing:    make(map[string]bool),
+		lastAccess:   make(map[string]time.Time),
 	}
 }
 
@@ -18,17 +28,84 @@ func (m *ToolDedupManager) IsToolProcessed(toolUseId string) bool {
 	if toolUseId == "" {
 		return false
 	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.processedIds[toolUseId]
+}
+
+// IsToolExecuting 检查工具是否正在执行
+func (m *ToolDedupManager) IsToolExecuting(toolUseId string) bool {
+	if toolUseId == "" {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.executing[toolUseId]
+}
+
+// StartToolExecution 标记工具开始执行
+func (m *ToolDedupManager) StartToolExecution(toolUseId string) bool {
+	if toolUseId == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	// 如果已经在执行，返回false
+	if m.executing[toolUseId] {
+		return false
+	}
+	
+	// 标记为正在执行
+	m.executing[toolUseId] = true
+	m.lastAccess[toolUseId] = time.Now()
+	return true
 }
 
 // MarkToolProcessed 标记工具为已处理（基于 tool_use_id）
 func (m *ToolDedupManager) MarkToolProcessed(toolUseId string) {
 	if toolUseId != "" {
+		m.mu.Lock()
+		defer m.mu.Unlock()
 		m.processedIds[toolUseId] = true
+		// 清除执行状态
+		delete(m.executing, toolUseId)
+		m.lastAccess[toolUseId] = time.Now()
 	}
 }
 
 // Reset 重置去重管理器状态
 func (m *ToolDedupManager) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.processedIds = make(map[string]bool)
+	m.executing = make(map[string]bool)
+	m.lastAccess = make(map[string]time.Time)
+}
+
+// CleanupExpiredTools 清理过期的工具状态（超过指定时间的工具）
+func (m *ToolDedupManager) CleanupExpiredTools(expireDuration time.Duration) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	now := time.Now()
+	for toolId, lastTime := range m.lastAccess {
+		if now.Sub(lastTime) > expireDuration {
+			delete(m.processedIds, toolId)
+			delete(m.executing, toolId)
+			delete(m.lastAccess, toolId)
+		}
+	}
+}
+
+// GetExecutingTools 获取当前正在执行的工具列表
+func (m *ToolDedupManager) GetExecutingTools() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	var tools []string
+	for toolId := range m.executing {
+		tools = append(tools, toolId)
+	}
+	return tools
 }

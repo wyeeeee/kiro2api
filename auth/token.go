@@ -12,14 +12,17 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // 全局token池和缓存实例
 var (
-	tokenPool   *types.TokenPool
-	atomicCache *utils.AtomicTokenCache // 使用原子缓存替代传统缓存
-	poolOnce    sync.Once
-	cacheOnce   sync.Once
+	tokenPool      *types.TokenPool
+	atomicCache    *utils.AtomicTokenCache        // 使用原子缓存替代传统缓存
+	refreshManager *utils.TokenRefreshManager     // token刷新并发控制管理器
+	poolOnce       sync.Once
+	cacheOnce      sync.Once
+	refreshOnce    sync.Once
 )
 
 // initTokenPool 初始化token池
@@ -62,10 +65,22 @@ func initTokenCache() {
 	logger.Info("原子Token缓存初始化完成", logger.String("type", "atomic_cache"))
 }
 
+// initRefreshManager 初始化token刷新管理器
+func initRefreshManager() {
+	refreshManager = utils.NewTokenRefreshManager()
+	logger.Info("Token刷新管理器初始化完成", logger.String("type", "refresh_manager"))
+}
+
 // getAtomicCache 获取原子缓存实例
 func getAtomicCache() *utils.AtomicTokenCache {
 	cacheOnce.Do(initTokenCache)
 	return atomicCache
+}
+
+// getRefreshManager 获取刷新管理器实例
+func getRefreshManager() *utils.TokenRefreshManager {
+	refreshOnce.Do(initRefreshManager)
+	return refreshManager
 }
 
 // RefreshTokenForServer 刷新token，用于服务器模式，返回错误而不是退出程序
@@ -154,6 +169,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 
 	logger.Debug("新的Access Token", logger.String("access_token", refreshResp.AccessToken))
 	logger.Debug("Token过期信息", logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
+	logger.Debug("获取到的ProfileArn", logger.String("profile_arn", refreshResp.ProfileArn))
 
 	// 使用新的Token结构进行转换
 	var token types.Token
@@ -245,30 +261,58 @@ func getRotatedToken(pool *types.TokenPool, cache *utils.AtomicTokenCache) (type
 	return tokenInfo, nil
 }
 
-// refreshTokenByIndex 刷新指定索引的token
+// refreshTokenByIndex 刷新指定索引的token，支持并发控制
 func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error) {
 	if idx < 0 || idx >= pool.GetTokenCount() {
 		return types.TokenInfo{}, fmt.Errorf("无效的token索引: %d", idx)
 	}
 
+	refreshMgr := getRefreshManager()
+
+	// 检查是否已经在刷新中
+	_, isNew := refreshMgr.StartRefresh(idx)
+	if !isNew {
+		// 其他goroutine正在刷新，等待结果
+		logger.Debug("Token正在被其他请求刷新，等待完成", logger.Int("token_index", idx))
+		
+		tokenInfo, err := refreshMgr.WaitForRefresh(idx, 30*time.Second) // 30秒超时
+		if err != nil {
+			return types.TokenInfo{}, fmt.Errorf("等待token %d刷新失败: %v", idx, err)
+		}
+		return *tokenInfo, nil
+	}
+
+	// 这是新的刷新任务，执行实际的刷新逻辑
+	logger.Debug("开始执行Token刷新", logger.Int("token_index", idx))
+
 	// 获取对应索引的refresh token
 	tokens := os.Getenv("AWS_REFRESHTOKEN")
 	if tokens == "" {
+		refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置"))
 		return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置")
 	}
 
 	tokenList := strings.Split(tokens, ",")
 	if idx >= len(tokenList) {
-		return types.TokenInfo{}, fmt.Errorf("token索引超出范围: %d", idx)
+		err := fmt.Errorf("token索引超出范围: %d", idx)
+		refreshMgr.CompleteRefresh(idx, nil, err)
+		return types.TokenInfo{}, err
 	}
 
 	refreshToken := strings.TrimSpace(tokenList[idx])
 	if refreshToken == "" {
-		return types.TokenInfo{}, fmt.Errorf("索引%d的refresh token为空", idx)
+		err := fmt.Errorf("索引%d的refresh token为空", idx)
+		refreshMgr.CompleteRefresh(idx, nil, err)
+		return types.TokenInfo{}, err
 	}
 
 	// 尝试刷新指定的token
-	return tryRefreshToken(refreshToken)
+	tokenInfo, err := tryRefreshToken(refreshToken)
+	
+	// 通知刷新管理器完成状态
+	refreshMgr.CompleteRefresh(idx, &tokenInfo, err)
+	
+	return tokenInfo, err
 }
 
 // fallbackToAvailableToken 回退到其他可用token
@@ -316,6 +360,13 @@ func GetTokenPoolStats() map[string]any {
 	cacheStats := cache.GetStats()
 	for k, v := range cacheStats {
 		stats["cache_"+k] = v
+	}
+
+	// 添加刷新管理器统计信息
+	refreshMgr := getRefreshManager()
+	refreshStats := refreshMgr.GetStats()
+	for k, v := range refreshStats {
+		stats["refresh_"+k] = v
 	}
 
 	return stats
