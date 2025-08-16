@@ -82,11 +82,14 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 					continue
 				} else {
 					// 无法找到边界，跳过更多字节以打破循环
-					skipBytes := 8 // 跳过可能的消息头部分
-					if offset+skipBytes < len(rp.buffer) {
+					skipBytes := minInt(16, len(rp.buffer)-offset-1) // 安全跳过
+					if skipBytes > 0 {
 						offset += skipBytes
+						logger.Debug("跳过字节以打破解析循环", logger.Int("skip_bytes", skipBytes))
 					} else {
-						offset++
+						// 数据不足，等待更多数据
+						logger.Debug("缓冲区数据不足，等待更多数据")
+						break
 					}
 					continue
 				}
@@ -116,10 +119,55 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 		offset += consumed
 	}
 
-	// 移除已处理的数据
+	// 安全移除已处理的数据，确保消息边界完整性
 	if offset > 0 {
-		copy(rp.buffer, rp.buffer[offset:])
-		rp.buffer = rp.buffer[:len(rp.buffer)-offset]
+		remaining := len(rp.buffer) - offset
+		
+		// 验证剩余数据是否足够进行边界检查（考虑 Prelude CRC）
+		if remaining >= 12 {
+			// 检查下一个消息的完整性
+			nextTotalLen := binary.BigEndian.Uint32(rp.buffer[offset:offset+4])
+			nextHeaderLen := binary.BigEndian.Uint32(rp.buffer[offset+4:offset+8])
+			
+			// 验证消息头的合理性（考虑 Prelude CRC）
+			if nextTotalLen >= 16 && nextTotalLen <= 16*1024*1024 && 
+			   nextHeaderLen <= nextTotalLen-16 {
+				
+				if remaining >= int(nextTotalLen) {
+					// 下一个消息完整，安全移除已处理数据
+					copy(rp.buffer, rp.buffer[offset:])
+					rp.buffer = rp.buffer[:remaining]
+					logger.Debug("安全移除缓冲区数据", 
+						logger.Int("removed_bytes", offset),
+						logger.Int("remaining_bytes", remaining),
+						logger.Int("next_msg_len", int(nextTotalLen)))
+				} else {
+					// 下一个消息不完整，保留所有数据等待
+					copy(rp.buffer, rp.buffer[offset:])
+					rp.buffer = rp.buffer[:remaining]
+					logger.Debug("等待完整消息，保留缓冲区数据",
+						logger.Int("need_bytes", int(nextTotalLen)),
+						logger.Int("have_bytes", remaining))
+				}
+			} else {
+				// 消息头异常，可能是边界错误，保守处理
+				logger.Warn("检测到异常消息头，保守处理缓冲区",
+					logger.Int("next_total_len", int(nextTotalLen)),
+					logger.Int("next_header_len", int(nextHeaderLen)))
+				copy(rp.buffer, rp.buffer[offset:])
+				rp.buffer = rp.buffer[:remaining]
+			}
+		} else if remaining > 0 {
+			// 数据不足以判断，保留所有未处理数据
+			copy(rp.buffer, rp.buffer[offset:])
+			rp.buffer = rp.buffer[:remaining]
+			logger.Debug("数据不足以验证边界，保留剩余数据",
+				logger.Int("remaining_bytes", remaining))
+		} else {
+			// 没有剩余数据，清空缓冲区
+			rp.buffer = rp.buffer[:0]
+			logger.Debug("缓冲区已完全处理，清空")
+		}
 	}
 
 	if rp.errorCount >= rp.maxErrors {
@@ -151,7 +199,7 @@ func isMoreDataNeededError(err error) bool {
 
 // parseSingleMessageWithValidation 解析单个消息并进行CRC校验
 func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte) (*EventStreamMessage, int, error) {
-	if len(data) < 12 {
+	if len(data) < 16 { // AWS EventStream 最小消息长度：4+4+4+4=16字节
 		return nil, 0, NewParseError("数据长度不足", nil)
 	}
 
@@ -164,8 +212,26 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	totalLength := binary.BigEndian.Uint32(data[:4])
 	headerLength := binary.BigEndian.Uint32(data[4:8])
 
-	// 验证长度合理性
-	if totalLength < 12 {
+	// AWS EventStream 格式验证：检查 Prelude CRC
+	if len(data) < 12 {
+		return nil, 0, NewParseError("数据长度不足以包含 Prelude CRC", nil)
+	}
+	preludeCRC := binary.BigEndian.Uint32(data[8:12])
+	
+	// 验证 Prelude CRC（前8字节：totalLength + headerLength）
+	calculatedPreludeCRC := crc32.Checksum(data[:8], rp.crcTable)
+	if preludeCRC != calculatedPreludeCRC {
+		logger.Warn("Prelude CRC 校验失败",
+			logger.String("expected_crc", fmt.Sprintf("%08x", preludeCRC)),
+			logger.String("calculated_crc", fmt.Sprintf("%08x", calculatedPreludeCRC)))
+		// 在非严格模式下继续处理
+		if rp.strictMode {
+			return nil, int(totalLength), NewParseError(fmt.Sprintf("Prelude CRC 校验失败: 期望 %08x, 实际 %08x", preludeCRC, calculatedPreludeCRC), nil)
+		}
+	}
+
+	// 验证长度合理性（考虑 Prelude CRC）
+	if totalLength < 16 { // 最小: 4(totalLen) + 4(headerLen) + 4(preludeCRC) + 4(msgCRC) = 16
 		return nil, 0, NewParseError(fmt.Sprintf("消息总长度异常: %d", totalLength), nil)
 	}
 	if totalLength > 16*1024*1024 { // 16MB 限制
@@ -176,20 +242,22 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 		return nil, 0, NewParseError(fmt.Sprintf("数据不完整: 需要 %d 字节，实际 %d 字节", totalLength, len(data)), nil)
 	}
 
-	if headerLength > totalLength-12 {
+	// 头部长度验证（考虑 Prelude CRC）
+	if headerLength > totalLength-16 { // 总长度减去固定开销: 4+4+4+4=16
 		return nil, int(totalLength), NewParseError(fmt.Sprintf("头部长度异常: %d", headerLength), nil)
 	}
 
-	// 提取消息各部分
-	headerData := data[8 : 8+headerLength]
-	payloadStart := 8 + headerLength
+	// 提取消息各部分（考虑 Prelude CRC）
+	headerData := data[12 : 12+headerLength] // 从第12字节开始（跳过 Prelude CRC）
+	payloadStart := 12 + headerLength
 	payloadEnd := int(totalLength) - 4
 	payloadData := data[payloadStart:payloadEnd]
 
 	// 添加详细的payload调试信息
-	logger.Debug("Payload调试信息",
+	logger.Debug("Payload调试信息（修复后）",
 		logger.Int("total_length", int(totalLength)),
 		logger.Int("header_length", int(headerLength)),
+		logger.String("prelude_crc", fmt.Sprintf("%08x", preludeCRC)),
 		logger.Int("payload_start", int(payloadStart)),
 		logger.Int("payload_end", payloadEnd),
 		logger.Int("payload_len", len(payloadData)),
@@ -206,7 +274,7 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 			return string(payloadData)
 		}()))
 
-	// CRC 校验
+	// CRC 校验（消息 CRC 覆盖整个消息除了最后4字节）
 	expectedCRC := binary.BigEndian.Uint32(data[payloadEnd:totalLength])
 	calculatedCRC := crc32.Checksum(data[:payloadEnd], rp.crcTable)
 
@@ -269,6 +337,9 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 		ContentType: GetContentTypeFromHeaders(headers),
 	}
 
+	// 添加工具调用完整性验证
+	rp.validateToolUseIdIntegrity(message)
+
 	logger.Debug("消息解析成功",
 		logger.String("message_type", message.MessageType),
 		logger.String("event_type", message.EventType),
@@ -280,20 +351,20 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 
 // findNextMessageBoundary 查找下一个消息边界，用于错误恢复
 func (rp *RobustEventStreamParser) findNextMessageBoundary(data []byte) int {
-	// 在数据中搜索可能的消息头模式
-	for i := 1; i < len(data)-12; i++ {
+	// 在数据中搜索可能的消息头模式（考虑 Prelude CRC）
+	for i := 1; i < len(data)-16; i++ {
 		// 检查是否像一个有效的消息头
 		totalLen := binary.BigEndian.Uint32(data[i : i+4])
 		headerLen := binary.BigEndian.Uint32(data[i+4 : i+8])
 
-		// 基本合理性检查
-		if totalLen >= 12 && totalLen <= 16*1024*1024 &&
-			headerLen <= totalLen-12 &&
+		// 基本合理性检查（考虑 Prelude CRC）
+		if totalLen >= 16 && totalLen <= 16*1024*1024 &&
+			headerLen <= totalLen-16 &&
 			int(totalLen) <= len(data)-i {
 
 			// 进一步验证：尝试解析头部（使用全新的解析器以避免跨消息状态干扰）
-			if int(headerLen) > 0 && i+8+int(headerLen) <= len(data) {
-				headerData := data[i+8 : i+8+int(headerLen)]
+			if int(headerLen) > 0 && i+12+int(headerLen) <= len(data) {
+				headerData := data[i+12 : i+12+int(headerLen)] // 跳过 Prelude CRC
 				tempParser := NewHeaderParser()
 				if _, err := tempParser.ParseHeaders(headerData); err == nil {
 					logger.Debug("找到潜在的消息边界", logger.Int("offset", i))
@@ -385,4 +456,101 @@ func CreateTestMessage(headers map[string]interface{}, payload []byte) []byte {
 	binary.Write(&buf, binary.BigEndian, crc)
 
 	return buf.Bytes()
+}
+
+// validateToolUseIdIntegrity 验证工具调用中的tool_use_id完整性
+func (rp *RobustEventStreamParser) validateToolUseIdIntegrity(message *EventStreamMessage) {
+	if message == nil || len(message.Payload) == 0 {
+		return
+	}
+
+	payloadStr := string(message.Payload)
+	
+	// 检查是否包含工具调用相关内容
+	if strings.Contains(payloadStr, "tool_use_id") || strings.Contains(payloadStr, "toolUseId") {
+		logger.Debug("检测到工具调用消息，验证完整性",
+			logger.String("message_type", message.MessageType),
+			logger.String("event_type", message.EventType),
+			logger.String("payload_preview", func() string {
+				if len(payloadStr) > 200 {
+					return payloadStr[:200] + "..."
+				}
+				return payloadStr
+			}()))
+
+		// 提取所有可能的tool_use_id
+		toolUseIds := rp.extractToolUseIds(payloadStr)
+		for _, toolUseId := range toolUseIds {
+			if !rp.isValidToolUseIdFormat(toolUseId) {
+				logger.Warn("检测到可能损坏的tool_use_id",
+					logger.String("tool_use_id", toolUseId),
+					logger.String("message_type", message.MessageType),
+					logger.String("event_type", message.EventType))
+			} else {
+				logger.Debug("tool_use_id格式验证通过",
+					logger.String("tool_use_id", toolUseId))
+			}
+		}
+	}
+}
+
+// extractToolUseIds 从payload中提取所有tool_use_id
+func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
+	var toolUseIds []string
+	
+	// 直接查找包含 tooluse_ 的字符串
+	if strings.Contains(payload, "tooluse_") {
+		start := strings.Index(payload, "tooluse_")
+		if start >= 0 {
+			// 查找ID的结束位置
+			end := start + 8 // "tooluse_" 长度
+			for end < len(payload) && (payload[end] != '"' && payload[end] != ',' && payload[end] != '}' && payload[end] != ' ') {
+				end++
+			}
+			if end > start+8 {
+				toolUseId := payload[start:end]
+				toolUseIds = append(toolUseIds, toolUseId)
+				logger.Debug("提取到tool_use_id",
+					logger.String("tool_use_id", toolUseId),
+					logger.Int("start_pos", start),
+					logger.Int("end_pos", end))
+			}
+		}
+	}
+	
+	return toolUseIds
+}
+
+// isValidToolUseIdFormat 验证tool_use_id格式是否有效
+func (rp *RobustEventStreamParser) isValidToolUseIdFormat(toolUseId string) bool {
+	// 基本格式检查
+	if !strings.HasPrefix(toolUseId, "tooluse_") {
+		return false
+	}
+	
+	// 长度检查
+	if len(toolUseId) < 20 {
+		return false
+	}
+	
+	// 字符有效性检查（base64字符 + 下划线）
+	suffix := toolUseId[8:]
+	for _, char := range suffix {
+		if !((char >= 'a' && char <= 'z') || 
+			 (char >= 'A' && char <= 'Z') || 
+			 (char >= '0' && char <= '9') || 
+			 char == '_' || char == '-') {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// minInt 返回两个整数中的最小值
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

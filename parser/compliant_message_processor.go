@@ -11,6 +11,12 @@ import (
 	"time"
 )
 
+// ToolDataAggregatorInterface 统一聚合器接口
+type ToolDataAggregatorInterface interface {
+	ProcessToolData(toolUseId, name, input string, stop bool, fragmentIndex int) (complete bool, fullInput string)
+	CleanupExpiredBuffers(timeout time.Duration)
+}
+
 // CompliantMessageProcessor 符合规范的消息处理器
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
@@ -19,7 +25,7 @@ type CompliantMessageProcessor struct {
 	legacyHandlers     map[string]EventHandler
 	completionBuffer   []string
 	legacyToolState    *toolIndexState                // 添加旧格式事件的工具状态
-	toolDataAggregator *ImprovedToolDataAggregator    // 改进的工具调用数据聚合器
+	toolDataAggregator ToolDataAggregatorInterface    // 统一的工具调用数据聚合器接口
 	// 运行时状态：跟踪已开始的工具与其内容块索引，用于按增量输出
 	startedTools   map[string]bool
 	toolBlockIndex map[string]int
@@ -42,10 +48,10 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 		toolBlockIndex:   make(map[string]int),
 	}
 
-	// 创建改进版聚合器，并设置参数更新回调
-	processor.toolDataAggregator = NewImprovedToolDataAggregatorWithCallback(
+	// 创建Sonic聚合器，并设置参数更新回调
+	processor.toolDataAggregator = NewSonicStreamingJSONAggregatorWithCallback(
 		func(toolUseId string, fullParams string) {
-			logger.Debug("聚合器回调：更新工具参数",
+			logger.Debug("Sonic聚合器回调：更新工具参数",
 				logger.String("toolUseId", toolUseId),
 				logger.String("fullParams", func() string {
 					if len(fullParams) > 100 {
@@ -1372,7 +1378,7 @@ func (h *FullAssistantEventHandler) Handle(message *EventStreamMessage) ([]SSEEv
 // LegacyToolUseEventHandler 处理旧格式的工具使用事件
 type LegacyToolUseEventHandler struct {
 	toolManager *ToolLifecycleManager
-	aggregator  *ImprovedToolDataAggregator
+	aggregator  ToolDataAggregatorInterface
 }
 
 func (h *LegacyToolUseEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
