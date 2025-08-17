@@ -2,7 +2,6 @@ package parser
 
 import (
 	"bytes"
-	"io"
 	"kiro2api/logger"
 	"kiro2api/utils"
 	"strings"
@@ -19,26 +18,21 @@ type SonicStreamingJSONAggregator struct {
 
 // SonicJSONStreamer 单个工具调用的Sonic流式解析器
 type SonicJSONStreamer struct {
-	toolUseId       string
-	toolName        string
-	buffer          *bytes.Buffer
-	reader          io.Reader
-	state           SonicParseState
-	lastUpdate      time.Time
-	isComplete      bool
-	result          map[string]interface{}
-	fragmentCount   int
-	totalBytes      int
+	toolUseId     string
+	toolName      string
+	buffer        *bytes.Buffer
+	state         SonicParseState
+	lastUpdate    time.Time
+	isComplete    bool
+	result        map[string]interface{}
+	fragmentCount int
+	totalBytes    int
 }
 
 // SonicParseState Sonic JSON解析状态
 type SonicParseState struct {
 	hasValidJSON    bool
 	isPartialJSON   bool
-	jsonDepth       int
-	openBraces      int
-	openQuotes      int
-	lastToken       string
 	expectingValue  bool
 	isValueFragment bool
 }
@@ -164,13 +158,11 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 // createSonicJSONStreamer 创建Sonic JSON流式解析器
 func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, toolName string) *SonicJSONStreamer {
 	buffer := &bytes.Buffer{}
-	reader := bytes.NewReader(buffer.Bytes())
 
 	return &SonicJSONStreamer{
 		toolUseId:  toolUseId,
 		toolName:   toolName,
 		buffer:     buffer,
-		reader:     reader,
 		lastUpdate: time.Now(),
 		state: SonicParseState{
 			expectingValue: true,
@@ -185,9 +177,6 @@ func (sjs *SonicJSONStreamer) appendFragment(fragment string) error {
 	sjs.lastUpdate = time.Now()
 	sjs.fragmentCount++
 	sjs.totalBytes += len(fragment)
-
-	// 更新reader
-	sjs.reader = bytes.NewReader(sjs.buffer.Bytes())
 
 	return nil
 }

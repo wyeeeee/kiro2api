@@ -306,25 +306,6 @@ func determineChatTriggerType(anthropicReq types.AnthropicRequest) string {
 	return "MANUAL"
 }
 
-// determineOrigin 智能确定请求来源 (SOLID-OCP: 开放扩展，封闭修改)
-func determineOrigin(anthropicReq types.AnthropicRequest) string {
-	// 检查metadata中是否指定了来源
-	if anthropicReq.Metadata != nil {
-		if origin, exists := anthropicReq.Metadata["origin"]; exists {
-			if originStr, ok := origin.(string); ok && originStr != "" {
-				return originStr
-			}
-		}
-	}
-
-	// 根据请求特征智能判断来源
-	if len(anthropicReq.Tools) > 0 {
-		return "AI_AGENT" // 有工具的通常是AI代理
-	}
-
-	// 默认为AI编辑器
-	return "AI_EDITOR"
-}
 
 // validateCodeWhispererRequest 验证CodeWhisperer请求的完整性 (SOLID-SRP: 单一责任验证)
 func validateCodeWhispererRequest(cwReq *types.CodeWhispererRequest) error {
@@ -650,38 +631,3 @@ func extractRequiredFields(schema map[string]any) []string {
 	return nil
 }
 
-// validateAndNormalizeJSONSchema 验证并标准化JSON Schema (SOLID-SRP: 单一责任)
-func validateAndNormalizeJSONSchema(schema map[string]any) map[string]any {
-	if schema == nil {
-		return map[string]any{
-			"$schema":              "http://json-schema.org/draft-07/schema#",
-			"type":                 "object",
-			"additionalProperties": false,
-		}
-	}
-
-	normalized := make(map[string]any)
-	// 复制原始schema
-	for k, v := range schema {
-		normalized[k] = v
-	}
-
-	// 确保必需的JSON Schema字段存在 (KISS: 简化但完整的验证)
-	if _, exists := normalized["$schema"]; !exists {
-		normalized["$schema"] = "http://json-schema.org/draft-07/schema#"
-	}
-
-	// 如果有properties但没有type，默认为object
-	if _, hasType := normalized["type"]; !hasType {
-		if _, hasProps := normalized["properties"]; hasProps {
-			normalized["type"] = "object"
-		}
-	}
-
-	// 默认禁用额外属性以提高安全性
-	if _, exists := normalized["additionalProperties"]; !exists && normalized["type"] == "object" {
-		normalized["additionalProperties"] = false
-	}
-
-	return normalized
-}

@@ -24,8 +24,8 @@ type CompliantMessageProcessor struct {
 	eventHandlers      map[string]EventHandler
 	legacyHandlers     map[string]EventHandler
 	completionBuffer   []string
-	legacyToolState    *toolIndexState                // 添加旧格式事件的工具状态
-	toolDataAggregator ToolDataAggregatorInterface    // 统一的工具调用数据聚合器接口
+	legacyToolState    *toolIndexState             // 添加旧格式事件的工具状态
+	toolDataAggregator ToolDataAggregatorInterface // 统一的工具调用数据聚合器接口
 	// 运行时状态：跟踪已开始的工具与其内容块索引，用于按增量输出
 	startedTools   map[string]bool
 	toolBlockIndex map[string]int
@@ -59,7 +59,7 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 					}
 					return fullParams
 				}()))
-			
+
 			// 调用工具管理器更新参数
 			processor.toolManager.UpdateToolArgumentsFromJSON(toolUseId, fullParams)
 		})
@@ -949,7 +949,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 
 		// 提取并转换XML工具调用
 		cleanText, xmlTools := ExtractAndConvertXMLTools(evt.Content)
-		
+
 		if len(xmlTools) > 0 {
 			logger.Debug("成功解析XML工具调用",
 				logger.Int("tool_count", len(xmlTools)),
@@ -963,7 +963,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 				events = append(events, SSEEvent{
 					Event: "content_block_start",
 					Data: map[string]interface{}{
-						"type": "content_block_start",
+						"type":  "content_block_start",
 						"index": 0,
 						"content_block": map[string]interface{}{
 							"type": "text",
@@ -971,11 +971,11 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 						},
 					},
 				})
-				
+
 				events = append(events, SSEEvent{
 					Event: "content_block_delta",
 					Data: map[string]interface{}{
-						"type": "content_block_delta",
+						"type":  "content_block_delta",
 						"index": 0,
 						"delta": map[string]interface{}{
 							"type": "text_delta",
@@ -983,11 +983,11 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 						},
 					},
 				})
-				
+
 				events = append(events, SSEEvent{
 					Event: "content_block_stop",
 					Data: map[string]interface{}{
-						"type": "content_block_stop",
+						"type":  "content_block_stop",
 						"index": 0,
 					},
 				})
@@ -997,19 +997,19 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 			for i, tool := range xmlTools {
 				blockIndex := i
 				if cleanText != "" {
-					blockIndex = i + 1  // 如果有文本，工具索引从1开始
+					blockIndex = i + 1 // 如果有文本，工具索引从1开始
 				}
 
 				// content_block_start for tool_use
 				events = append(events, SSEEvent{
 					Event: "content_block_start",
 					Data: map[string]interface{}{
-						"type": "content_block_start",
+						"type":  "content_block_start",
 						"index": blockIndex,
 						"content_block": map[string]interface{}{
-							"type": "tool_use",
-							"id": tool["id"],
-							"name": tool["name"],
+							"type":  "tool_use",
+							"id":    tool["id"],
+							"name":  tool["name"],
 							"input": tool["input"],
 						},
 					},
@@ -1019,18 +1019,18 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 				events = append(events, SSEEvent{
 					Event: "content_block_stop",
 					Data: map[string]interface{}{
-						"type": "content_block_stop",
+						"type":  "content_block_stop",
 						"index": blockIndex,
 					},
 				})
-				
+
 				// 在工具管理器中创建执行记录
 				if h.processor.toolManager != nil {
 					toolCall := ToolCall{
 						ID:   tool["id"].(string),
 						Type: "function",
 						Function: ToolCallFunction{
-							Name:      tool["name"].(string),
+							Name: tool["name"].(string),
 							Arguments: func() string {
 								if input, ok := tool["input"].(map[string]interface{}); ok {
 									if argsJSON, err := json.Marshal(input); err == nil {
@@ -1041,12 +1041,12 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 							}(),
 						},
 					}
-					
+
 					request := ToolCallRequest{
 						ToolCalls: []ToolCall{toolCall},
 					}
 					h.processor.toolManager.HandleToolCallRequest(request)
-					
+
 					// 标记工具执行完成
 					result := ToolCallResult{
 						ToolCallID: tool["id"].(string),
@@ -1062,7 +1062,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 				Data: map[string]interface{}{
 					"type": "message_delta",
 					"delta": map[string]interface{}{
-						"stop_reason": "tool_use",
+						"stop_reason":   "tool_use",
 						"stop_sequence": nil,
 					},
 					"usage": map[string]interface{}{
@@ -1525,15 +1525,16 @@ func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, st
 		if name == "Write" || name == "Bash" {
 			var obj map[string]any
 			if err := json.Unmarshal([]byte(fullInput), &obj); err == nil {
-				if name == "Write" {
+				switch name {
+				case "Write":
 					fp, _ := obj["file_path"].(string)
 					content, _ := obj["content"].(string)
-					
+
 					logger.Debug("Write聚合校验",
 						logger.Int("file_path_len", len(fp)),
 						logger.String("file_path", fp),
 						logger.Int("content_len", len(content)))
-				} else if name == "Bash" {
+				case "Bash":
 					cmd, _ := obj["command"].(string)
 					logger.Debug("Bash聚合校验",
 						logger.Int("command_len", len(cmd)),
@@ -1624,28 +1625,16 @@ func (tda *ToolDataAggregator) CleanupExpiredBuffers(timeout time.Duration) {
 }
 
 // cleanupRelatedBuffers 清理所有相关的缓冲区
-func (tda *ToolDataAggregator) cleanupRelatedBuffers(toolUseId, name string) {
+func (tda *ToolDataAggregator) cleanupRelatedBuffers(toolUseId, _ string) {
 	// 清理精确匹配的缓冲区
 	delete(tda.activeTools, toolUseId)
 
-	// 清理所有相似的缓冲区
-	var toDelete []string
-	for existingId, buffer := range tda.activeTools {
-		if buffer.name == name && isSimilarToolUseId(existingId, toolUseId) {
-			toDelete = append(toDelete, existingId)
-			logger.Debug("清理相似的工具调用缓冲区",
-				logger.String("toolUseId", existingId),
-				logger.String("similarTo", toolUseId))
-		}
-	}
-
-	for _, id := range toDelete {
-		delete(tda.activeTools, id)
-	}
+	// 不再清理相似的缓冲区，仅清理精确匹配的
+	// 已废弃模糊匹配逻辑，避免数据损坏
 }
 
 // findMatchingBuffer 查找匹配的缓冲区（仅精确匹配）
-func (tda *ToolDataAggregator) findMatchingBuffer(toolUseId, name string) *toolDataBuffer {
+func (tda *ToolDataAggregator) findMatchingBuffer(toolUseId, _ string) *toolDataBuffer {
 	// 只使用精确匹配，避免模糊匹配导致的数据损坏
 	if buffer, exists := tda.activeTools[toolUseId]; exists {
 		return buffer
@@ -1653,13 +1642,6 @@ func (tda *ToolDataAggregator) findMatchingBuffer(toolUseId, name string) *toolD
 
 	// 不再使用模糊匹配，返回nil让调用方创建新缓冲区
 	return nil
-}
-
-// isSimilarToolUseId 判断两个toolUseId是否相似（已废弃，不再使用）
-// 保留此函数仅为了代码兼容性，但不应该被调用
-func isSimilarToolUseId(id1, id2 string) bool {
-	// 始终返回false，强制使用精确匹配
-	return false
 }
 
 // 废弃的辅助函数已移除

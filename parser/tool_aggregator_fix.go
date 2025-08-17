@@ -173,7 +173,8 @@ func (tca *ToolCallAggregator) aggressiveRepairJSON(jsonStr string, toolName str
 	jsonStr = tca.repairJSON(jsonStr, toolName)
 
 	// 针对特定工具的修复策略
-	if toolName == "Write" {
+	switch toolName {
+	case "Write":
 		// 确保Write工具有必需的参数
 		if !strings.Contains(jsonStr, "file_path") && strings.Contains(jsonStr, "content") {
 			// 可能file_path被截断了，尝试重建
@@ -198,7 +199,7 @@ func (tca *ToolCallAggregator) aggressiveRepairJSON(jsonStr string, toolName str
 				jsonStr = beforeContent + afterContent
 			}
 		}
-	} else if toolName == "Bash" {
+	case "Bash":
 		// 确保Bash工具有command参数
 		if !strings.Contains(jsonStr, "command") && !strings.Contains(jsonStr, "description") {
 			// 尝试添加缺失的command键名

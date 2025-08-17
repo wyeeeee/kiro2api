@@ -18,26 +18,21 @@ type StreamingJSONAggregator struct {
 
 // JSONStreamer 单个工具调用的JSON流式解析器
 type JSONStreamer struct {
-	toolUseId    string
-	toolName     string
-	buffer       *strings.Builder
-	decoder      *json.Decoder
-	reader       *strings.Reader
-	state        JSONParseState
-	lastUpdate   time.Time
-	isComplete   bool
-	result       map[string]interface{}
+	toolUseId  string
+	toolName   string
+	buffer     *strings.Builder
+	decoder    *json.Decoder
+	reader     *strings.Reader
+	state      JSONParseState
+	lastUpdate time.Time
+	isComplete bool
+	result     map[string]interface{}
 }
 
 // JSONParseState JSON解析状态
 type JSONParseState struct {
-	inObject      bool
-	inValue       bool
-	currentKey    string
-	braceCount    int
-	expectingKey  bool
-	expectingValue bool
-	hasValidJSON  bool
+	expectingKey   bool
+	hasValidJSON   bool
 }
 
 // NewStreamingJSONAggregator 创建流式JSON聚合器
@@ -72,7 +67,7 @@ func (sja *StreamingJSONAggregator) ProcessToolData(toolUseId, name, input strin
 	if !exists {
 		streamer = sja.createJSONStreamer(toolUseId, name)
 		sja.activeStreamers[toolUseId] = streamer
-		
+
 		logger.Debug("创建JSON流式解析器",
 			logger.String("toolUseId", toolUseId),
 			logger.String("toolName", name))
@@ -90,7 +85,7 @@ func (sja *StreamingJSONAggregator) ProcessToolData(toolUseId, name, input strin
 
 	// 尝试解析当前缓冲区
 	parseResult := streamer.tryParse()
-	
+
 	logger.Debug("流式JSON解析进度",
 		logger.String("toolUseId", toolUseId),
 		logger.String("fragment", input),
@@ -101,13 +96,13 @@ func (sja *StreamingJSONAggregator) ProcessToolData(toolUseId, name, input strin
 	// 如果收到停止信号
 	if stop {
 		streamer.isComplete = true
-		
+
 		// 最终尝试解析或生成基础JSON
 		if !streamer.state.hasValidJSON {
 			logger.Debug("停止时JSON未完整，尝试智能补全",
 				logger.String("toolUseId", toolUseId),
 				logger.String("buffer", streamer.buffer.String()))
-			
+
 			result := sja.intelligentComplete(streamer)
 			if result != nil {
 				streamer.result = result
@@ -147,7 +142,7 @@ func (sja *StreamingJSONAggregator) ProcessToolData(toolUseId, name, input strin
 func (sja *StreamingJSONAggregator) createJSONStreamer(toolUseId, toolName string) *JSONStreamer {
 	buffer := &strings.Builder{}
 	reader := strings.NewReader("")
-	
+
 	return &JSONStreamer{
 		toolUseId:  toolUseId,
 		toolName:   toolName,
@@ -166,11 +161,11 @@ func (sja *StreamingJSONAggregator) createJSONStreamer(toolUseId, toolName strin
 func (js *JSONStreamer) appendFragment(fragment string) error {
 	js.buffer.WriteString(fragment)
 	js.lastUpdate = time.Now()
-	
+
 	// 更新reader和decoder
 	js.reader = strings.NewReader(js.buffer.String())
 	js.decoder = json.NewDecoder(js.reader)
-	
+
 	return nil
 }
 
@@ -221,7 +216,6 @@ func (js *JSONStreamer) isValidJSONStart(content string) bool {
 		}
 		// 如果能解析出至少一个token，说明结构开始是有效的
 		_ = token
-		break
 	}
 	return true
 }
@@ -229,24 +223,24 @@ func (js *JSONStreamer) isValidJSONStart(content string) bool {
 // looksLikeValueFragment 检查是否看起来像值片段
 func (js *JSONStreamer) looksLikeValueFragment(content string) bool {
 	content = strings.TrimSpace(content)
-	
+
 	// 检查是否看起来像路径
 	if strings.Contains(content, "/") && !strings.Contains(content, " ") {
 		return true
 	}
-	
+
 	// 检查是否看起来像命令
 	if strings.Contains(content, " ") && len(content) > 3 {
 		return true
 	}
-	
+
 	return false
 }
 
 // intelligentComplete 智能补全JSON
 func (sja *StreamingJSONAggregator) intelligentComplete(streamer *JSONStreamer) map[string]interface{} {
 	content := strings.TrimSpace(streamer.buffer.String())
-	
+
 	logger.Debug("智能补全JSON",
 		logger.String("toolName", streamer.toolName),
 		logger.String("content", content))
@@ -268,7 +262,7 @@ func (sja *StreamingJSONAggregator) intelligentComplete(streamer *JSONStreamer) 
 func (sja *StreamingJSONAggregator) buildJSONFromValue(toolName, value string) map[string]interface{} {
 	// 清理值
 	value = strings.Trim(value, "\"")
-	
+
 	switch strings.ToLower(toolName) {
 	case "ls":
 		return map[string]interface{}{"path": value}
@@ -306,16 +300,16 @@ func (sja *StreamingJSONAggregator) completePartialJSON(content, toolName string
 
 	// 尝试修复缺失的引号和括号
 	fixed := content
-	
+
 	// 计算括号和引号的平衡
 	braceCount := strings.Count(fixed, "{") - strings.Count(fixed, "}")
 	quoteCount := strings.Count(fixed, "\"")
-	
+
 	// 如果引号数量为奇数，补全最后一个引号
 	if quoteCount%2 == 1 {
 		fixed += "\""
 	}
-	
+
 	// 补全缺失的右括号
 	for i := 0; i < braceCount; i++ {
 		fixed += "}"
@@ -328,7 +322,7 @@ func (sja *StreamingJSONAggregator) completePartialJSON(content, toolName string
 		return result
 	}
 
-	logger.Debug("JSON补全失败，使用fallback", 
+	logger.Debug("JSON补全失败，使用fallback",
 		logger.String("fixed", fixed),
 		logger.String("toolName", toolName))
 

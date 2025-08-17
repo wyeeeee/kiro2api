@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -402,61 +401,6 @@ func (rp *RobustEventStreamParser) ParseEventsFromReader(reader io.Reader) ([]*E
 	return allMessages, nil
 }
 
-// CreateTestMessage 创建测试消息（用于单元测试）
-func CreateTestMessage(headers map[string]interface{}, payload []byte) []byte {
-	var buf bytes.Buffer
-
-	// 编码头部
-	var headerBuf bytes.Buffer
-	for name, value := range headers {
-		nameBytes := []byte(name)
-		headerBuf.WriteByte(byte(len(nameBytes)))
-		headerBuf.Write(nameBytes)
-
-		switch v := value.(type) {
-		case string:
-			headerBuf.WriteByte(byte(ValueType_STRING))
-			valueBytes := []byte(v)
-			binary.Write(&headerBuf, binary.BigEndian, uint16(len(valueBytes)))
-			headerBuf.Write(valueBytes)
-		case bool:
-			if v {
-				headerBuf.WriteByte(byte(ValueType_BOOL_TRUE))
-			} else {
-				headerBuf.WriteByte(byte(ValueType_BOOL_FALSE))
-			}
-			binary.Write(&headerBuf, binary.BigEndian, uint16(0))
-		case int32:
-			headerBuf.WriteByte(byte(ValueType_INTEGER))
-			binary.Write(&headerBuf, binary.BigEndian, uint16(4))
-			binary.Write(&headerBuf, binary.BigEndian, v)
-		case int64:
-			headerBuf.WriteByte(byte(ValueType_LONG))
-			binary.Write(&headerBuf, binary.BigEndian, uint16(8))
-			binary.Write(&headerBuf, binary.BigEndian, v)
-		}
-	}
-
-	headerData := headerBuf.Bytes()
-	totalLength := uint32(4 + 4 + len(headerData) + len(payload) + 4)
-
-	// 写入总长度
-	binary.Write(&buf, binary.BigEndian, totalLength)
-	// 写入头部长度
-	binary.Write(&buf, binary.BigEndian, uint32(len(headerData)))
-	// 写入头部数据
-	buf.Write(headerData)
-	// 写入载荷数据
-	buf.Write(payload)
-
-	// 计算并写入CRC
-	messageData := buf.Bytes()
-	crcTable := crc32.MakeTable(crc32.IEEE)
-	crc := crc32.Checksum(messageData, crcTable)
-	binary.Write(&buf, binary.BigEndian, crc)
-
-	return buf.Bytes()
-}
 
 // validateToolUseIdIntegrity 验证工具调用中的tool_use_id完整性
 func (rp *RobustEventStreamParser) validateToolUseIdIntegrity(message *EventStreamMessage) {

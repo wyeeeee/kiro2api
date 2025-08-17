@@ -98,14 +98,3 @@ func (m *ToolDedupManager) CleanupExpiredTools(expireDuration time.Duration) {
 	}
 }
 
-// GetExecutingTools 获取当前正在执行的工具列表
-func (m *ToolDedupManager) GetExecutingTools() []string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	
-	var tools []string
-	for toolId := range m.executing {
-		tools = append(tools, toolId)
-	}
-	return tools
-}
