@@ -39,12 +39,12 @@ curl -X POST http://localhost:8080/v1/messages \
 
 ```bash
 # 构建
-go build ./...
+go build -o kiro2api main.go
 
 # 测试
 go test ./...
 
-# 代码质量
+# 代码质量检查
 go vet ./...
 go fmt ./...
 
@@ -54,15 +54,12 @@ go mod tidy
 # 开发模式运行 (调试模式，详细日志)
 GIN_MODE=debug ./kiro2api
 
-# 运行单个包的测试
-go test ./parser -v
-go test ./auth -v
 
-# 运行测试脚本
-./test/test_anthropic_request.sh  # 完整的API功能测试，包括工具调用和流式响应
-
-# Docker Compose 测试
+# Docker 测试
 docker-compose up -d
+
+# 生产构建
+go build -ldflags="-s -w" -o kiro2api main.go
 ```
 
 ## 工具解析测试
@@ -161,8 +158,9 @@ export GIN_MODE="release"                       # Gin模式（默认: release）
 - 将 EventStream 事件转换为客户端的 SSE 格式
 
 **`auth/`** - 令牌管理  
-- 完全依赖环境变量`AWS_REFRESHTOKEN`
+- 支持两种认证方式：AWS RefreshToken 和 IdC 认证
 - 通过 `RefreshTokenForServer()` 在 403 错误时自动刷新
+- IdC 认证使用 OIDC 协议进行 token 刷新
 - 使用`utils.SharedHTTPClient`进行HTTP请求
 
 **`utils/`** - 集中化工具包
@@ -195,14 +193,20 @@ export GIN_MODE="release"                       # Gin模式（默认: release）
 
 ## 环境变量配置
 
-项目使用 `.env` 文件进行环境配置。复制 `.env.example` 文件并修改：
+项目支持两种认证方式：AWS RefreshToken 和 IdC 认证。使用 `.env` 文件进行环境配置：
 
 ```bash
 # 复制示例配置
 cp .env.example .env
 
-# 编辑配置文件，设置必需的 AWS_REFRESHTOKEN
+# AWS RefreshToken 认证方式（传统）
 # AWS_REFRESHTOKEN=your_refresh_token_here  # 必需设置
+
+# IdC 认证方式（新增）
+# AUTH_METHOD=IdC
+# IDC_CLIENT_ID=your_client_id
+# IDC_CLIENT_SECRET=your_client_secret  
+# IDC_REFRESH_TOKEN=your_idc_refresh_token
 
 # 其他环境变量:
 # PORT=8080                              # 服务端口（默认: 8080）
@@ -531,9 +535,11 @@ curl -I http://localhost:8081/v1/models
 
 ## 重要实现细节
 
-**认证**: 基于路径的认证策略
+**认证**: 基于路径的认证策略，支持两种认证方式
 - 需要认证：`/v1/*` 开头的所有端点
 - 支持 `Authorization: Bearer <token>` 或 `x-api-key: <token>`
+- **AWS RefreshToken 认证**：传统认证方式，使用 AWS_REFRESHTOKEN 环境变量
+- **IdC 认证**：新增认证方式，使用 IDC_CLIENT_ID、IDC_CLIENT_SECRET、IDC_REFRESH_TOKEN 环境变量
 
 **模型映射**:
 - `claude-sonnet-4-20250514` → `CLAUDE_SONNET_4_20250514_V1_0`
@@ -591,8 +597,10 @@ curl -I http://localhost:8081/v1/models
 
 ### 修改认证逻辑
 1. 主要逻辑在 `server/middleware.go` 的 `PathBasedAuthMiddleware`
-2. Token管理和刷新逻辑在 `auth/token.go`
-3. Token池配置在 `types/token.go`
+2. AWS Token管理和刷新逻辑在 `auth/token.go`
+3. IdC认证逻辑也在 `auth/token.go` 中实现
+4. Token池配置在 `types/token.go`
+5. Token刷新管理器在 `utils/token_refresh_manager.go`
 
 ### 调试流式响应
 1. 检查 `parser/sse_parser.go` 中的 `StreamParser` 和 `ParseEvents`
@@ -649,6 +657,5 @@ curl -I http://localhost:8081/v1/models
 4. 分析请求复杂度评估的准确性
 
 # 开发时注意
-- 本程序运行需要的环境变量设置在.env文件
-- 运行测试使用 `./test/test_anthropic_request.sh` 脚本验证所有API功能
+- 本程序运行需要的环境变量设置在.env文件，支持AWS RefreshToken和IdC两种认证方式
 - Anthropic工具调用规范文档 https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview

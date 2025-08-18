@@ -1,6 +1,31 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strings"
+)
+
+// AuthMethod 认证方式枚举
+type AuthMethod string
+
+const (
+	AuthMethodSocial AuthMethod = "social"
+	AuthMethodIdC    AuthMethod = "IdC"
+)
+
+// GetAuthMethod 获取认证方式，默认为social，不区分大小写
+func GetAuthMethod() AuthMethod {
+	method := strings.ToLower(strings.TrimSpace(os.Getenv("AUTH_METHOD")))
+	switch method {
+	case "idc", "id-c", "identity-center":
+		return AuthMethodIdC
+	case "social", "":
+		return AuthMethodSocial
+	default:
+		// 如果是未知值，记录但使用默认值
+		return AuthMethodSocial
+	}
+}
 
 // ModelMap 模型映射表
 var ModelMap = map[string]string{
@@ -14,8 +39,11 @@ func IsStreamDisabled() bool {
 	return os.Getenv("DISABLE_STREAM") == "true"
 }
 
-// RefreshTokenURL 刷新token的URL
+// RefreshTokenURL 刷新token的URL (social方式)
 const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
+
+// IdcRefreshTokenURL IdC认证方式的刷新token URL
+const IdcRefreshTokenURL = "https://oidc.us-east-1.amazonaws.com/token"
 
 // CodeWhispererURL CodeWhisperer API的URL
 const CodeWhispererURL = "https://codewhisperer.us-east-1.amazonaws.com/generateAssistantResponse"

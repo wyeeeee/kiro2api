@@ -27,9 +27,22 @@ var (
 
 // initTokenPool 初始化token池
 func initTokenPool() {
-	refreshTokens := os.Getenv("AWS_REFRESHTOKEN")
-	if refreshTokens == "" {
-		return
+	authMethod := config.GetAuthMethod()
+	
+	var refreshTokens string
+	switch authMethod {
+	case config.AuthMethodIdC:
+		refreshTokens = os.Getenv("IDC_REFRESH_TOKEN")
+		if refreshTokens == "" {
+			logger.Debug("IDC_REFRESH_TOKEN环境变量未设置，token池初始化失败")
+			return
+		}
+	case config.AuthMethodSocial:
+		refreshTokens = os.Getenv("AWS_REFRESHTOKEN")
+		if refreshTokens == "" {
+			logger.Debug("AWS_REFRESHTOKEN环境变量未设置，token池初始化失败")
+			return
+		}
 	}
 
 	tokens := strings.Split(refreshTokens, ",")
@@ -47,7 +60,7 @@ func initTokenPool() {
 
 	if len(validTokens) > 0 {
 		tokenPool = types.NewTokenPool(validTokens, 3) // 最大重试3次
-		logger.Info("Token池初始化完成", logger.Int("token_count", len(validTokens)))
+		logger.Info("Token池初始化完成", logger.Int("token_count", len(validTokens)), logger.String("auth_method", string(authMethod)))
 	}
 }
 
@@ -93,8 +106,15 @@ func RefreshTokenForServer() error {
 func refreshTokenAndReturn() (types.TokenInfo, error) {
 	pool := getTokenPool()
 	if pool == nil {
-		logger.Error("AWS_REFRESHTOKEN环境变量未设置")
-		return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置，请设置后重新启动服务")
+		authMethod := config.GetAuthMethod()
+		switch authMethod {
+		case config.AuthMethodIdC:
+			logger.Error("IDC_REFRESH_TOKEN环境变量未设置")
+			return types.TokenInfo{}, fmt.Errorf("IDC_REFRESH_TOKEN环境变量未设置，请设置后重新启动服务")
+		case config.AuthMethodSocial:
+			logger.Error("AWS_REFRESHTOKEN环境变量未设置")
+			return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置，请设置后重新启动服务")
+		}
 	}
 
 	// 尝试从token池获取可用token
@@ -107,8 +127,8 @@ func refreshTokenAndReturn() (types.TokenInfo, error) {
 
 		logger.Debug("尝试使用refresh token", logger.Int("token_index", tokenIdx+1))
 
-		// 尝试刷新token
-		tokenInfo, err := tryRefreshToken(refreshToken)
+		// 根据认证方式尝试刷新token
+		tokenInfo, err := tryRefreshTokenByAuthMethod(refreshToken)
 		if err != nil {
 			logger.Error("Token刷新失败", logger.Err(err), logger.Int("token_index", tokenIdx+1))
 			pool.MarkTokenFailed(tokenIdx)
@@ -122,7 +142,103 @@ func refreshTokenAndReturn() (types.TokenInfo, error) {
 	}
 }
 
-// tryRefreshToken 尝试刷新单个token
+// tryRefreshTokenByAuthMethod 根据认证方式刷新token
+func tryRefreshTokenByAuthMethod(refreshToken string) (types.TokenInfo, error) {
+	authMethod := config.GetAuthMethod()
+	
+	switch authMethod {
+	case config.AuthMethodIdC:
+		return tryRefreshIdcToken(refreshToken)
+	case config.AuthMethodSocial:
+		return tryRefreshToken(refreshToken)
+	default:
+		return types.TokenInfo{}, fmt.Errorf("不支持的认证方式: %v", authMethod)
+	}
+}
+
+// tryRefreshIdcToken 使用IdC认证方式刷新token
+func tryRefreshIdcToken(refreshToken string) (types.TokenInfo, error) {
+	clientId := os.Getenv("IDC_CLIENT_ID")
+	clientSecret := os.Getenv("IDC_CLIENT_SECRET")
+	
+	if clientId == "" || clientSecret == "" {
+		return types.TokenInfo{}, fmt.Errorf("IDC_CLIENT_ID和IDC_CLIENT_SECRET环境变量必须设置")
+	}
+
+	// 准备刷新请求
+	refreshReq := types.IdcRefreshRequest{
+		ClientId:     clientId,
+		ClientSecret: clientSecret,
+		GrantType:    "refresh_token",
+		RefreshToken: refreshToken,
+	}
+
+	reqBody, err := utils.FastMarshal(refreshReq)
+	if err != nil {
+		return types.TokenInfo{}, fmt.Errorf("序列化IdC请求失败: %v", err)
+	}
+
+	logger.Debug("发送IdC token刷新请求", logger.String("url", config.IdcRefreshTokenURL))
+
+	// 发送刷新请求
+	req, err := http.NewRequest("POST", config.IdcRefreshTokenURL, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return types.TokenInfo{}, fmt.Errorf("创建IdC请求失败: %v", err)
+	}
+	
+	// 设置IdC认证所需的特殊headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Host", "oidc.us-east-1.amazonaws.com")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("x-amz-user-agent", "aws-sdk-js/3.738.0 ua/2.1 os/other lang/js md/browser#unknown_unknown api/sso-oidc#3.738.0 m/E KiroIDE")
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "*")
+	req.Header.Set("sec-fetch-mode", "cors")
+	req.Header.Set("User-Agent", "node")
+	req.Header.Set("Accept-Encoding", "br, gzip, deflate")
+
+	resp, err := utils.SharedHTTPClient.Do(req)
+	if err != nil {
+		return types.TokenInfo{}, fmt.Errorf("IdC刷新token请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return types.TokenInfo{}, fmt.Errorf("IdC刷新token失败: 状态码 %d, 响应: %s", resp.StatusCode, string(body))
+	}
+
+	// 解析响应
+	var refreshResp types.RefreshResponse
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return types.TokenInfo{}, fmt.Errorf("读取IdC响应失败: %v", err)
+	}
+
+	logger.Debug("IdC API响应内容", logger.String("response_body", string(body)))
+
+	if err := utils.SafeUnmarshal(body, &refreshResp); err != nil {
+		return types.TokenInfo{}, fmt.Errorf("解析IdC刷新响应失败: %v", err)
+	}
+
+	logger.Debug("新的IdC Access Token", logger.String("access_token", refreshResp.AccessToken))
+	logger.Debug("IdC Token过期信息", logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
+
+	// 转换为统一的Token结构
+	var token types.Token
+	token.AccessToken = refreshResp.AccessToken
+	token.RefreshToken = refreshToken // 保持原始refresh token
+	token.ExpiresIn = refreshResp.ExpiresIn
+	token.ExpiresAt = time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+
+	logger.Info("IdC Token过期时间已计算",
+		logger.String("expires_at", token.ExpiresAt.Format("2006-01-02 15:04:05")),
+		logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
+
+	return token, nil
+}
+
+// tryRefreshToken 尝试刷新单个token (social方式)
 func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 	// 准备刷新请求
 	refreshReq := types.RefreshRequest{
@@ -286,10 +402,22 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 	logger.Debug("开始执行Token刷新", logger.Int("token_index", idx))
 
 	// 获取对应索引的refresh token
-	tokens := os.Getenv("AWS_REFRESHTOKEN")
-	if tokens == "" {
-		refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置"))
-		return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置")
+	authMethod := config.GetAuthMethod()
+	var tokens string
+	
+	switch authMethod {
+	case config.AuthMethodIdC:
+		tokens = os.Getenv("IDC_REFRESH_TOKEN")
+		if tokens == "" {
+			refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("IDC_REFRESH_TOKEN环境变量未设置"))
+			return types.TokenInfo{}, fmt.Errorf("IDC_REFRESH_TOKEN环境变量未设置")
+		}
+	case config.AuthMethodSocial:
+		tokens = os.Getenv("AWS_REFRESHTOKEN")
+		if tokens == "" {
+			refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置"))
+			return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置")
+		}
 	}
 
 	tokenList := strings.Split(tokens, ",")
@@ -307,7 +435,7 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 	}
 
 	// 尝试刷新指定的token
-	tokenInfo, err := tryRefreshToken(refreshToken)
+	tokenInfo, err := tryRefreshTokenByAuthMethod(refreshToken)
 	
 	// 通知刷新管理器完成状态
 	refreshMgr.CompleteRefresh(idx, &tokenInfo, err)

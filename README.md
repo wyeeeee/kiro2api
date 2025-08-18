@@ -2,15 +2,16 @@
 
 一个基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，桥接 AWS CodeWhisperer 服务。支持多模态图片输入、实时流式响应、智能请求分析和完整的工具调用功能。
 
-**当前版本**: v2.8.0+ - 基于 Go 的高性能 HTTP 代理服务器，提供 Anthropic Claude API 和 OpenAI 兼容的 API 接口，最新优化了工具标记解析逻辑和请求处理机制。
+**核心架构**: 双API代理服务器，在 Anthropic API、OpenAI ChatCompletion API 和 AWS CodeWhisperer EventStream 格式之间进行转换。
 
 ## 功能特性
 
-- **多格式API支持**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
-- **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑，增强工具标记解析和CodeWhisperer兼容性
+- **双API代理服务器**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式，桥接 AWS CodeWhisperer 服务
+- **多认证支持**：支持 AWS RefreshToken（传统）和 IdC 认证（新增）两种认证方式
+- **完整工具调用支持**：支持Anthropic工具使用格式，包括tool_choice参数和基于 `tool_use_id` 的精确去重逻辑
 - **多模态图片支持**：支持图片输入，自动转换OpenAI `image_url`格式到Anthropic `image`格式，支持PNG、JPEG、GIF、WebP、BMP等格式
 - **实时流式响应**：自定义 AWS EventStream 解析器，提供零延迟的流式体验
-- **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能 JSON 库
+- **高性能架构**：基于 gin-gonic/gin 框架，使用 bytedance/sonic 高性能JSON库
 - **智能认证管理**：基于环境变量的认证管理，支持.env文件，自动刷新过期token
 - **Token池管理**：支持多个refresh token轮换使用，提供故障转移和负载均衡
 - **智能请求分析**：自动分析请求复杂度，动态调整超时时间和客户端配置
@@ -113,8 +114,30 @@ docker-compose up -d
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流式和非流式）
 - `GET /v1/models` - 获取可用模型列表
 
-### 认证方式
+### 认证方式说明
 
+项目支持两种认证方式：
+
+#### AWS RefreshToken 认证（传统）
+```bash
+# 在 .env 文件中配置
+AWS_REFRESHTOKEN=your_refresh_token_here  # 必需
+# 支持多个token，用逗号分隔
+AWS_REFRESHTOKEN=token1,token2,token3
+```
+
+#### IdC 认证（新增）
+```bash
+# 在 .env 文件中配置
+AUTH_METHOD=IdC
+IDC_CLIENT_ID=your_client_id
+IDC_CLIENT_SECRET=your_client_secret  
+IDC_REFRESH_TOKEN=your_idc_refresh_token
+```
+
+两种认证方式都支持自动刷新token和故障转移。
+
+#### API请求认证
 所有 API 端点都需要在请求头中提供认证信息：
 
 ```bash
@@ -127,9 +150,14 @@ x-api-key: your-auth-token
 
 ### 在 Claude Code 中使用
 
+根据 CLAUDE.md 中的测试配置，推荐使用以下设置：
+
 ```bash
 export ANTHROPIC_AUTH_TOKEN=123456
 export ANTHROPIC_BASE_URL=http://localhost:8080
+
+# 或在测试环境中使用不同端口避免冲突
+export ANTHROPIC_BASE_URL=http://localhost:8081
 ```
 
 ### 在其他应用中使用
@@ -354,6 +382,32 @@ kiro2api完全支持Anthropic和OpenAI格式的工具调用：
 - **流式工具调用**：支持在流式响应中处理工具调用事件
 - **错误处理**：完善的工具调用错误处理和调试支持
 
+### 工具解析测试
+
+根据 CLAUDE.md 中的指导，可以进行工具解析测试：
+
+```bash
+# 1. 使用.env文件启动服务器
+# 确保.env文件中配置了有效的AWS_REFRESHTOKEN
+./kiro2api
+
+# 2. 测试工具调用（在另一个终端）
+curl -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{
+    "model": "claude-sonnet-4-20250514",
+    "max_tokens": 1000,
+    "messages": [{
+      "role": "user",
+      "content": "我正在对你进行debug我要求在一次调用1个工具，调用工具生成一个Output文件夹紧接着生成一个output.txt 然后在里面写上一首诗20字"
+    }]
+  }'
+
+# 3. 检查debug.log查看工具解析详情
+tail -f debug.log
+```
+
 ### 常用工具示例
 - `web_search` - 网络搜索工具
 - `bash` - 系统命令执行工具
@@ -384,8 +438,14 @@ curl -X GET http://localhost:8080/v1/models \
 程序完全基于环境变量进行配置，支持以下变量：
 
 ```bash
-# 必需配置
+# 必需配置 - AWS RefreshToken 认证方式（传统）
 export AWS_REFRESHTOKEN="your_refresh_token"  # 必需设置，支持多个token用逗号分隔
+
+# 或使用 IdC 认证方式（新增）
+# export AUTH_METHOD=IdC
+# export IDC_CLIENT_ID=your_client_id
+# export IDC_CLIENT_SECRET=your_client_secret  
+# export IDC_REFRESH_TOKEN=your_idc_refresh_token
 
 # 可选配置
 export KIRO_CLIENT_TOKEN="your_token"         # 客户端认证token（默认：123456）
@@ -414,20 +474,21 @@ export SERVER_WRITE_TIMEOUT_MINUTES="16"     # 服务器写入超时（默认：
 # 复制示例配置文件
 cp .env.example .env
 
-# 编辑配置文件
+# 编辑配置文件 - AWS RefreshToken 认证方式（传统）
+AWS_REFRESHTOKEN=your_refresh_token_here  # 必需设置
 KIRO_CLIENT_TOKEN=123456
 PORT=8080
-AWS_REFRESHTOKEN=your_refresh_token_here
 LOG_LEVEL=info
 LOG_FORMAT=json
-LOG_FILE=/var/log/kiro2api.log
-LOG_CONSOLE=true
-GIN_MODE=release
-REQUEST_TIMEOUT_MINUTES=15
-SIMPLE_REQUEST_TIMEOUT_MINUTES=2
-SERVER_READ_TIMEOUT_MINUTES=16
-SERVER_WRITE_TIMEOUT_MINUTES=16
-DISABLE_STREAM=false
+
+# 或使用 IdC 认证方式（新增）
+# AUTH_METHOD=IdC
+# IDC_CLIENT_ID=your_client_id
+# IDC_CLIENT_SECRET=your_client_secret  
+# IDC_REFRESH_TOKEN=your_idc_refresh_token
+
+# 其他配置可参考 CLAUDE.md
+./kiro2api
 ```
 
 ### Token 池管理

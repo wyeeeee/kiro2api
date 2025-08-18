@@ -322,6 +322,15 @@ func validateCodeWhispererRequest(cwReq *types.CodeWhispererRequest) error {
 	trimmedContent := strings.TrimSpace(cwReq.ConversationState.CurrentMessage.UserInputMessage.Content)
 	hasImages := len(cwReq.ConversationState.CurrentMessage.UserInputMessage.Images) > 0
 	hasTools := len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools) > 0
+	hasToolResults := len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults) > 0
+
+	// 如果有工具结果，允许内容为空（这是工具执行后的反馈请求）
+	if hasToolResults {
+		logger.Debug("检测到工具结果，允许内容为空",
+			logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+			logger.Int("tool_results_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults)))
+		return nil
+	}
 
 	// 如果没有内容但有工具，注入占位内容 (YAGNI: 只在需要时处理)
 	if trimmedContent == "" && !hasImages && hasTools {
@@ -339,6 +348,122 @@ func validateCodeWhispererRequest(cwReq *types.CodeWhispererRequest) error {
 	}
 
 	return nil
+}
+
+// extractToolResultsFromMessage 从消息内容中提取工具结果
+func extractToolResultsFromMessage(content any) []types.ToolResult {
+	var toolResults []types.ToolResult
+
+	switch v := content.(type) {
+	case []any:
+		for _, item := range v {
+			if block, ok := item.(map[string]any); ok {
+				if blockType, exists := block["type"]; exists {
+					if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
+						toolResult := types.ToolResult{}
+						
+						// 提取 tool_use_id
+						if toolUseId, ok := block["tool_use_id"].(string); ok {
+							toolResult.ToolUseId = toolUseId
+						}
+						
+						// 提取 content - 转换为数组格式
+						if content, exists := block["content"]; exists {
+							// 将 content 转换为 []map[string]interface{} 格式
+							var contentArray []map[string]interface{}
+							
+							// 处理不同的 content 格式
+							switch c := content.(type) {
+							case string:
+								// 如果是字符串，包装成标准格式
+								contentArray = []map[string]interface{}{
+									{"text": c},
+								}
+							case []interface{}:
+								// 如果已经是数组，保持原样
+								for _, item := range c {
+									if m, ok := item.(map[string]interface{}); ok {
+										contentArray = append(contentArray, m)
+									}
+								}
+							case map[string]interface{}:
+								// 如果是单个对象，包装成数组
+								contentArray = []map[string]interface{}{c}
+							default:
+								// 其他格式，尝试转换为字符串
+								contentArray = []map[string]interface{}{
+									{"text": fmt.Sprintf("%v", c)},
+								}
+							}
+							
+							toolResult.Content = contentArray
+						}
+						
+						// 提取 status (默认为 success)
+						toolResult.Status = "success"
+						if isError, ok := block["is_error"].(bool); ok && isError {
+							toolResult.Status = "error"
+							toolResult.IsError = true
+						}
+						
+						toolResults = append(toolResults, toolResult)
+						
+						logger.Debug("提取到工具结果",
+							logger.String("tool_use_id", toolResult.ToolUseId),
+							logger.String("status", toolResult.Status),
+							logger.Int("content_items", len(toolResult.Content)))
+					}
+				}
+			}
+		}
+	case []types.ContentBlock:
+		for _, block := range v {
+			if block.Type == "tool_result" {
+				toolResult := types.ToolResult{}
+				
+				if block.ToolUseId != nil {
+					toolResult.ToolUseId = *block.ToolUseId
+				}
+				
+				// 处理 content
+				if block.Content != nil {
+					var contentArray []map[string]interface{}
+					
+					switch c := block.Content.(type) {
+					case string:
+						contentArray = []map[string]interface{}{
+							{"text": c},
+						}
+					case []interface{}:
+						for _, item := range c {
+							if m, ok := item.(map[string]interface{}); ok {
+								contentArray = append(contentArray, m)
+							}
+						}
+					case map[string]interface{}:
+						contentArray = []map[string]interface{}{c}
+					default:
+						contentArray = []map[string]interface{}{
+							{"text": fmt.Sprintf("%v", c)},
+						}
+					}
+					
+					toolResult.Content = contentArray
+				}
+				
+				// 设置 status
+				toolResult.Status = "success"
+				if block.IsError != nil && *block.IsError {
+					toolResult.Status = "error"
+					toolResult.IsError = true
+				}
+				
+				toolResults = append(toolResults, toolResult)
+			}
+		}
+	}
+	
+	return toolResults
 }
 
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
@@ -374,6 +499,22 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.Images = images
 	} else {
 		cwReq.ConversationState.CurrentMessage.UserInputMessage.Images = []types.CodeWhispererImage{}
+	}
+
+	// 新增：检查并处理 ToolResults
+	if lastMessage.Role == "user" {
+		toolResults := extractToolResultsFromMessage(lastMessage.Content)
+		if len(toolResults) > 0 {
+			cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults = toolResults
+			
+			logger.Info("已添加工具结果到请求",
+				logger.Int("tool_results_count", len(toolResults)),
+				logger.String("conversation_id", cwReq.ConversationState.ConversationId))
+			
+			// 对于包含 tool_result 的请求，content 应该为空字符串（符合 req2.json 的格式）
+			cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = ""
+			logger.Debug("工具结果请求，设置 content 为空字符串")
+		}
 	}
 
 	// 确保ModelId不为空，如果映射不存在则使用默认模型
@@ -498,6 +639,14 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 				} else {
 					userMsg.UserInputMessage.Content = ""
 				}
+				
+				// 检查用户消息中的工具结果
+				toolResults := extractToolResultsFromMessage(anthropicReq.Messages[i].Content)
+				if len(toolResults) > 0 {
+					userMsg.UserInputMessage.UserInputMessageContext.ToolResults = toolResults
+					logger.Debug("历史用户消息包含工具结果",
+						logger.Int("tool_results_count", len(toolResults)))
+				}
 
 				userMsg.UserInputMessage.ModelId = modelId
 				userMsg.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR
@@ -512,7 +661,17 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 					} else {
 						assistantMsg.AssistantResponseMessage.Content = ""
 					}
-					assistantMsg.AssistantResponseMessage.ToolUses = nil
+					
+					// 提取助手消息中的工具调用
+					toolUses := extractToolUsesFromMessage(anthropicReq.Messages[i+1].Content)
+					if len(toolUses) > 0 {
+						assistantMsg.AssistantResponseMessage.ToolUses = toolUses
+						logger.Debug("历史助手消息包含工具调用",
+							logger.Int("tool_uses_count", len(toolUses)))
+					} else {
+						assistantMsg.AssistantResponseMessage.ToolUses = nil
+					}
+					
 					history = append(history, assistantMsg)
 					i++ // 跳过已处理的助手消息
 				}
@@ -613,6 +772,87 @@ func generateToolSystemPrompt(toolChoice any, tools []types.AnthropicTool) strin
 }
 
 // extractRequiredFields 从输入schema中提取必填字段名称
+// extractToolUsesFromMessage 从助手消息内容中提取工具调用
+func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
+	var toolUses []types.ToolUseEntry
+	
+	switch v := content.(type) {
+	case []any:
+		for _, item := range v {
+			if block, ok := item.(map[string]any); ok {
+				if blockType, exists := block["type"]; exists {
+					if typeStr, ok := blockType.(string); ok && typeStr == "tool_use" {
+						toolUse := types.ToolUseEntry{}
+						
+						// 提取 id 作为 ToolUseId
+						if id, ok := block["id"].(string); ok {
+							toolUse.ToolUseId = id
+						}
+						
+						// 提取 name
+						if name, ok := block["name"].(string); ok {
+							toolUse.Name = name
+						}
+						
+						// 提取 input
+						if input, ok := block["input"].(map[string]interface{}); ok {
+							toolUse.Input = input
+						} else if input != nil {
+							// 如果 input 不是 map，尝试转换
+							toolUse.Input = map[string]interface{}{
+								"value": input,
+							}
+						} else {
+							// 如果没有 input，设置为空对象
+							toolUse.Input = map[string]interface{}{}
+						}
+						
+						toolUses = append(toolUses, toolUse)
+						
+						logger.Debug("提取到历史工具调用",
+							logger.String("tool_id", toolUse.ToolUseId),
+							logger.String("tool_name", toolUse.Name))
+					}
+				}
+			}
+		}
+	case []types.ContentBlock:
+		for _, block := range v {
+			if block.Type == "tool_use" {
+				toolUse := types.ToolUseEntry{}
+				
+				if block.ID != nil {
+					toolUse.ToolUseId = *block.ID
+				}
+				
+				if block.Name != nil {
+					toolUse.Name = *block.Name
+				}
+				
+				if block.Input != nil {
+					switch inp := (*block.Input).(type) {
+					case map[string]interface{}:
+						toolUse.Input = inp
+					default:
+						toolUse.Input = map[string]interface{}{
+							"value": inp,
+						}
+					}
+				} else {
+					toolUse.Input = map[string]interface{}{}
+				}
+				
+				toolUses = append(toolUses, toolUse)
+			}
+		}
+	case string:
+		// 如果是纯文本，不包含工具调用
+		return nil
+	}
+	
+	return toolUses
+}
+
 func extractRequiredFields(schema map[string]any) []string {
 	if schema == nil {
 		return nil
