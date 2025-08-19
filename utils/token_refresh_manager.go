@@ -14,10 +14,10 @@ import (
 type TokenRefreshStatus int
 
 const (
-	TokenStatusIdle      TokenRefreshStatus = iota // 空闲状态
-	TokenStatusRefreshing                          // 正在刷新
-	TokenStatusCompleted                           // 刷新完成
-	TokenStatusFailed                              // 刷新失败
+	TokenStatusIdle       TokenRefreshStatus = iota // 空闲状态
+	TokenStatusRefreshing                           // 正在刷新
+	TokenStatusCompleted                            // 刷新完成
+	TokenStatusFailed                               // 刷新失败
 )
 
 // RefreshingToken 正在刷新的token状态
@@ -45,9 +45,9 @@ type TokenRefreshManager struct {
 	refreshing sync.Map // map[int]*RefreshingToken
 
 	// 全局统计
-	totalRefreshes int64
+	totalRefreshes     int64
 	duplicatePrevented int64
-	
+
 	mu sync.RWMutex // 保护统计数据
 }
 
@@ -77,11 +77,11 @@ func (trm *TokenRefreshManager) StartRefresh(tokenIdx int) (*RefreshingToken, bo
 		trm.mu.Lock()
 		trm.duplicatePrevented++
 		trm.mu.Unlock()
-		
+
 		logger.Debug("Token正在被其他请求刷新，等待结果",
 			logger.Int("token_index", tokenIdx),
 			logger.String("started_at", refreshingToken.StartTime.Format(time.RFC3339)))
-		
+
 		return refreshingToken, false
 	}
 
@@ -113,7 +113,7 @@ func (trm *TokenRefreshManager) CompleteRefresh(tokenIdx int, tokenInfo *types.T
 		// 刷新失败
 		refreshingToken.Status = TokenStatusFailed
 		refreshingToken.Error = err
-		
+
 		logger.Error("Token刷新失败",
 			logger.Int("token_index", tokenIdx),
 			logger.Err(err),
@@ -128,7 +128,7 @@ func (trm *TokenRefreshManager) CompleteRefresh(tokenIdx int, tokenInfo *types.T
 		// 刷新成功
 		refreshingToken.Status = TokenStatusCompleted
 		refreshingToken.TokenInfo = tokenInfo
-		
+
 		logger.Info("Token刷新完成",
 			logger.Int("token_index", tokenIdx),
 			logger.String("duration", duration.String()),
@@ -235,20 +235,20 @@ func (trm *TokenRefreshManager) ClearExpiredRefreshes(maxAge time.Duration) int 
 
 	trm.refreshing.Range(func(key, value any) bool {
 		refreshingToken := value.(*RefreshingToken)
-		
+
 		// 如果刷新任务已经完成且超过指定时间，则清理
-		if refreshingToken.Status != TokenStatusRefreshing && 
-		   !refreshingToken.EndTime.IsZero() && 
-		   now.Sub(refreshingToken.EndTime) > maxAge {
-			
+		if refreshingToken.Status != TokenStatusRefreshing &&
+			!refreshingToken.EndTime.IsZero() &&
+			now.Sub(refreshingToken.EndTime) > maxAge {
+
 			trm.refreshing.Delete(key)
 			cleared++
-			
+
 			logger.Debug("清理过期的刷新状态",
 				logger.Any("token_index", key),
 				logger.String("age", now.Sub(refreshingToken.EndTime).String()))
 		}
-		
+
 		return true
 	})
 
@@ -271,7 +271,7 @@ func (trm *TokenRefreshManager) ForceCancel(tokenIdx int) bool {
 		// 通知等待者
 		select {
 		case refreshingToken.Result <- RefreshResult{
-			Error: refreshingToken.Error,
+			Error:   refreshingToken.Error,
 			Success: false,
 		}:
 		default:

@@ -66,18 +66,18 @@ type RefreshResponse struct {
 	AccessToken  string `json:"accessToken"`
 	ExpiresIn    int    `json:"expiresIn"` // 多少秒后失效
 	RefreshToken string `json:"refreshToken,omitempty"`
-	
+
 	// Social认证方式专用字段
-	ProfileArn   string `json:"profileArn,omitempty"`
-	
-	// IdC认证方式专用字段  
-	TokenType    string `json:"tokenType,omitempty"`
-	
+	ProfileArn string `json:"profileArn,omitempty"`
+
+	// IdC认证方式专用字段
+	TokenType string `json:"tokenType,omitempty"`
+
 	// 可能的其他响应字段
-	OriginSessionId      *string `json:"originSessionId,omitempty"`
-	IssuedTokenType      *string `json:"issuedTokenType,omitempty"`
-	AwsSsoAppSessionId   *string `json:"aws_sso_app_session_id,omitempty"`
-	IdToken             *string `json:"idToken,omitempty"`
+	OriginSessionId    *string `json:"originSessionId,omitempty"`
+	IssuedTokenType    *string `json:"issuedTokenType,omitempty"`
+	AwsSsoAppSessionId *string `json:"aws_sso_app_session_id,omitempty"`
+	IdToken            *string `json:"idToken,omitempty"`
 }
 
 // RefreshRequest Social认证方式的刷新请求结构

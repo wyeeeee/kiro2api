@@ -31,8 +31,8 @@ type JSONStreamer struct {
 
 // JSONParseState JSON解析状态
 type JSONParseState struct {
-	expectingKey   bool
-	hasValidJSON   bool
+	expectingKey bool
+	hasValidJSON bool
 }
 
 // NewStreamingJSONAggregator 创建流式JSON聚合器

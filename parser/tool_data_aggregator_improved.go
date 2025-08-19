@@ -212,24 +212,55 @@ func (tda *ImprovedToolDataAggregator) reconstructToolJSON(rawValue, toolName st
 	// 清理原始值
 	rawValue = strings.TrimSpace(rawValue)
 
+	// 处理已经是JSON格式的情况
+	if strings.HasPrefix(rawValue, "{") && strings.HasSuffix(rawValue, "}") {
+		// 尝试解析已有的JSON
+		var tempMap map[string]interface{}
+		if err := json.Unmarshal([]byte(rawValue), &tempMap); err == nil {
+			// 已经是有效的JSON，直接返回
+			return rawValue
+		}
+		// 如果解析失败，继续处理
+	}
+
 	// 移除可能的尾部JSON字符（如 "} 或 "}）
 	rawValue = strings.TrimSuffix(rawValue, "\"}")
 	rawValue = strings.TrimSuffix(rawValue, "}")
 	rawValue = strings.TrimSuffix(rawValue, "\"")
 
-	// 移除可能的开头引号
+	// 移除可能的开头引号和大括号
+	rawValue = strings.TrimPrefix(rawValue, "{\"")
 	rawValue = strings.TrimPrefix(rawValue, "\"")
+
+	// 处理转义字符
+	rawValue = strings.ReplaceAll(rawValue, "\\\"", "\"")
+	rawValue = strings.ReplaceAll(rawValue, "\\\\", "\\")
 
 	logger.Debug("重构工具JSON",
 		logger.String("toolName", toolName),
 		logger.String("cleanedValue", rawValue))
 
+	// 处理MCP工具名称（如 mcp__serena__list_dir）
+	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
+		// 提取实际的MCP工具名称
+		parts := strings.Split(toolName, "__")
+		if len(parts) >= 3 {
+			// 例如：mcp__serena__list_dir -> list_dir
+			actualToolName := parts[2]
+			return tda.reconstructMCPToolJSON(rawValue, actualToolName)
+		}
+	}
+
 	// 根据工具类型构建适当的JSON
 	switch strings.ToLower(toolName) {
 	case "ls":
-		return fmt.Sprintf(`{"path": "%s"}`, rawValue)
+		// 处理LS工具的路径参数
+		path := tda.cleanPathValue(rawValue)
+		return fmt.Sprintf(`{"path": "%s"}`, path)
 	case "read":
-		return fmt.Sprintf(`{"file_path": "%s"}`, rawValue)
+		// 处理Read工具的文件路径参数
+		filePath := tda.cleanPathValue(rawValue)
+		return fmt.Sprintf(`{"file_path": "%s"}`, filePath)
 	case "write":
 		// 对于Write工具，需要解析更复杂的结构
 		return tda.reconstructWriteJSON(rawValue)
@@ -246,7 +277,8 @@ func (tda *ImprovedToolDataAggregator) reconstructToolJSON(rawValue, toolName st
 		// 对于未知工具，尝试智能猜测参数名
 		if strings.Contains(rawValue, "/") && !strings.Contains(rawValue, " ") {
 			// 看起来像路径
-			return fmt.Sprintf(`{"path": "%s"}`, rawValue)
+			path := tda.cleanPathValue(rawValue)
+			return fmt.Sprintf(`{"path": "%s"}`, path)
 		} else {
 			// 通用参数
 			return fmt.Sprintf(`{"input": "%s"}`, rawValue)
@@ -254,12 +286,110 @@ func (tda *ImprovedToolDataAggregator) reconstructToolJSON(rawValue, toolName st
 	}
 }
 
+// cleanPathValue 清理路径值
+func (tda *ImprovedToolDataAggregator) cleanPathValue(path string) string {
+	// 移除前后引号
+	path = strings.Trim(path, "\"")
+
+	// 处理可能的键值对格式（如 "path": "/Users/..."）
+	if strings.Contains(path, "\":") {
+		parts := strings.SplitN(path, "\":", 2)
+		if len(parts) == 2 {
+			path = strings.TrimSpace(parts[1])
+			path = strings.Trim(path, " \"")
+		}
+	}
+
+	// 处理转义字符
+	path = strings.ReplaceAll(path, "\\\"", "\"")
+	path = strings.ReplaceAll(path, "\\\\", "\\")
+
+	return path
+}
+
+// reconstructMCPToolJSON 重构MCP工具的JSON参数
+func (tda *ImprovedToolDataAggregator) reconstructMCPToolJSON(rawValue, toolName string) string {
+	logger.Debug("重构MCP工具JSON",
+		logger.String("toolName", toolName),
+		logger.String("rawValue", rawValue))
+
+	// 根据MCP工具名称处理
+	switch strings.ToLower(toolName) {
+	case "list_dir":
+		// 处理relative_path和recursive参数
+		if strings.Contains(rawValue, "relative_path") {
+			// 已经包含参数名，尝试修复格式
+			return tda.fixMCPJSON(rawValue)
+		}
+		// 只有路径值
+		path := tda.cleanPathValue(rawValue)
+		return fmt.Sprintf(`{"relative_path": "%s", "recursive": false}`, path)
+
+	case "find_file":
+		// 处理file_mask和relative_path参数
+		if strings.Contains(rawValue, "file_mask") || strings.Contains(rawValue, "relative_path") {
+			return tda.fixMCPJSON(rawValue)
+		}
+		// 默认处理
+		return fmt.Sprintf(`{"file_mask": "*", "relative_path": "%s"}`, tda.cleanPathValue(rawValue))
+
+	case "find_symbol", "get_symbols_overview":
+		// 处理符号相关的MCP工具
+		if strings.Contains(rawValue, "name_path") || strings.Contains(rawValue, "relative_path") {
+			return tda.fixMCPJSON(rawValue)
+		}
+		return fmt.Sprintf(`{"relative_path": "%s"}`, tda.cleanPathValue(rawValue))
+
+	default:
+		// 通用MCP工具处理
+		if strings.Contains(rawValue, "\":") {
+			// 看起来像JSON格式
+			return tda.fixMCPJSON(rawValue)
+		}
+		// 默认作为输入参数
+		return fmt.Sprintf(`{"input": "%s"}`, rawValue)
+	}
+}
+
+// fixMCPJSON 修复MCP工具的JSON格式
+func (tda *ImprovedToolDataAggregator) fixMCPJSON(jsonStr string) string {
+	// 确保有大括号
+	if !strings.HasPrefix(jsonStr, "{") {
+		jsonStr = "{" + jsonStr
+	}
+	if !strings.HasSuffix(jsonStr, "}") {
+		jsonStr = jsonStr + "}"
+	}
+
+	// 尝试解析和修复
+	var tempMap map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &tempMap); err != nil {
+		// 尝试基础修复
+		jsonStr = strings.ReplaceAll(jsonStr, "\\\"", "\"")
+		jsonStr = strings.ReplaceAll(jsonStr, "\\\\", "\\")
+
+		// 再次尝试解析
+		if err := json.Unmarshal([]byte(jsonStr), &tempMap); err != nil {
+			// 如果还是失败，返回空JSON
+			return "{}"
+		}
+	}
+
+	// 重新序列化以确保格式正确
+	if fixed, err := json.Marshal(tempMap); err == nil {
+		return string(fixed)
+	}
+
+	return jsonStr
+}
+
 // reconstructWriteJSON 重构Write工具的JSON
 func (tda *ImprovedToolDataAggregator) reconstructWriteJSON(rawValue string) string {
 	// Write工具通常有file_path和content两个参数
 	// 如果rawValue看起来像路径，就作为file_path
 	if strings.Contains(rawValue, "/") && !strings.Contains(rawValue, "\n") {
-		return fmt.Sprintf(`{"file_path": "%s", "content": ""}`, rawValue)
+		path := tda.cleanPathValue(rawValue)
+		return fmt.Sprintf(`{"file_path": "%s", "content": ""}`, path)
 	}
 	// 否则可能是content
 	return fmt.Sprintf(`{"file_path": "", "content": "%s"}`, rawValue)
@@ -270,7 +400,8 @@ func (tda *ImprovedToolDataAggregator) reconstructEditJSON(rawValue string) stri
 	// Edit工具通常有file_path, old_string, new_string参数
 	// 如果rawValue看起来像路径，就作为file_path
 	if strings.Contains(rawValue, "/") && !strings.Contains(rawValue, "\n") {
-		return fmt.Sprintf(`{"file_path": "%s", "old_string": "", "new_string": ""}`, rawValue)
+		path := tda.cleanPathValue(rawValue)
+		return fmt.Sprintf(`{"file_path": "%s", "old_string": "", "new_string": ""}`, path)
 	}
 	// 否则可能是old_string
 	return fmt.Sprintf(`{"file_path": "", "old_string": "%s", "new_string": ""}`, rawValue)

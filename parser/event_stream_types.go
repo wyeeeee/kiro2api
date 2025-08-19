@@ -553,14 +553,14 @@ func parseFullAssistantResponseEvent(payload []byte) (*FullAssistantResponseEven
 	// 完整格式应该至少有 content, conversationId, messageId 中的一个主要字段
 	isToolFragment := false
 	hasMainFields := false
-	
+
 	// 检查是否是工具调用片段
 	if _, hasToolUseId := data["toolUseId"]; hasToolUseId {
 		if _, hasName := data["name"]; hasName {
 			isToolFragment = true
 		}
 	}
-	
+
 	// 检查是否有主要字段
 	if _, hasContent := data["content"]; hasContent && data["content"] != "" {
 		hasMainFields = true
@@ -571,7 +571,7 @@ func parseFullAssistantResponseEvent(payload []byte) (*FullAssistantResponseEven
 	if _, hasMsgId := data["messageId"]; hasMsgId && data["messageId"] != "" {
 		hasMainFields = true
 	}
-	
+
 	// 如果是工具片段且没有主要字段，则不是完整格式
 	if isToolFragment && !hasMainFields {
 		return nil, fmt.Errorf("不是完整格式的assistantResponseEvent，而是工具调用片段")

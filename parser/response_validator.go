@@ -10,27 +10,27 @@ import (
 
 // ResponseValidator 流式响应验证器
 type ResponseValidator struct {
-	mu                    sync.RWMutex
-	activeValidations     map[string]*ValidationSession
-	validationRules       []ValidationRule
-	defaultTimeout        time.Duration
-	maxValidationErrors   int
+	mu                  sync.RWMutex
+	activeValidations   map[string]*ValidationSession
+	validationRules     []ValidationRule
+	defaultTimeout      time.Duration
+	maxValidationErrors int
 }
 
 // ValidationSession 验证会话
 type ValidationSession struct {
-	sessionId           string
-	startTime           time.Time
-	lastActivity        time.Time
-	messageCount        int
-	textContentLength   int
-	toolCallCount       int
-	hasToolResult       bool
-	isComplete          bool
-	errors              []ValidationError
-	status              ValidationStatus
-	expectedEndEvents   []string
-	receivedEndEvents   []string
+	sessionId         string
+	startTime         time.Time
+	lastActivity      time.Time
+	messageCount      int
+	textContentLength int
+	toolCallCount     int
+	hasToolResult     bool
+	isComplete        bool
+	errors            []ValidationError
+	status            ValidationStatus
+	expectedEndEvents []string
+	receivedEndEvents []string
 }
 
 // ValidationStatus 验证状态
@@ -45,11 +45,11 @@ const (
 
 // ValidationError 验证错误
 type ValidationError struct {
-	Timestamp   time.Time
-	ErrorType   string
-	Message     string
-	EventData   interface{}
-	Severity    ErrorSeverity
+	Timestamp time.Time
+	ErrorType string
+	Message   string
+	EventData interface{}
+	Severity  ErrorSeverity
 }
 
 // ErrorSeverity 错误严重程度
@@ -75,10 +75,10 @@ func NewResponseValidator() *ResponseValidator {
 		defaultTimeout:      30 * time.Second,
 		maxValidationErrors: 10,
 	}
-	
+
 	// 注册默认验证规则
 	rv.registerDefaultRules()
-	
+
 	return rv
 }
 
@@ -91,10 +91,10 @@ func (rv *ResponseValidator) registerDefaultRules() {
 		&StreamingTimeoutRule{timeout: rv.defaultTimeout},
 		&DuplicateEventRule{},
 	}
-	
+
 	rv.validationRules = append(rv.validationRules, rules...)
-	
-	logger.Debug("注册响应验证规则", 
+
+	logger.Debug("注册响应验证规则",
 		logger.Int("rule_count", len(rv.validationRules)))
 }
 
@@ -102,7 +102,7 @@ func (rv *ResponseValidator) registerDefaultRules() {
 func (rv *ResponseValidator) StartValidation(sessionId string, hasToolResult bool) {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	
+
 	session := &ValidationSession{
 		sessionId:     sessionId,
 		startTime:     time.Now(),
@@ -115,9 +115,9 @@ func (rv *ResponseValidator) StartValidation(sessionId string, hasToolResult boo
 			"message_stop",
 		},
 	}
-	
+
 	rv.activeValidations[sessionId] = session
-	
+
 	logger.Debug("开始响应验证会话",
 		logger.String("session_id", sessionId),
 		logger.Bool("has_tool_result", hasToolResult))
@@ -127,7 +127,7 @@ func (rv *ResponseValidator) StartValidation(sessionId string, hasToolResult boo
 func (rv *ResponseValidator) ValidateEvent(sessionId string, event SSEEvent) []ValidationError {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	
+
 	session, exists := rv.activeValidations[sessionId]
 	if !exists {
 		return []ValidationError{{
@@ -137,19 +137,19 @@ func (rv *ResponseValidator) ValidateEvent(sessionId string, event SSEEvent) []V
 			Severity:  SeverityError,
 		}}
 	}
-	
+
 	// 更新会话活动时间
 	session.lastActivity = time.Now()
 	session.messageCount++
-	
+
 	var errors []ValidationError
-	
+
 	// 应用所有验证规则
 	for _, rule := range rv.validationRules {
 		if err := rule.Validate(session, event); err != nil {
 			session.errors = append(session.errors, *err)
 			errors = append(errors, *err)
-			
+
 			logger.Warn("响应验证规则失败",
 				logger.String("session_id", sessionId),
 				logger.String("rule_name", rule.Name()),
@@ -157,10 +157,10 @@ func (rv *ResponseValidator) ValidateEvent(sessionId string, event SSEEvent) []V
 				logger.String("error_message", err.Message))
 		}
 	}
-	
+
 	// 检查会话是否应该完成
 	rv.checkSessionCompletion(session, event)
-	
+
 	return errors
 }
 
@@ -169,7 +169,7 @@ func (rv *ResponseValidator) checkSessionCompletion(session *ValidationSession, 
 	if event.Event == "message_stop" {
 		session.isComplete = true
 		session.status = ValidationCompleted
-		
+
 		// 验证是否收到了所有预期的结束事件
 		for _, expectedEvent := range session.expectedEndEvents {
 			found := false
@@ -188,14 +188,14 @@ func (rv *ResponseValidator) checkSessionCompletion(session *ValidationSession, 
 				})
 			}
 		}
-		
+
 		logger.Debug("验证会话完成",
 			logger.String("session_id", session.sessionId),
 			logger.Int("message_count", session.messageCount),
 			logger.Int("error_count", len(session.errors)),
 			logger.Duration("duration", time.Since(session.startTime)))
 	}
-	
+
 	// 记录结束事件
 	if strings.HasSuffix(event.Event, "_stop") || strings.HasSuffix(event.Event, "_delta") {
 		session.receivedEndEvents = append(session.receivedEndEvents, event.Event)
@@ -206,12 +206,12 @@ func (rv *ResponseValidator) checkSessionCompletion(session *ValidationSession, 
 func (rv *ResponseValidator) FinishValidation(sessionId string) *ValidationSession {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	
+
 	session, exists := rv.activeValidations[sessionId]
 	if !exists {
 		return nil
 	}
-	
+
 	session.isComplete = true
 	if len(session.errors) == 0 {
 		session.status = ValidationCompleted
@@ -230,17 +230,17 @@ func (rv *ResponseValidator) FinishValidation(sessionId string) *ValidationSessi
 			session.status = ValidationCompleted
 		}
 	}
-	
+
 	// 从活跃验证中移除
 	delete(rv.activeValidations, sessionId)
-	
+
 	logger.Info("验证会话结束",
 		logger.String("session_id", sessionId),
 		logger.String("status", rv.statusToString(session.status)),
 		logger.Int("total_messages", session.messageCount),
 		logger.Int("total_errors", len(session.errors)),
 		logger.Duration("total_duration", time.Since(session.startTime)))
-	
+
 	return session
 }
 
@@ -248,25 +248,25 @@ func (rv *ResponseValidator) FinishValidation(sessionId string) *ValidationSessi
 func (rv *ResponseValidator) CleanupExpiredSessions() {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
-	
+
 	now := time.Now()
 	expiredSessions := make([]string, 0)
-	
+
 	for sessionId, session := range rv.activeValidations {
 		if now.Sub(session.lastActivity) > rv.defaultTimeout {
 			expiredSessions = append(expiredSessions, sessionId)
-			
+
 			logger.Warn("清理过期的验证会话",
 				logger.String("session_id", sessionId),
 				logger.Duration("idle_time", now.Sub(session.lastActivity)),
 				logger.Int("message_count", session.messageCount))
 		}
 	}
-	
+
 	for _, sessionId := range expiredSessions {
 		delete(rv.activeValidations, sessionId)
 	}
-	
+
 	if len(expiredSessions) > 0 {
 		logger.Debug("清理过期验证会话完成",
 			logger.Int("cleaned_count", len(expiredSessions)),
@@ -301,18 +301,18 @@ func (rv *ResponseValidator) GetActiveSessionCount() int {
 func (rv *ResponseValidator) GetSessionStats(sessionId string) map[string]interface{} {
 	rv.mu.RLock()
 	defer rv.mu.RUnlock()
-	
+
 	session, exists := rv.activeValidations[sessionId]
 	if !exists {
 		return nil
 	}
-	
+
 	errorsBySeverity := make(map[string]int)
 	for _, err := range session.errors {
 		severity := rv.severityToString(err.Severity)
 		errorsBySeverity[severity]++
 	}
-	
+
 	return map[string]interface{}{
 		"session_id":          session.sessionId,
 		"status":              rv.statusToString(session.status),

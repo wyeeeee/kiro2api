@@ -27,29 +27,37 @@ func createCompliantEventFrame(messageType, eventType, contentType, payload stri
 
 	// 计算长度
 	headersLen := uint32(len(headersData))
-	totalLen := uint32(4 + 4 + len(headersData) + len(payloadBytes) + 4)
+	totalLen := uint32(4 + 4 + 4 + len(headersData) + len(payloadBytes) + 4) // 包含Prelude CRC
 
-	// 构建消息（不包含CRC）
-	messageWithoutCRC := &bytes.Buffer{}
+	// 构建Prelude（总长度 + 头部长度）
+	prelude := &bytes.Buffer{}
+	binary.Write(prelude, binary.BigEndian, totalLen)
+	binary.Write(prelude, binary.BigEndian, headersLen)
 
-	// 写入总长度
-	binary.Write(messageWithoutCRC, binary.BigEndian, totalLen)
-	// 写入头部长度
-	binary.Write(messageWithoutCRC, binary.BigEndian, headersLen)
-	// 写入头部数据
-	messageWithoutCRC.Write(headersData)
-	// 写入载荷数据
-	messageWithoutCRC.Write(payloadBytes)
-
-	// 计算CRC32
-	dataForCRC := messageWithoutCRC.Bytes()
+	// 计算Prelude CRC32
+	preludeData := prelude.Bytes()
 	crcTable := crc32.MakeTable(crc32.IEEE)
-	crc := crc32.Checksum(dataForCRC, crcTable)
+	preludeCRC := crc32.Checksum(preludeData, crcTable)
 
-	// 写入CRC32
-	binary.Write(messageWithoutCRC, binary.BigEndian, crc)
+	// 构建完整消息（不包含最终CRC）
+	messageWithoutFinalCRC := &bytes.Buffer{}
+	// 写入Prelude
+	messageWithoutFinalCRC.Write(preludeData)
+	// 写入Prelude CRC
+	binary.Write(messageWithoutFinalCRC, binary.BigEndian, preludeCRC)
+	// 写入头部数据
+	messageWithoutFinalCRC.Write(headersData)
+	// 写入载荷数据
+	messageWithoutFinalCRC.Write(payloadBytes)
 
-	return messageWithoutCRC.Bytes()
+	// 计算最终消息CRC32（除了最后4字节）
+	dataForFinalCRC := messageWithoutFinalCRC.Bytes()
+	finalCRC := crc32.Checksum(dataForFinalCRC, crcTable)
+
+	// 写入最终CRC32
+	binary.Write(messageWithoutFinalCRC, binary.BigEndian, finalCRC)
+
+	return messageWithoutFinalCRC.Bytes()
 }
 
 // writeHeader 写入头部键值对

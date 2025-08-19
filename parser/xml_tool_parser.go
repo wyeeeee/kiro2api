@@ -17,11 +17,11 @@ type XMLToolCall struct {
 // ParseXMLToolCalls 从文本中解析XML格式的工具调用
 func ParseXMLToolCalls(text string) []XMLToolCall {
 	var tools []XMLToolCall
-	
+
 	// 匹配 <tool_use>...</tool_use> 块
 	toolUsePattern := regexp.MustCompile(`(?s)<tool_use>(.*?)</tool_use>`)
 	matches := toolUsePattern.FindAllStringSubmatch(text, -1)
-	
+
 	for _, match := range matches {
 		if len(match) > 1 {
 			toolContent := match[1]
@@ -31,7 +31,7 @@ func ParseXMLToolCalls(text string) []XMLToolCall {
 			}
 		}
 	}
-	
+
 	return tools
 }
 
@@ -40,19 +40,19 @@ func parseToolContent(content string) XMLToolCall {
 	tool := XMLToolCall{
 		Parameters: make(map[string]string),
 	}
-	
+
 	// 提取工具名称
 	namePattern := regexp.MustCompile(`<tool_name>(.*?)</tool_name>`)
 	if match := namePattern.FindStringSubmatch(content); len(match) > 1 {
 		tool.Name = strings.TrimSpace(match[1])
 	}
-	
+
 	// 提取参数
 	paramsPattern := regexp.MustCompile(`(?s)<parameters>(.*?)</parameters>`)
 	if match := paramsPattern.FindStringSubmatch(content); len(match) > 1 {
 		parseParameters(match[1], tool.Parameters)
 	}
-	
+
 	return tool
 }
 
@@ -61,7 +61,7 @@ func parseParameters(content string, params map[string]string) {
 	// 通用参数模式，匹配 <key>value</key> 格式
 	paramPattern := regexp.MustCompile(`<(\w+)>(.*?)</\w+>`)
 	matches := paramPattern.FindAllStringSubmatch(content, -1)
-	
+
 	for _, match := range matches {
 		if len(match) > 2 {
 			key := match[1]
@@ -74,14 +74,14 @@ func parseParameters(content string, params map[string]string) {
 // ConvertXMLToolsToJSON 将XML工具调用转换为JSON格式
 func ConvertXMLToolsToJSON(tools []XMLToolCall) []map[string]interface{} {
 	var result []map[string]interface{}
-	
+
 	for _, tool := range tools {
 		// 根据工具名称映射到标准函数名
 		funcName := mapToolName(tool.Name)
-		
+
 		// 构建参数对象
 		args := make(map[string]interface{})
-		
+
 		// 特殊处理Bash命令
 		if funcName == "Bash" && len(tool.Parameters) > 0 {
 			// 如果有path参数，转换为mkdir命令
@@ -101,26 +101,26 @@ func ConvertXMLToolsToJSON(tools []XMLToolCall) []map[string]interface{} {
 				args[mappedKey] = v
 			}
 		}
-		
+
 		// 生成唯一的tool_use_id
 		toolID := fmt.Sprintf("toolu_%s", generateRandomID())
-		
+
 		toolCall := map[string]interface{}{
-			"id":   toolID,
-			"type": "tool_use",
-			"name": funcName,
+			"id":    toolID,
+			"type":  "tool_use",
+			"name":  funcName,
 			"input": args,
 		}
-		
+
 		result = append(result, toolCall)
-		
+
 		logger.Debug("转换XML工具调用为JSON",
 			logger.String("xml_name", tool.Name),
 			logger.String("func_name", funcName),
 			logger.String("tool_id", toolID),
 			logger.Any("parameters", args))
 	}
-	
+
 	return result
 }
 
@@ -170,21 +170,21 @@ func generateRandomID() string {
 func ExtractAndConvertXMLTools(text string) (cleanText string, tools []map[string]interface{}) {
 	// 提取XML工具调用
 	xmlTools := ParseXMLToolCalls(text)
-	
+
 	if len(xmlTools) > 0 {
 		// 转换为JSON格式
 		tools = ConvertXMLToolsToJSON(xmlTools)
-		
+
 		// 清理文本，移除XML标记
 		cleanText = RemoveXMLToolMarkers(text)
-		
+
 		logger.Debug("提取并转换XML工具调用",
 			logger.Int("tool_count", len(tools)),
 			logger.String("clean_text", cleanText))
 	} else {
 		cleanText = text
 	}
-	
+
 	return cleanText, tools
 }
 
@@ -193,9 +193,9 @@ func RemoveXMLToolMarkers(text string) string {
 	// 移除所有 <tool_use>...</tool_use> 块
 	toolUsePattern := regexp.MustCompile(`(?s)<tool_use>.*?</tool_use>`)
 	text = toolUsePattern.ReplaceAllString(text, "")
-	
+
 	// 清理多余的空行
 	text = regexp.MustCompile(`\n{3,}`).ReplaceAllString(text, "\n\n")
-	
+
 	return strings.TrimSpace(text)
 }

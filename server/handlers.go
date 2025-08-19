@@ -31,10 +31,10 @@ func extractFallbackText(data []byte) string {
 
 	// 尝试多种提取模式
 	patterns := []string{
-		`"content":"([^"]+)"`,                        // JSON格式的content字段
-		`"text":"([^"]+)"`,                           // JSON格式的text字段
+		`"content":"([^"]+)"`,           // JSON格式的content字段
+		`"text":"([^"]+)"`,              // JSON格式的text字段
 		`content.*?([A-Za-z].{10,200})`, // 包含英文的内容片段
-		`\{"content":"([^"]*?)"\}`,                   // 完整的JSON content对象
+		`\{"content":"([^"]*?)"\}`,      // 完整的JSON content对象
 	}
 
 	for _, pattern := range patterns {
@@ -241,7 +241,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	for {
 		n, err := resp.Body.Read(buf)
 		totalReadBytes += n
-		
+
 		if n > 0 {
 			emptyReadsCount = 0
 			lastReadTime = time.Now()
@@ -502,7 +502,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 				// 说明上游没有返回流式数据，需要生成默认响应
 				if hasToolResult && totalReadBytes == 0 {
 					logger.Info("延续请求遇到立即EOF，强制生成工具执行确认响应")
-					
+
 					// 生成适当的工具执行确认响应
 					defaultText := generateToolResultResponse(anthropicReq)
 					textEvent := map[string]any{
@@ -517,7 +517,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 					totalOutputChars += len(defaultText)
 					c.Writer.Flush() // 立即刷新响应
 				}
-				
+
 				logger.Debug("响应流结束",
 					logger.Int("total_read_bytes", totalReadBytes),
 					logger.Bool("has_tool_result", hasToolResult))
@@ -528,7 +528,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 			}
 			break
 		}
-		
+
 		// 检测空读取的情况（可能的连接问题）
 		if n == 0 {
 			emptyReadsCount++
@@ -551,7 +551,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 						totalOutputChars += len(defaultText)
 						c.Writer.Flush() // 立即刷新响应
 					}
-					
+
 					logger.Warn("检测到连接超时，结束流处理",
 						logger.Duration("timeout", timeSinceLastRead),
 						logger.Int("empty_reads", emptyReadsCount))
@@ -796,7 +796,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	// 转换为Anthropic格式
 	contexts := []map[string]any{}
 	textAgg := result.GetCompletionText()
-	
+
 	// 检查文本内容是否包含XML工具标记
 	hasXMLTools := false
 	var extractedTools []map[string]interface{}
@@ -808,34 +808,34 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 				}
 				return textAgg
 			}()))
-		
+
 		// 提取并转换XML工具调用
 		cleanText, xmlTools := parser.ExtractAndConvertXMLTools(textAgg)
 		if len(xmlTools) > 0 {
 			hasXMLTools = true
 			extractedTools = xmlTools
 			textAgg = cleanText // 使用清理后的文本
-			
+
 			logger.Debug("成功解析XML工具调用",
 				logger.Int("tool_count", len(xmlTools)),
 				logger.String("clean_text", cleanText))
 		}
 	}
-	
+
 	// 先获取工具管理器的所有工具，确保sawToolUse的判断基于实际工具
 	toolManager := compliantParser.GetToolManager()
 	allTools := make([]*parser.ToolExecution, 0)
-	
+
 	// 获取活跃工具
 	for _, tool := range toolManager.GetActiveTools() {
 		allTools = append(allTools, tool)
 	}
-	
+
 	// 获取已完成工具
 	for _, tool := range toolManager.GetCompletedTools() {
 		allTools = append(allTools, tool)
 	}
-	
+
 	// 基于实际工具数量判断是否包含工具调用（包括XML解析出的工具）
 	// 但如果是tool_result请求，不应该设置sawToolUse为true
 	sawToolUse := (len(allTools) > 0 || hasXMLTools) && !hasToolResult
@@ -860,7 +860,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 			"text": defaultText,
 		})
 	}
-	
+
 	// 先添加从XML解析出的工具调用
 	if hasXMLTools {
 		for _, tool := range extractedTools {
@@ -871,13 +871,13 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 						logger.String("tool_id", toolId))
 					continue
 				}
-				
+
 				if !dedupManager.StartToolExecution(toolId) {
 					logger.Debug("无法标记XML工具执行（已在执行），跳过",
 						logger.String("tool_id", toolId))
 					continue
 				}
-				
+
 				logger.Debug("添加XML工具调用到响应",
 					logger.String("tool_id", toolId),
 					logger.String("tool_name", func() string {
@@ -887,7 +887,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 						return ""
 					}()),
 					logger.Any("tool_input", tool["input"]))
-				
+
 				// 创建标准的tool_use块
 				toolUseBlock := map[string]any{
 					"type":  "tool_use",
@@ -895,14 +895,14 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 					"name":  tool["name"],
 					"input": tool["input"],
 				}
-				
+
 				// 如果工具参数为空或nil，确保为空对象而不是nil
 				if tool["input"] == nil {
 					toolUseBlock["input"] = map[string]any{}
 				}
-				
+
 				contexts = append(contexts, toolUseBlock)
-				
+
 				// 标记工具为已处理
 				dedupManager.MarkToolProcessed(toolId)
 			}
@@ -916,7 +916,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		logger.Debug("从工具生命周期管理器获取工具调用",
 			logger.Int("total_tools", len(allTools)),
 			logger.Int("parse_result_tools", len(result.GetToolCalls())))
-		
+
 		for _, tool := range allTools {
 			// 检查工具是否已被处理或正在执行（基于 tool_use_id，与流式处理保持一致）
 			if dedupManager.IsToolProcessed(tool.ID) {
@@ -940,7 +940,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 					logger.String("tool_name", tool.Name))
 				continue
 			}
-			
+
 			logger.Debug("添加工具调用到响应",
 				logger.String("tool_id", tool.ID),
 				logger.String("tool_name", tool.Name),
@@ -955,7 +955,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 				"name":  tool.Name,
 				"input": tool.Arguments,
 			}
-			
+
 			// 如果工具参数为空或nil，确保为空对象而不是nil
 			if tool.Arguments == nil {
 				toolUseBlock["input"] = map[string]any{}
@@ -975,7 +975,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 
 			// 标记工具为已处理，确保工具调用流程完成
 			dedupManager.MarkToolProcessed(tool.ID)
-			
+
 			// 记录工具调用完成状态，帮助客户端识别工具调用已完成
 			logger.Debug("工具调用已添加到响应并标记为完成",
 				logger.String("tool_id", tool.ID),
@@ -1038,16 +1038,16 @@ func generateToolResultResponse(req types.AnthropicRequest) string {
 	if len(req.Messages) == 0 {
 		return "已处理工具执行结果。"
 	}
-	
+
 	lastMsg := req.Messages[len(req.Messages)-1]
 	if lastMsg.Role != "user" {
 		return "已处理工具执行结果。"
 	}
-	
+
 	// 尝试从消息内容中提取工具相关信息
 	toolName := ""
 	toolOutput := ""
-	
+
 	switch content := lastMsg.Content.(type) {
 	case []any:
 		for _, block := range content {
@@ -1086,7 +1086,7 @@ func generateToolResultResponse(req types.AnthropicRequest) string {
 			}
 		}
 	}
-	
+
 	// 根据工具类型生成智能回复
 	if toolName != "" {
 		switch toolName {
@@ -1109,7 +1109,7 @@ func generateToolResultResponse(req types.AnthropicRequest) string {
 			return fmt.Sprintf("已完成%s工具的执行。", toolName)
 		}
 	}
-	
+
 	// 如果无法识别具体工具，返回通用确认
 	if toolOutput != "" {
 		return "已成功执行工具操作并获取结果。"
@@ -1133,25 +1133,25 @@ func extractToolNameFromId(toolUseId string) string {
 // estimateInputTokens 估算输入token数量
 func estimateInputTokens(req types.AnthropicRequest) int {
 	totalChars := 0
-	
+
 	// 系统消息
 	for _, sysMsg := range req.System {
 		totalChars += len(sysMsg.Text)
 	}
-	
+
 	// 所有消息
 	for _, msg := range req.Messages {
 		content, _ := utils.GetMessageContent(msg.Content)
 		totalChars += len(content)
 	}
-	
+
 	// 工具定义
 	for _, tool := range req.Tools {
 		if tool.Name != "" {
 			totalChars += len(tool.Name) + 50 // 估算工具定义开销
 		}
 	}
-	
+
 	// 粗略按照 4 字符 = 1 token 计算
 	return totalChars / 4
 }

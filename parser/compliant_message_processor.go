@@ -6,6 +6,7 @@ import (
 	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ type ToolDataAggregatorInterface interface {
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
 	toolManager        *ToolLifecycleManager
+	toolFSM            *ToolCallFSM // 新增：工具调用状态机
 	eventHandlers      map[string]EventHandler
 	legacyHandlers     map[string]EventHandler
 	completionBuffer   []string
@@ -41,12 +43,21 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 	processor := &CompliantMessageProcessor{
 		sessionManager:   NewSessionManager(),
 		toolManager:      NewToolLifecycleManager(),
+		toolFSM:          NewToolCallFSM(),
 		eventHandlers:    make(map[string]EventHandler),
 		legacyHandlers:   make(map[string]EventHandler),
 		completionBuffer: make([]string, 0, 16),
 		startedTools:     make(map[string]bool),
 		toolBlockIndex:   make(map[string]int),
 	}
+
+	// 添加状态机监听器
+	processor.toolFSM.AddListener(func(toolID string, oldState, newState ToolCallState, state *ToolState) {
+		logger.Debug("工具状态变化",
+			logger.String("tool_id", toolID),
+			logger.String("old_state", oldState.String()),
+			logger.String("new_state", newState.String()))
+	})
 
 	// 创建Sonic聚合器，并设置参数更新回调
 	processor.toolDataAggregator = NewSonicStreamingJSONAggregatorWithCallback(
@@ -72,6 +83,7 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 func (cmp *CompliantMessageProcessor) Reset() {
 	cmp.sessionManager.Reset()
 	cmp.toolManager.Reset()
+	cmp.toolFSM.Reset()
 	cmp.completionBuffer = cmp.completionBuffer[:0]
 	// 重置旧格式工具状态
 	if cmp.legacyToolState != nil {
@@ -725,97 +737,153 @@ func (h *StandardAssistantResponseEventHandler) handleToolCallEvent(message *Eve
 		return []SSEEvent{}, nil
 	}
 
-	// 使用聚合器记录分片，供 stop 时重组完整输入
-	_, _ = h.processor.toolDataAggregator.ProcessToolData(evt.ToolUseId, evt.Name, evt.Input, evt.Stop, -1)
-
 	events := make([]SSEEvent, 0, 4)
 
 	// 首次片段：发出 content_block_start
 	if !h.processor.startedTools[evt.ToolUseId] {
-		// 检查并验证聚合器中是否有完整参数
-		var toolArgs map[string]interface{}
-		if complete, fullInput := h.processor.toolDataAggregator.ProcessToolData(evt.ToolUseId, evt.Name, "", false, -1); complete && fullInput != "" {
-			// 如果已经聚合完成，使用完整参数
-			if err := utils.SafeUnmarshal([]byte(fullInput), &toolArgs); err == nil {
-				logger.Debug("使用聚合器中的完整参数",
-					logger.String("toolUseId", evt.ToolUseId),
-					logger.String("fullInput", fullInput))
-			}
+		// 初始化工具调用
+		h.processor.startedTools[evt.ToolUseId] = true
+
+		// 使用状态机开始工具调用
+		if err := h.processor.toolFSM.StartTool(evt.ToolUseId, evt.Name); err != nil {
+			logger.Warn("状态机启动工具失败",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.Err(err))
 		}
 
-		// 如果没有完整参数，使用空参数占位
-		if toolArgs == nil {
-			toolArgs = make(map[string]interface{})
+		// 分配块索引
+		blockIndex := h.processor.toolManager.GetBlockIndex(evt.ToolUseId)
+		if blockIndex < 0 {
+			blockIndex = len(h.processor.toolBlockIndex) + 1
 		}
+		h.processor.toolBlockIndex[evt.ToolUseId] = blockIndex
 
-		// 使用工具管理器发出标准的 content_block_start
+		// 创建工具调用请求
 		toolCall := ToolCall{
 			ID:   evt.ToolUseId,
 			Type: "function",
 			Function: ToolCallFunction{
 				Name:      evt.Name,
-				Arguments: "{}", // 首次不带参数，避免错误的完整参数
+				Arguments: "{}", // 初始为空，后续通过增量更新
 			},
 		}
 
-		// 如果有验证过的参数，更新Arguments
-		if len(toolArgs) > 0 {
-			if argsJSON, err := utils.SafeMarshal(toolArgs); err == nil {
-				toolCall.Function.Arguments = string(argsJSON)
+		// 如果有初始输入，尝试解析并验证
+		if evt.Input != "" {
+			var testArgs map[string]interface{}
+			if err := utils.SafeUnmarshal([]byte(evt.Input), &testArgs); err == nil {
+				// 输入是有效的JSON，使用它
+				toolCall.Function.Arguments = evt.Input
 			}
 		}
 
+		// 发送工具调用请求
 		reqEvents := h.processor.toolManager.HandleToolCallRequest(ToolCallRequest{ToolCalls: []ToolCall{toolCall}})
-		// 记录 block index
-		for _, e := range reqEvents {
-			if e.Event == "content_block_start" {
-				if data, ok := e.Data.(map[string]any); ok {
-					if idx, ok2 := data["index"].(int); ok2 {
-						h.processor.toolBlockIndex[evt.ToolUseId] = idx
-					} else if f, ok3 := data["index"].(float64); ok3 {
-						h.processor.toolBlockIndex[evt.ToolUseId] = int(f)
-					}
-				}
-			}
-		}
 		events = append(events, reqEvents...)
-		h.processor.startedTools[evt.ToolUseId] = true
+
+		logger.Debug("工具调用已初始化",
+			logger.String("toolUseId", evt.ToolUseId),
+			logger.String("name", evt.Name),
+			logger.Int("blockIndex", blockIndex))
 	}
 
-	// 追加输入增量（如果有）
+	// 处理输入片段 - 累积到聚合器
 	if evt.Input != "" {
-		idx := h.processor.toolBlockIndex[evt.ToolUseId]
-		events = append(events, SSEEvent{
-			Event: "content_block_delta",
-			Data: map[string]any{
-				"type":  "content_block_delta",
-				"index": idx,
-				"delta": map[string]any{
-					"type":         "input_json_delta",
-					"partial_json": evt.Input,
+		// 添加输入到状态机
+		if err := h.processor.toolFSM.AddInput(evt.ToolUseId, evt.Input); err != nil {
+			logger.Warn("状态机添加输入失败",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.Err(err))
+		}
+
+		// 使用聚合器累积输入
+		complete, fullInput := h.processor.toolDataAggregator.ProcessToolData(
+			evt.ToolUseId, evt.Name, evt.Input, false, -1)
+
+		if !complete {
+			// 发送增量事件
+			idx := h.processor.toolBlockIndex[evt.ToolUseId]
+			events = append(events, SSEEvent{
+				Event: "content_block_delta",
+				Data: map[string]any{
+					"type":  "content_block_delta",
+					"index": idx,
+					"delta": map[string]any{
+						"type":         "input_json_delta",
+						"partial_json": evt.Input,
+					},
 				},
-			},
-		})
+			})
+
+			logger.Debug("工具输入片段已添加",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.String("fragment", evt.Input),
+				logger.Int("fragment_len", len(evt.Input)))
+		} else if fullInput != "" {
+			// 如果提前完成，更新工具参数
+			h.processor.toolManager.UpdateToolArgumentsFromJSON(evt.ToolUseId, fullInput)
+		}
 	}
 
-	// 结束：发出 stop 与 message_delta(stop_reason=tool_use)
+	// 处理结束信号
 	if evt.Stop {
+		// 完成状态机中的工具调用
+		if err := h.processor.toolFSM.CompleteTool(evt.ToolUseId); err != nil {
+			logger.Warn("状态机完成工具失败",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.Err(err))
+		}
+
+		// 最终聚合并获取完整输入
+		complete, fullInput := h.processor.toolDataAggregator.ProcessToolData(
+			evt.ToolUseId, evt.Name, "", true, -1)
+
+		if complete && fullInput != "" {
+			// 更新工具管理器中的参数
+			h.processor.toolManager.UpdateToolArgumentsFromJSON(evt.ToolUseId, fullInput)
+
+			logger.Debug("工具调用参数已完整更新",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.String("fullInput", func() string {
+					if len(fullInput) > 100 {
+						return fullInput[:100] + "..."
+					}
+					return fullInput
+				}()))
+		} else {
+			logger.Warn("工具调用结束但参数不完整",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.String("name", evt.Name))
+		}
+
+		// 发送结束事件
 		idx := h.processor.toolBlockIndex[evt.ToolUseId]
 		events = append(events,
-			SSEEvent{Event: "content_block_stop", Data: map[string]any{"type": "content_block_stop", "index": idx}},
-			SSEEvent{Event: "message_delta", Data: map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": "tool_use", "stop_sequence": nil}, "usage": map[string]any{"output_tokens": 0}}},
+			SSEEvent{
+				Event: "content_block_stop",
+				Data: map[string]any{
+					"type":  "content_block_stop",
+					"index": idx,
+				},
+			},
+			SSEEvent{
+				Event: "message_delta",
+				Data: map[string]any{
+					"type": "message_delta",
+					"delta": map[string]any{
+						"stop_reason":   "tool_use",
+						"stop_sequence": nil,
+					},
+					"usage": map[string]any{
+						"output_tokens": 0,
+					},
+				},
+			},
 		)
+
 		// 清理状态
 		delete(h.processor.startedTools, evt.ToolUseId)
 		delete(h.processor.toolBlockIndex, evt.ToolUseId)
-	}
-
-	if len(events) == 0 {
-		// 没有生成可下发事件（例如仅聚合空片段），返回空
-		logger.Debug("工具调用分片已记录，等待更多数据",
-			logger.String("toolUseId", evt.ToolUseId),
-			logger.String("name", evt.Name),
-			logger.Bool("stop", evt.Stop))
 	}
 
 	return events, nil
@@ -1033,7 +1101,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 							Name: tool["name"].(string),
 							Arguments: func() string {
 								if input, ok := tool["input"].(map[string]interface{}); ok {
-									if argsJSON, err := json.Marshal(input); err == nil {
+									if argsJSON, err := utils.SafeMarshal(input); err == nil {
 										return string(argsJSON)
 									}
 								}
@@ -1387,7 +1455,7 @@ func (h *LegacyToolUseEventHandler) Handle(message *EventStreamMessage) ([]SSEEv
 		return nil, err
 	}
 
-	// 使用聚合器处理分片数据
+	// 修复：传递正确的参数数量，包括fragmentIndex
 	complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, evt.Input, evt.Stop, -1)
 
 	// 只有当数据完整时才处理
@@ -1441,7 +1509,7 @@ func NewToolDataAggregator() *ToolDataAggregator {
 }
 
 // ProcessToolData 处理工具调用数据片段
-func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, stop bool) (complete bool, fullInput string) {
+func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, stop bool, fragmentIndex int) (complete bool, fullInput string) {
 	tda.mu.Lock()
 	defer tda.mu.Unlock()
 
@@ -1457,7 +1525,8 @@ func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, st
 			logger.String("toolUseId", toolUseId),
 			logger.String("name", name),
 			logger.String("initialInput", input),
-			logger.Bool("stop", stop))
+			logger.Bool("stop", stop),
+			logger.Int("fragmentIndex", fragmentIndex))
 
 		buffer = &toolDataBuffer{
 			toolUseId:  toolUseId,
@@ -1491,12 +1560,14 @@ func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, st
 		logger.Debug("添加工具调用数据片段",
 			logger.String("toolUseId", toolUseId),
 			logger.String("fragment", input),
+			logger.Int("fragmentIndex", fragmentIndex),
 			logger.Int("totalParts", len(buffer.inputParts)))
 	} else if !stop {
 		// 如果input为空且不是stop事件，记录警告
 		logger.Warn("收到空的工具调用输入片段",
 			logger.String("toolUseId", toolUseId),
-			logger.String("name", name))
+			logger.String("name", name),
+			logger.Int("fragmentIndex", fragmentIndex))
 	}
 	buffer.lastUpdate = time.Now()
 
@@ -1519,7 +1590,8 @@ func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, st
 			logger.String("toolUseId", toolUseId),
 			logger.String("name", name),
 			logger.String("fullInput", fullInputPreview),
-			logger.Int("inputParts", len(buffer.inputParts)))
+			logger.Int("inputParts", len(buffer.inputParts)),
+			logger.Int("finalFragmentIndex", fragmentIndex))
 
 		// 额外校验：打印关键字段与长度，辅助定位缺参/路径截断
 		if name == "Write" || name == "Bash" {
@@ -1562,27 +1634,74 @@ func (tda *ToolDataAggregator) reconstructJSON(parts []string) string {
 		return "{}"
 	}
 
-	// 简单连接所有片段
+	// 连接所有片段
 	rawInput := strings.Join(parts, "")
+
+	// 先尝试直接解析
+	var temp interface{}
+	if err := json.Unmarshal([]byte(rawInput), &temp); err == nil {
+		// 已经是有效JSON，直接返回
+		return rawInput
+	}
 
 	// 尝试修复常见的JSON格式问题
 	fixed := tda.fixJSONFormat(rawInput)
 
-	// 验证JSON格式
-	var temp interface{}
+	// 再次验证JSON格式
 	if err := json.Unmarshal([]byte(fixed), &temp); err != nil {
-		logger.Warn("JSON重组后仍然无效，使用原始字符串",
-			logger.String("原始", rawInput),
-			logger.String("修复后", fixed),
+		// 如果还是无效，尝试更激进的修复
+		logger.Warn("JSON重组失败，尝试激进修复",
+			logger.String("原始长度", fmt.Sprintf("%d", len(rawInput))),
 			logger.Err(err))
-		return rawInput
+
+		// 尝试提取关键字段
+		fixed = tda.extractAndRebuildJSON(rawInput)
+
+		// 最终验证
+		if err := json.Unmarshal([]byte(fixed), &temp); err != nil {
+			logger.Error("JSON修复彻底失败，返回空对象",
+				logger.Err(err))
+			return "{}"
+		}
 	}
 
 	logger.Debug("JSON重组成功",
-		logger.String("原始", rawInput),
-		logger.String("修复后", fixed))
+		logger.Int("原始长度", len(rawInput)),
+		logger.Int("修复后长度", len(fixed)))
 
 	return fixed
+}
+
+// extractAndRebuildJSON 从损坏的JSON中提取关键字段重建
+func (tda *ToolDataAggregator) extractAndRebuildJSON(input string) string {
+	result := make(map[string]interface{})
+
+	// 尝试提取常见字段
+	patterns := map[string]*regexp.Regexp{
+		"file_path": regexp.MustCompile(`"file_path"\s*:\s*"([^"]+)"`),
+		"content":   regexp.MustCompile(`"content"\s*:\s*"([^"\\]*(\\.[^"\\]*)*)"`),
+		"command":   regexp.MustCompile(`"command"\s*:\s*"([^"]+)"`),
+		"path":      regexp.MustCompile(`"path"\s*:\s*"([^"]+)"`),
+		"pattern":   regexp.MustCompile(`"pattern"\s*:\s*"([^"]+)"`),
+	}
+
+	for field, pattern := range patterns {
+		if matches := pattern.FindStringSubmatch(input); len(matches) > 1 {
+			result[field] = matches[1]
+		}
+	}
+
+	// 如果提取到了字段，返回重建的JSON
+	if len(result) > 0 {
+		if jsonBytes, err := utils.SafeMarshal(result); err == nil {
+			logger.Debug("通过字段提取重建JSON成功",
+				logger.Int("field_count", len(result)))
+			return string(jsonBytes)
+		}
+	}
+
+	// 无法提取任何字段
+	return "{}"
 }
 
 // fixJSONFormat 修复常见的JSON格式问题

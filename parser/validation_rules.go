@@ -29,7 +29,7 @@ func (r *MessageStartEndRule) Validate(session *ValidationSession, event SSEEven
 			}
 		}
 		r.hasMessageStart = true
-		
+
 	case "message_stop":
 		if !r.hasMessageStart {
 			return &ValidationError{
@@ -51,14 +51,14 @@ func (r *MessageStartEndRule) Validate(session *ValidationSession, event SSEEven
 		}
 		r.hasMessageStop = true
 	}
-	
+
 	return nil
 }
 
 // ContentBlockIntegrityRule 内容块完整性验证规则
 type ContentBlockIntegrityRule struct {
-	activeBlocks    map[int]string  // index -> block_type
-	completedBlocks map[int]bool    // index -> completed
+	activeBlocks    map[int]string // index -> block_type
+	completedBlocks map[int]bool   // index -> completed
 }
 
 func (r *ContentBlockIntegrityRule) Name() string {
@@ -70,7 +70,7 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 		r.activeBlocks = make(map[int]string)
 		r.completedBlocks = make(map[int]bool)
 	}
-	
+
 	if dataMap, ok := event.Data.(map[string]any); ok {
 		switch event.Event {
 		case "content_block_start":
@@ -84,7 +84,7 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 						Severity:  SeverityWarning,
 					}
 				}
-				
+
 				blockType := "text" // 默认
 				if cb, ok := dataMap["content_block"].(map[string]any); ok {
 					if bt, ok := cb["type"].(string); ok {
@@ -92,13 +92,13 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 					}
 				}
 				r.activeBlocks[index] = blockType
-				
+
 				// 统计工具调用
 				if blockType == "tool_use" {
 					session.toolCallCount++
 				}
 			}
-			
+
 		case "content_block_stop":
 			if index, ok := r.getBlockIndex(dataMap); ok {
 				if _, exists := r.activeBlocks[index]; !exists {
@@ -110,7 +110,7 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 						Severity:  SeverityError,
 					}
 				}
-				
+
 				if r.completedBlocks[index] {
 					return &ValidationError{
 						Timestamp: time.Now(),
@@ -120,10 +120,10 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 						Severity:  SeverityWarning,
 					}
 				}
-				
+
 				r.completedBlocks[index] = true
 			}
-			
+
 		case "content_block_delta":
 			if index, ok := r.getBlockIndex(dataMap); ok {
 				if _, exists := r.activeBlocks[index]; !exists {
@@ -135,7 +135,7 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 						Severity:  SeverityError,
 					}
 				}
-				
+
 				// 统计文本内容长度
 				if delta, ok := dataMap["delta"].(map[string]any); ok {
 					if text, ok := delta["text"].(string); ok {
@@ -145,7 +145,7 @@ func (r *ContentBlockIntegrityRule) Validate(session *ValidationSession, event S
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -165,12 +165,12 @@ type ToolExecutionFlowRule struct {
 }
 
 type ToolExecutionState struct {
-	toolUseId    string
-	toolName     string
-	hasStart     bool
-	hasStop      bool
-	deltaCount   int
-	startTime    time.Time
+	toolUseId  string
+	toolName   string
+	hasStart   bool
+	hasStop    bool
+	deltaCount int
+	startTime  time.Time
 }
 
 func (r *ToolExecutionFlowRule) Name() string {
@@ -181,7 +181,7 @@ func (r *ToolExecutionFlowRule) Validate(session *ValidationSession, event SSEEv
 	if r.toolExecutions == nil {
 		r.toolExecutions = make(map[string]*ToolExecutionState)
 	}
-	
+
 	if dataMap, ok := event.Data.(map[string]any); ok {
 		switch event.Event {
 		case "content_block_start":
@@ -204,7 +204,7 @@ func (r *ToolExecutionFlowRule) Validate(session *ValidationSession, event SSEEv
 								startTime: time.Now(),
 							}
 						}
-						
+
 						state := r.toolExecutions[toolUseId]
 						state.hasStart = true
 						if toolName, ok := cb["name"].(string); ok {
@@ -213,7 +213,7 @@ func (r *ToolExecutionFlowRule) Validate(session *ValidationSession, event SSEEv
 					}
 				}
 			}
-			
+
 		case "content_block_stop":
 			// 检查是否为工具执行结束
 			if _, ok := r.getBlockIndex(dataMap); ok {
@@ -221,7 +221,7 @@ func (r *ToolExecutionFlowRule) Validate(session *ValidationSession, event SSEEv
 				for toolUseId, state := range r.toolExecutions {
 					if state.hasStart && !state.hasStop {
 						state.hasStop = true
-						
+
 						if state.deltaCount == 0 {
 							return &ValidationError{
 								Timestamp: time.Now(),
@@ -235,7 +235,7 @@ func (r *ToolExecutionFlowRule) Validate(session *ValidationSession, event SSEEv
 					}
 				}
 			}
-			
+
 		case "content_block_delta":
 			if delta, ok := dataMap["delta"].(map[string]any); ok {
 				if deltaType, ok := delta["type"].(string); ok && deltaType == "input_json_delta" {
@@ -250,7 +250,7 @@ func (r *ToolExecutionFlowRule) Validate(session *ValidationSession, event SSEEv
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -276,7 +276,7 @@ func (r *StreamingTimeoutRule) Name() string {
 
 func (r *StreamingTimeoutRule) Validate(session *ValidationSession, event SSEEvent) *ValidationError {
 	now := time.Now()
-	
+
 	if !r.lastEvent.IsZero() {
 		timeSinceLastEvent := now.Sub(r.lastEvent)
 		if timeSinceLastEvent > r.timeout {
@@ -289,7 +289,7 @@ func (r *StreamingTimeoutRule) Validate(session *ValidationSession, event SSEEve
 			}
 		}
 	}
-	
+
 	r.lastEvent = now
 	return nil
 }
@@ -314,19 +314,19 @@ func (r *DuplicateEventRule) Validate(session *ValidationSession, event SSEEvent
 	if r.maxHistory == 0 {
 		r.maxHistory = 100
 	}
-	
+
 	// 创建事件指纹
 	fingerprint := EventFingerprint{
 		EventType: event.Event,
 		Timestamp: time.Now(),
 		DataHash:  r.generateDataHash(event.Data),
 	}
-	
+
 	// 检查是否有重复
 	for _, existing := range r.eventHistory {
 		if existing.EventType == fingerprint.EventType &&
-		   existing.DataHash == fingerprint.DataHash &&
-		   fingerprint.Timestamp.Sub(existing.Timestamp) < 100*time.Millisecond {
+			existing.DataHash == fingerprint.DataHash &&
+			fingerprint.Timestamp.Sub(existing.Timestamp) < 100*time.Millisecond {
 			return &ValidationError{
 				Timestamp: fingerprint.Timestamp,
 				ErrorType: "duplicate_event",
@@ -336,15 +336,15 @@ func (r *DuplicateEventRule) Validate(session *ValidationSession, event SSEEvent
 			}
 		}
 	}
-	
+
 	// 添加到历史记录
 	r.eventHistory = append(r.eventHistory, fingerprint)
-	
+
 	// 限制历史记录大小
 	if len(r.eventHistory) > r.maxHistory {
 		r.eventHistory = r.eventHistory[len(r.eventHistory)-r.maxHistory:]
 	}
-	
+
 	return nil
 }
 

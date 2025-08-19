@@ -48,7 +48,7 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 
 	// 如果环境变量禁用了流式传输，则强制设置为false
 	if config.IsStreamDisabled() {
-		logger.Info("DISABLE_STREAM=true，OpenAI转换器强制禁用流式响应", 
+		logger.Info("DISABLE_STREAM=true，OpenAI转换器强制禁用流式响应",
 			logger.String("original_stream", fmt.Sprintf("%v", stream)))
 		stream = false
 	}

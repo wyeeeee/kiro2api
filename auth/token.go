@@ -18,8 +18,8 @@ import (
 // 全局token池和缓存实例
 var (
 	tokenPool      *types.TokenPool
-	atomicCache    *utils.AtomicTokenCache        // 使用原子缓存替代传统缓存
-	refreshManager *utils.TokenRefreshManager     // token刷新并发控制管理器
+	atomicCache    *utils.AtomicTokenCache    // 使用原子缓存替代传统缓存
+	refreshManager *utils.TokenRefreshManager // token刷新并发控制管理器
 	poolOnce       sync.Once
 	cacheOnce      sync.Once
 	refreshOnce    sync.Once
@@ -28,7 +28,7 @@ var (
 // initTokenPool 初始化token池
 func initTokenPool() {
 	authMethod := config.GetAuthMethod()
-	
+
 	var refreshTokens string
 	switch authMethod {
 	case config.AuthMethodIdC:
@@ -145,7 +145,7 @@ func refreshTokenAndReturn() (types.TokenInfo, error) {
 // tryRefreshTokenByAuthMethod 根据认证方式刷新token
 func tryRefreshTokenByAuthMethod(refreshToken string) (types.TokenInfo, error) {
 	authMethod := config.GetAuthMethod()
-	
+
 	switch authMethod {
 	case config.AuthMethodIdC:
 		return tryRefreshIdcToken(refreshToken)
@@ -160,7 +160,7 @@ func tryRefreshTokenByAuthMethod(refreshToken string) (types.TokenInfo, error) {
 func tryRefreshIdcToken(refreshToken string) (types.TokenInfo, error) {
 	clientId := os.Getenv("IDC_CLIENT_ID")
 	clientSecret := os.Getenv("IDC_CLIENT_SECRET")
-	
+
 	if clientId == "" || clientSecret == "" {
 		return types.TokenInfo{}, fmt.Errorf("IDC_CLIENT_ID和IDC_CLIENT_SECRET环境变量必须设置")
 	}
@@ -185,7 +185,7 @@ func tryRefreshIdcToken(refreshToken string) (types.TokenInfo, error) {
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("创建IdC请求失败: %v", err)
 	}
-	
+
 	// 设置IdC认证所需的特殊headers
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Host", "oidc.us-east-1.amazonaws.com")
@@ -390,7 +390,7 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 	if !isNew {
 		// 其他goroutine正在刷新，等待结果
 		logger.Debug("Token正在被其他请求刷新，等待完成", logger.Int("token_index", idx))
-		
+
 		tokenInfo, err := refreshMgr.WaitForRefresh(idx, 30*time.Second) // 30秒超时
 		if err != nil {
 			return types.TokenInfo{}, fmt.Errorf("等待token %d刷新失败: %v", idx, err)
@@ -404,7 +404,7 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 	// 获取对应索引的refresh token
 	authMethod := config.GetAuthMethod()
 	var tokens string
-	
+
 	switch authMethod {
 	case config.AuthMethodIdC:
 		tokens = os.Getenv("IDC_REFRESH_TOKEN")
@@ -436,10 +436,10 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 
 	// 尝试刷新指定的token
 	tokenInfo, err := tryRefreshTokenByAuthMethod(refreshToken)
-	
+
 	// 通知刷新管理器完成状态
 	refreshMgr.CompleteRefresh(idx, &tokenInfo, err)
-	
+
 	return tokenInfo, err
 }
 

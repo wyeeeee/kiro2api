@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -92,6 +93,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no") // 禁用nginx缓冲
 
 	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
 
@@ -136,15 +138,27 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	sawToolUse := false
 	sentFinal := false
 
-	buf := make([]byte, 1024)
-	for {
+	// 添加完整性跟踪
+	totalBytesRead := 0
+	messageCount := 0
+	hasMoreData := true
+	consecutiveErrors := 0
+	const maxConsecutiveErrors = 3
+
+	// 使用更大的缓冲区避免数据丢失
+	buf := make([]byte, 8192) // 增加到8KB
+	for hasMoreData {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
+			totalBytesRead += n
+			consecutiveErrors = 0 // 重置错误计数
+
 			events, parseErr := compliantParser.ParseStream(buf[:n])
 			if parseErr != nil {
 				// 在宽松模式下继续处理
 				continue
 			}
+			messageCount += len(events)
 			for _, event := range events {
 				// 在流式处理中添加工具去重逻辑
 				if shouldSkipDuplicateToolEvent(event, dedupManager) {
@@ -328,9 +342,58 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 				c.Writer.Flush()
 			}
 		}
+
+		// 错误处理
 		if err != nil {
-			break
+			if err == io.EOF {
+				// 正常结束
+				hasMoreData = false
+			} else if err == io.ErrUnexpectedEOF {
+				// 意外结束，尝试恢复
+				consecutiveErrors++
+				if consecutiveErrors >= maxConsecutiveErrors {
+					// 连续错误过多，停止
+					hasMoreData = false
+				} else {
+					// 短暂等待后继续
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
+			} else {
+				// 其他错误
+				consecutiveErrors++
+				if consecutiveErrors >= maxConsecutiveErrors {
+					hasMoreData = false
+				} else {
+					// 尝试继续读取
+					continue
+				}
+			}
 		}
+	}
+
+	// 确保发送了结束原因（如果还没有发送）
+	if !sentFinal && messageCount > 0 {
+		finishReason := "stop"
+		if sawToolUse {
+			finishReason = "tool_calls"
+		}
+
+		finalEvent := map[string]any{
+			"id":      messageId,
+			"object":  "chat.completion.chunk",
+			"created": time.Now().Unix(),
+			"model":   anthropicReq.Model,
+			"choices": []map[string]any{
+				{
+					"index":         0,
+					"delta":         map[string]any{},
+					"finish_reason": finishReason,
+				},
+			},
+		}
+		sender.SendEvent(c, finalEvent)
+		c.Writer.Flush()
 	}
 
 	// 发送结束标记

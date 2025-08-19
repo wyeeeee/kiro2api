@@ -77,6 +77,30 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 	events := make([]SSEEvent, 0, len(request.ToolCalls)*4)
 
 	for _, toolCall := range request.ToolCalls {
+		// 检查工具是否已存在，避免重复创建
+		if existing, exists := tlm.activeTools[toolCall.ID]; exists {
+			logger.Debug("工具已存在，更新参数",
+				logger.String("tool_id", toolCall.ID),
+				logger.String("tool_name", toolCall.Function.Name),
+				logger.String("existing_status", existing.Status.String()))
+			
+			// 解析工具调用参数
+			var arguments map[string]interface{}
+			if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
+				logger.Warn("解析工具调用参数失败",
+					logger.String("tool_id", toolCall.ID),
+					logger.String("tool_name", toolCall.Function.Name),
+					logger.Err(err))
+				arguments = make(map[string]interface{})
+			}
+			
+			// 更新现有工具的参数
+			if len(arguments) > 0 {
+				existing.Arguments = arguments
+			}
+			continue
+		}
+
 		// 解析工具调用参数
 		var arguments map[string]interface{}
 		if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
@@ -471,7 +495,7 @@ func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments ma
 	logger.Debug("更新工具调用参数",
 		logger.String("tool_id", toolID),
 		logger.Any("arguments", arguments))
-	
+
 	// 检查活跃工具
 	if execution, exists := tlm.activeTools[toolID]; exists {
 		execution.Arguments = arguments
@@ -480,7 +504,7 @@ func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments ma
 			logger.String("tool_name", execution.Name))
 		return
 	}
-	
+
 	// 检查已完成工具
 	if execution, exists := tlm.completedTools[toolID]; exists {
 		execution.Arguments = arguments
@@ -489,7 +513,7 @@ func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments ma
 			logger.String("tool_name", execution.Name))
 		return
 	}
-	
+
 	logger.Warn("未找到要更新参数的工具",
 		logger.String("tool_id", toolID))
 }
@@ -504,6 +528,6 @@ func (tlm *ToolLifecycleManager) UpdateToolArgumentsFromJSON(toolID string, json
 			logger.Err(err))
 		return
 	}
-	
+
 	tlm.UpdateToolArguments(toolID, arguments)
 }

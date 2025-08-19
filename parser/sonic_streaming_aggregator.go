@@ -297,39 +297,45 @@ func (ssja *SonicStreamingJSONAggregator) sonicIntelligentComplete(streamer *Son
 
 // buildJSONFromValue 从值构建JSON（使用Sonic优化）
 func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value string) map[string]interface{} {
-	// 清理值
-	value = strings.Trim(value, "\"")
+	// 清理值 - 更智能的处理
+	value = ssja.cleanValue(value)
 
 	var result map[string]interface{}
 
-	switch strings.ToLower(toolName) {
-	case "ls":
-		result = map[string]interface{}{"path": value}
-	case "read":
-		result = map[string]interface{}{"file_path": value}
-	case "write":
-		if strings.Contains(value, "/") {
-			result = map[string]interface{}{"file_path": value, "content": ""}
-		} else {
-			result = map[string]interface{}{"file_path": "", "content": value}
-		}
-	case "bash":
-		result = map[string]interface{}{"command": value}
-	case "edit":
-		if strings.Contains(value, "/") {
-			result = map[string]interface{}{"file_path": value, "old_string": "", "new_string": ""}
-		} else {
-			result = map[string]interface{}{"file_path": "", "old_string": value, "new_string": ""}
-		}
-	case "glob":
-		result = map[string]interface{}{"pattern": value}
-	case "grep":
-		result = map[string]interface{}{"pattern": value}
-	default:
-		if strings.Contains(value, "/") {
+	// 处理MCP工具名称（如 mcp__serena__list_dir）
+	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
+		result = ssja.buildMCPToolJSON(toolName, value)
+	} else {
+		// 标准工具处理
+		switch strings.ToLower(toolName) {
+		case "ls":
 			result = map[string]interface{}{"path": value}
-		} else {
-			result = map[string]interface{}{"input": value}
+		case "read":
+			result = map[string]interface{}{"file_path": value}
+		case "write":
+			if strings.Contains(value, "/") {
+				result = map[string]interface{}{"file_path": value, "content": ""}
+			} else {
+				result = map[string]interface{}{"file_path": "", "content": value}
+			}
+		case "bash":
+			result = map[string]interface{}{"command": value}
+		case "edit":
+			if strings.Contains(value, "/") {
+				result = map[string]interface{}{"file_path": value, "old_string": "", "new_string": ""}
+			} else {
+				result = map[string]interface{}{"file_path": "", "old_string": value, "new_string": ""}
+			}
+		case "glob":
+			result = map[string]interface{}{"pattern": value}
+		case "grep":
+			result = map[string]interface{}{"pattern": value}
+		default:
+			if strings.Contains(value, "/") {
+				result = map[string]interface{}{"path": value}
+			} else {
+				result = map[string]interface{}{"input": value}
+			}
 		}
 	}
 
@@ -339,6 +345,86 @@ func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value str
 		logger.Int("resultKeys", len(result)))
 
 	return result
+}
+
+// cleanValue 清理值，处理各种转义和格式问题
+func (ssja *SonicStreamingJSONAggregator) cleanValue(value string) string {
+	// 移除前后引号
+	value = strings.Trim(value, "\"")
+
+	// 处理可能的键值对格式（如 "path": "/Users/..."）
+	if strings.Contains(value, "\":") {
+		parts := strings.SplitN(value, "\":", 2)
+		if len(parts) == 2 {
+			value = strings.TrimSpace(parts[1])
+			value = strings.Trim(value, " \"")
+		}
+	}
+
+	// 处理转义字符
+	value = strings.ReplaceAll(value, "\\\"", "\"")
+	value = strings.ReplaceAll(value, "\\\\", "\\")
+
+	// 处理可能的JSON片段（如 {"path": "/Users/..."} ）
+	if strings.HasPrefix(value, "{") && strings.Contains(value, "\":") {
+		// 尝试提取值
+		var tempMap map[string]interface{}
+		if err := utils.FastUnmarshal([]byte(value), &tempMap); err == nil {
+			// 成功解析，提取第一个值
+			for _, v := range tempMap {
+				if strVal, ok := v.(string); ok {
+					return strVal
+				}
+			}
+		}
+	}
+
+	return value
+}
+
+// buildMCPToolJSON 构建MCP工具的JSON
+func (ssja *SonicStreamingJSONAggregator) buildMCPToolJSON(toolName, value string) map[string]interface{} {
+	// 提取实际的MCP工具名称
+	parts := strings.Split(toolName, "__")
+	if len(parts) >= 3 {
+		actualToolName := parts[2]
+
+		logger.Debug("构建MCP工具JSON",
+			logger.String("fullName", toolName),
+			logger.String("actualToolName", actualToolName),
+			logger.String("value", value))
+
+		switch strings.ToLower(actualToolName) {
+		case "list_dir":
+			return map[string]interface{}{
+				"relative_path": value,
+				"recursive":     false,
+			}
+		case "find_file":
+			return map[string]interface{}{
+				"file_mask":     "*",
+				"relative_path": value,
+			}
+		case "find_symbol", "get_symbols_overview":
+			return map[string]interface{}{
+				"relative_path": value,
+			}
+		case "search_for_pattern":
+			return map[string]interface{}{
+				"substring_pattern": value,
+				"relative_path":     ".",
+			}
+		default:
+			// 通用MCP工具处理
+			if strings.Contains(value, "/") {
+				return map[string]interface{}{"relative_path": value}
+			}
+			return map[string]interface{}{"input": value}
+		}
+	}
+
+	// 如果无法解析MCP工具名，返回通用格式
+	return map[string]interface{}{"input": value}
 }
 
 // sonicCompletePartialJSON 使用Sonic补全不完整的JSON
@@ -352,25 +438,16 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 		}()),
 		logger.String("toolName", toolName))
 
-	// 尝试修复缺失的引号和括号
-	fixed := content
-
-	// 计算括号和引号的平衡
-	braceCount := strings.Count(fixed, "{") - strings.Count(fixed, "}")
-	quoteCount := strings.Count(fixed, "\"")
-
-	// 如果引号数量为奇数，补全最后一个引号
-	if quoteCount%2 == 1 {
-		fixed += "\""
+	// 首先尝试直接解析
+	var result map[string]interface{}
+	if err := utils.FastUnmarshal([]byte(content), &result); err == nil {
+		return result
 	}
 
-	// 补全缺失的右括号
-	for i := 0; i < braceCount; i++ {
-		fixed += "}"
-	}
+	// 智能修复JSON
+	fixed := ssja.intelligentJSONFix(content, toolName)
 
 	// 使用Sonic尝试解析修复后的JSON
-	var result map[string]interface{}
 	if err := utils.FastUnmarshal([]byte(fixed), &result); err == nil {
 		logger.Debug("Sonic JSON补全成功",
 			logger.String("fixed", func() string {
@@ -381,6 +458,11 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 			}()),
 			logger.Int("resultKeys", len(result)))
 		return result
+	}
+
+	// 如果还是失败，尝试从内容中提取并重建
+	if extracted := ssja.extractAndRebuildJSON(content, toolName); extracted != nil {
+		return extracted
 	}
 
 	logger.Debug("Sonic JSON补全失败，使用fallback",
@@ -396,8 +478,174 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 	return nil
 }
 
+// intelligentJSONFix 智能修复不完整的JSON
+func (ssja *SonicStreamingJSONAggregator) intelligentJSONFix(content, toolName string) string {
+	fixed := content
+
+	// 处理截断的键名
+	if strings.Contains(fixed, "\"file_pa") && !strings.Contains(fixed, "\"file_path\"") {
+		fixed = strings.Replace(fixed, "\"file_pa", "\"file_path", 1)
+	}
+	if strings.Contains(fixed, "\"relative_pa") && !strings.Contains(fixed, "\"relative_path\"") {
+		fixed = strings.Replace(fixed, "\"relative_pa", "\"relative_path", 1)
+	}
+	if strings.Contains(fixed, "\"comm") && !strings.Contains(fixed, "\"command\"") && strings.ToLower(toolName) == "bash" {
+		fixed = strings.Replace(fixed, "\"comm", "\"command", 1)
+	}
+
+	// 计算括号和引号的平衡
+	braceCount := strings.Count(fixed, "{") - strings.Count(fixed, "}")
+	quoteCount := strings.Count(fixed, "\"")
+
+	// 处理未闭合的字符串值
+	lastColonIdx := strings.LastIndex(fixed, ":")
+	if lastColonIdx > 0 {
+		afterColon := strings.TrimSpace(fixed[lastColonIdx+1:])
+		// 如果值以引号开始但没有结束引号
+		if strings.HasPrefix(afterColon, "\"") && !strings.HasSuffix(afterColon, "\"") && !strings.HasSuffix(afterColon, "}") {
+			fixed += "\""
+			quoteCount++
+		}
+	}
+
+	// 如果引号数量为奇数，补全最后一个引号
+	if quoteCount%2 == 1 {
+		fixed += "\""
+	}
+
+	// 补全缺失的右括号
+	for i := 0; i < braceCount; i++ {
+		fixed += "}"
+	}
+
+	return fixed
+}
+
+// extractAndRebuildJSON 从损坏的内容中提取键值对并重建JSON
+func (ssja *SonicStreamingJSONAggregator) extractAndRebuildJSON(content, toolName string) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	// 尝试提取路径
+	if path := ssja.extractPath(content); path != "" {
+		// 根据工具类型设置正确的键名
+		if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
+			result["relative_path"] = path
+			// MCP工具的额外参数
+			parts := strings.Split(toolName, "__")
+			if len(parts) >= 3 {
+				actualToolName := parts[2]
+				switch strings.ToLower(actualToolName) {
+				case "list_dir":
+					result["recursive"] = false
+				case "find_file":
+					result["file_mask"] = "*"
+				}
+			}
+		} else {
+			switch strings.ToLower(toolName) {
+			case "read":
+				result["file_path"] = path
+			case "write":
+				result["file_path"] = path
+				result["content"] = ""
+			case "ls":
+				result["path"] = path
+			default:
+				result["path"] = path
+			}
+		}
+		return result
+	}
+
+	// 尝试提取命令（针对bash工具）
+	if strings.ToLower(toolName) == "bash" {
+		if cmd := ssja.extractCommand(content); cmd != "" {
+			result["command"] = cmd
+			return result
+		}
+	}
+
+	return nil
+}
+
+// extractPath 从内容中提取路径
+func (ssja *SonicStreamingJSONAggregator) extractPath(content string) string {
+	// 查找绝对路径模式
+	if idx := strings.Index(content, "/Users/"); idx >= 0 {
+		path := content[idx:]
+		// 找到路径的结束位置
+		endIdx := strings.IndexAny(path, "\",}")
+		if endIdx > 0 {
+			path = path[:endIdx]
+		}
+		return strings.TrimSpace(path)
+	}
+
+	// 查找相对路径
+	for _, pattern := range []string{"./", "../", "."} {
+		if idx := strings.Index(content, pattern); idx >= 0 {
+			// 确保不是在字符串中间
+			if idx == 0 || content[idx-1] == '"' || content[idx-1] == ' ' || content[idx-1] == ':' {
+				path := content[idx:]
+				endIdx := strings.IndexAny(path, "\",}")
+				if endIdx > 0 {
+					path = path[:endIdx]
+				}
+				return strings.TrimSpace(path)
+			}
+		}
+	}
+
+	return ""
+}
+
+// extractCommand 从内容中提取命令
+func (ssja *SonicStreamingJSONAggregator) extractCommand(content string) string {
+	// 常见命令关键字
+	commands := []string{"mkdir", "echo", "ls", "cd", "pwd", "cat", "grep", "find", "touch", "rm", "cp", "mv"}
+
+	for _, cmd := range commands {
+		if idx := strings.Index(content, cmd); idx >= 0 {
+			// 确保是命令的开始
+			if idx == 0 || content[idx-1] == '"' || content[idx-1] == ' ' {
+				command := content[idx:]
+				// 找到命令的结束位置
+				endIdx := strings.IndexAny(command, "\",}")
+				if endIdx > 0 {
+					command = command[:endIdx]
+				}
+				return strings.TrimSpace(command)
+			}
+		}
+	}
+
+	return ""
+}
+
 // generateFallbackJSON 生成回退JSON
 func (ssja *SonicStreamingJSONAggregator) generateFallbackJSON(toolName string) string {
+	// 处理MCP工具
+	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
+		parts := strings.Split(toolName, "__")
+		if len(parts) >= 3 {
+			actualToolName := parts[2]
+			switch strings.ToLower(actualToolName) {
+			case "list_dir":
+				return `{"relative_path": ".", "recursive": false}`
+			case "find_file":
+				return `{"file_mask": "*", "relative_path": "."}`
+			case "find_symbol", "get_symbols_overview":
+				return `{"relative_path": ""}`
+			case "search_for_pattern":
+				return `{"substring_pattern": "", "relative_path": "."}`
+			default:
+				return `{"input": ""}`
+			}
+		}
+		return `{}`
+	}
+
+	// 标准工具处理
 	switch strings.ToLower(toolName) {
 	case "ls":
 		return `{"path": "."}`

@@ -50,12 +50,12 @@ func (m *ToolDedupManager) StartToolExecution(toolUseId string) bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	// 如果已经在执行，返回false
 	if m.executing[toolUseId] {
 		return false
 	}
-	
+
 	// 标记为正在执行
 	m.executing[toolUseId] = true
 	m.lastAccess[toolUseId] = time.Now()
@@ -87,7 +87,7 @@ func (m *ToolDedupManager) Reset() {
 func (m *ToolDedupManager) CleanupExpiredTools(expireDuration time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	now := time.Now()
 	for toolId, lastTime := range m.lastAccess {
 		if now.Sub(lastTime) > expireDuration {
@@ -97,4 +97,3 @@ func (m *ToolDedupManager) CleanupExpiredTools(expireDuration time.Duration) {
 		}
 	}
 }
-

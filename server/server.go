@@ -186,7 +186,7 @@ func StartServer(port string, authToken string) {
 
 		// 如果环境变量禁用了流式传输，则强制设置为false
 		if config.IsStreamDisabled() {
-			logger.Info("DISABLE_STREAM=true，强制禁用流式响应", 
+			logger.Info("DISABLE_STREAM=true，强制禁用流式响应",
 				logger.String("original_stream", fmt.Sprintf("%v", anthropicReq.Stream)))
 			anthropicReq.Stream = false
 		}
@@ -241,7 +241,7 @@ func StartServer(port string, authToken string) {
 
 		// 如果环境变量禁用了流式传输，则强制设置为false
 		if config.IsStreamDisabled() {
-			logger.Info("DISABLE_STREAM=true，强制禁用流式响应", 
+			logger.Info("DISABLE_STREAM=true，强制禁用流式响应",
 				logger.String("original_stream", fmt.Sprintf("%v", anthropicReq.Stream)))
 			anthropicReq.Stream = false
 		}

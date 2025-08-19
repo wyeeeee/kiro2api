@@ -306,7 +306,6 @@ func determineChatTriggerType(anthropicReq types.AnthropicRequest) string {
 	return "MANUAL"
 }
 
-
 // validateCodeWhispererRequest 验证CodeWhisperer请求的完整性 (SOLID-SRP: 单一责任验证)
 func validateCodeWhispererRequest(cwReq *types.CodeWhispererRequest) error {
 	// 验证必需字段
@@ -361,17 +360,17 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 				if blockType, exists := block["type"]; exists {
 					if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
 						toolResult := types.ToolResult{}
-						
+
 						// 提取 tool_use_id
 						if toolUseId, ok := block["tool_use_id"].(string); ok {
 							toolResult.ToolUseId = toolUseId
 						}
-						
+
 						// 提取 content - 转换为数组格式
 						if content, exists := block["content"]; exists {
 							// 将 content 转换为 []map[string]interface{} 格式
 							var contentArray []map[string]interface{}
-							
+
 							// 处理不同的 content 格式
 							switch c := content.(type) {
 							case string:
@@ -395,19 +394,19 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 									{"text": fmt.Sprintf("%v", c)},
 								}
 							}
-							
+
 							toolResult.Content = contentArray
 						}
-						
+
 						// 提取 status (默认为 success)
 						toolResult.Status = "success"
 						if isError, ok := block["is_error"].(bool); ok && isError {
 							toolResult.Status = "error"
 							toolResult.IsError = true
 						}
-						
+
 						toolResults = append(toolResults, toolResult)
-						
+
 						logger.Debug("提取到工具结果",
 							logger.String("tool_use_id", toolResult.ToolUseId),
 							logger.String("status", toolResult.Status),
@@ -420,15 +419,15 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 		for _, block := range v {
 			if block.Type == "tool_result" {
 				toolResult := types.ToolResult{}
-				
+
 				if block.ToolUseId != nil {
 					toolResult.ToolUseId = *block.ToolUseId
 				}
-				
+
 				// 处理 content
 				if block.Content != nil {
 					var contentArray []map[string]interface{}
-					
+
 					switch c := block.Content.(type) {
 					case string:
 						contentArray = []map[string]interface{}{
@@ -447,22 +446,22 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 							{"text": fmt.Sprintf("%v", c)},
 						}
 					}
-					
+
 					toolResult.Content = contentArray
 				}
-				
+
 				// 设置 status
 				toolResult.Status = "success"
 				if block.IsError != nil && *block.IsError {
 					toolResult.Status = "error"
 					toolResult.IsError = true
 				}
-				
+
 				toolResults = append(toolResults, toolResult)
 			}
 		}
 	}
-	
+
 	return toolResults
 }
 
@@ -506,11 +505,11 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 		toolResults := extractToolResultsFromMessage(lastMessage.Content)
 		if len(toolResults) > 0 {
 			cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults = toolResults
-			
+
 			logger.Info("已添加工具结果到请求",
 				logger.Int("tool_results_count", len(toolResults)),
 				logger.String("conversation_id", cwReq.ConversationState.ConversationId))
-			
+
 			// 对于包含 tool_result 的请求，content 应该为空字符串（符合 req2.json 的格式）
 			cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = ""
 			logger.Debug("工具结果请求，设置 content 为空字符串")
@@ -639,7 +638,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 				} else {
 					userMsg.UserInputMessage.Content = ""
 				}
-				
+
 				// 检查用户消息中的工具结果
 				toolResults := extractToolResultsFromMessage(anthropicReq.Messages[i].Content)
 				if len(toolResults) > 0 {
@@ -661,7 +660,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 					} else {
 						assistantMsg.AssistantResponseMessage.Content = ""
 					}
-					
+
 					// 提取助手消息中的工具调用
 					toolUses := extractToolUsesFromMessage(anthropicReq.Messages[i+1].Content)
 					if len(toolUses) > 0 {
@@ -671,7 +670,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 					} else {
 						assistantMsg.AssistantResponseMessage.ToolUses = nil
 					}
-					
+
 					history = append(history, assistantMsg)
 					i++ // 跳过已处理的助手消息
 				}
@@ -775,7 +774,7 @@ func generateToolSystemPrompt(toolChoice any, tools []types.AnthropicTool) strin
 // extractToolUsesFromMessage 从助手消息内容中提取工具调用
 func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 	var toolUses []types.ToolUseEntry
-	
+
 	switch v := content.(type) {
 	case []any:
 		for _, item := range v {
@@ -783,17 +782,17 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 				if blockType, exists := block["type"]; exists {
 					if typeStr, ok := blockType.(string); ok && typeStr == "tool_use" {
 						toolUse := types.ToolUseEntry{}
-						
+
 						// 提取 id 作为 ToolUseId
 						if id, ok := block["id"].(string); ok {
 							toolUse.ToolUseId = id
 						}
-						
+
 						// 提取 name
 						if name, ok := block["name"].(string); ok {
 							toolUse.Name = name
 						}
-						
+
 						// 提取 input
 						if input, ok := block["input"].(map[string]interface{}); ok {
 							toolUse.Input = input
@@ -806,9 +805,9 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 							// 如果没有 input，设置为空对象
 							toolUse.Input = map[string]interface{}{}
 						}
-						
+
 						toolUses = append(toolUses, toolUse)
-						
+
 						logger.Debug("提取到历史工具调用",
 							logger.String("tool_id", toolUse.ToolUseId),
 							logger.String("tool_name", toolUse.Name))
@@ -820,15 +819,15 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 		for _, block := range v {
 			if block.Type == "tool_use" {
 				toolUse := types.ToolUseEntry{}
-				
+
 				if block.ID != nil {
 					toolUse.ToolUseId = *block.ID
 				}
-				
+
 				if block.Name != nil {
 					toolUse.Name = *block.Name
 				}
-				
+
 				if block.Input != nil {
 					switch inp := (*block.Input).(type) {
 					case map[string]interface{}:
@@ -841,7 +840,7 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 				} else {
 					toolUse.Input = map[string]interface{}{}
 				}
-				
+
 				toolUses = append(toolUses, toolUse)
 			}
 		}
@@ -849,7 +848,7 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 		// 如果是纯文本，不包含工具调用
 		return nil
 	}
-	
+
 	return toolUses
 }
 
@@ -870,4 +869,3 @@ func extractRequiredFields(schema map[string]any) []string {
 	}
 	return nil
 }
-

@@ -88,7 +88,7 @@ func (hp *HeaderParser) ParseHeadersWithState(data []byte, state *HeaderParseSta
 
 	offset := 0
 	consecutiveDataInsufficientCount := 0 // 追踪连续的数据不足错误
-	initialPhase := state.Phase            // 记录初始阶段
+	initialPhase := state.Phase           // 记录初始阶段
 
 	for offset < len(data) {
 		var needMoreData bool
@@ -118,7 +118,7 @@ func (hp *HeaderParser) ParseHeadersWithState(data []byte, state *HeaderParseSta
 
 		if needMoreData {
 			consecutiveDataInsufficientCount++
-			
+
 			// 检查是否在同一阶段陷入无限循环 - 降低阈值，更快触发恢复
 			if currentPhase == initialPhase && consecutiveDataInsufficientCount > 2 {
 				logger.Warn("检测到头部解析循环，强制完成解析",
@@ -127,7 +127,7 @@ func (hp *HeaderParser) ParseHeadersWithState(data []byte, state *HeaderParseSta
 					logger.Int("parsed_headers", len(state.ParsedHeaders)))
 				return hp.ForceCompleteHeaderParsing(state), nil
 			}
-			
+
 			// 如果已经有部分解析结果且连续失败次数过多，强制完成 - 降低阈值
 			if len(state.ParsedHeaders) > 0 && consecutiveDataInsufficientCount > 3 {
 				logger.Warn("连续数据不足错误过多，强制完成头部解析",
@@ -135,24 +135,24 @@ func (hp *HeaderParser) ParseHeadersWithState(data []byte, state *HeaderParseSta
 					logger.Int("parsed_headers", len(state.ParsedHeaders)))
 				return hp.ForceCompleteHeaderParsing(state), nil
 			}
-			
+
 			// 新增：如果没有任何解析结果但连续失败，也要强制跳出
 			if len(state.ParsedHeaders) == 0 && consecutiveDataInsufficientCount > 5 {
 				logger.Warn("长期无法解析任何头部，强制使用默认头部",
 					logger.Int("consecutive_count", consecutiveDataInsufficientCount))
 				return hp.ForceCompleteHeaderParsing(state), nil
 			}
-			
+
 			logger.Debug("头部解析需要更多数据（状态已保存）",
 				logger.Int("current_phase", int(state.Phase)),
 				logger.Int("processed_bytes", offset),
 				logger.Int("parsed_count", len(state.ParsedHeaders)),
 				logger.Int("consecutive_insufficient", consecutiveDataInsufficientCount))
-			
+
 			// 确保状态完整保存
 			return state.ParsedHeaders, NewParseError("数据不足：需要更多数据继续解析", nil)
 		}
-		
+
 		consecutiveDataInsufficientCount = 0 // 重置计数器
 		initialPhase = state.Phase           // 更新初始阶段
 	}
@@ -163,13 +163,13 @@ func (hp *HeaderParser) ParseHeadersWithState(data []byte, state *HeaderParseSta
 			logger.Int("current_phase", int(state.Phase)),
 			logger.Int("processed_bytes", offset),
 			logger.Int("parsed_headers", len(state.ParsedHeaders)))
-		
+
 		// 如果已经有一些解析结果，尝试强制完成
 		if len(state.ParsedHeaders) > 0 {
 			logger.Info("数据不完整但已有解析结果，强制完成头部解析")
 			return hp.ForceCompleteHeaderParsing(state), nil
 		}
-		
+
 		return state.ParsedHeaders, NewParseError("数据不足：需要更多数据继续解析", nil)
 	}
 
@@ -506,13 +506,13 @@ func (hp *HeaderParser) ForceCompleteHeaderParsing(state *HeaderParseState) map[
 			":content-type": {Type: ValueType_STRING, Value: "application/json"},
 		}
 	}
-	
+
 	// 补充缺失的关键头部
 	result := make(map[string]HeaderValue)
 	for k, v := range state.ParsedHeaders {
 		result[k] = v
 	}
-	
+
 	if _, exists := result[":message-type"]; !exists {
 		result[":message-type"] = HeaderValue{Type: ValueType_STRING, Value: MessageTypes.EVENT}
 	}
@@ -522,6 +522,6 @@ func (hp *HeaderParser) ForceCompleteHeaderParsing(state *HeaderParseState) map[
 	if _, exists := result[":content-type"]; !exists {
 		result[":content-type"] = HeaderValue{Type: ValueType_STRING, Value: "application/json"}
 	}
-	
+
 	return result
 }

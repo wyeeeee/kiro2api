@@ -217,41 +217,55 @@ func TestCompliantEventStreamParser_ToolLifecycle(t *testing.T) {
 	stream := &bytes.Buffer{}
 
 	// 工具执行开始
-	stream.Write(buildCompliantEventFrame(
+	frame1 := buildCompliantEventFrame(
 		parser.MessageTypes.EVENT,
 		parser.EventTypes.TOOL_EXECUTION_START,
 		"application/json",
 		`{"toolCallId":"tool-test","toolName":"Write","executionId":"exec-test"}`,
-	))
+	)
+	t.Logf("TOOL_EXECUTION_START frame: %d bytes, hex: %x", len(frame1), frame1[:min(50, len(frame1))])
+	stream.Write(frame1)
 
 	// 工具调用请求
-	stream.Write(buildCompliantEventFrame(
+	frame2 := buildCompliantEventFrame(
 		parser.MessageTypes.EVENT,
 		parser.EventTypes.TOOL_CALL_REQUEST,
 		"application/json",
 		`{"toolCallId":"tool-test","toolName":"Write","input":{"file_path":"/tmp/test.txt","content":"Hello"}}`,
-	))
+	)
+	t.Logf("TOOL_CALL_REQUEST frame: %d bytes, hex: %x", len(frame2), frame2[:min(50, len(frame2))])
+	stream.Write(frame2)
 
 	// 工具调用结果
-	stream.Write(buildCompliantEventFrame(
+	frame3 := buildCompliantEventFrame(
 		parser.MessageTypes.EVENT,
 		parser.EventTypes.TOOL_CALL_RESULT,
 		"application/json",
 		`{"toolCallId":"tool-test","result":"File written successfully","success":true}`,
-	))
+	)
+	t.Logf("TOOL_CALL_RESULT frame: %d bytes, hex: %x", len(frame3), frame3[:min(50, len(frame3))])
+	stream.Write(frame3)
 
 	// 工具执行结束
-	stream.Write(buildCompliantEventFrame(
+	frame4 := buildCompliantEventFrame(
 		parser.MessageTypes.EVENT,
 		parser.EventTypes.TOOL_EXECUTION_END,
 		"application/json",
 		`{"toolCallId":"tool-test","executionId":"exec-test","status":"completed"}`,
-	))
+	)
+	t.Logf("TOOL_EXECUTION_END frame: %d bytes, hex: %x", len(frame4), frame4[:min(50, len(frame4))])
+	stream.Write(frame4)
 
-	result, err := eventParser.ParseResponse(stream.Bytes())
+	allData := stream.Bytes()
+	t.Logf("Total stream data: %d bytes, first 100 bytes: %x", len(allData), allData[:min(100, len(allData))])
+
+	result, err := eventParser.ParseResponse(allData)
 	if err != nil {
 		t.Fatalf("解析工具生命周期失败: %v", err)
 	}
+
+	t.Logf("解析结果: Messages=%d, Events=%d, ToolExecutions=%d, ActiveTools=%d", 
+		len(result.Messages), len(result.Events), len(result.ToolExecutions), len(result.ActiveTools))
 
 	// 验证工具执行记录
 	if len(result.ToolExecutions) == 0 {
