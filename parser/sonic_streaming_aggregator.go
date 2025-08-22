@@ -10,6 +10,9 @@ import (
 )
 
 // SonicStreamingJSONAggregator 基于Sonic的高性能流式JSON聚合器
+// ToolParamsUpdateCallback 工具参数更新回调函数类型
+type ToolParamsUpdateCallback func(toolUseId string, fullParams string)
+
 type SonicStreamingJSONAggregator struct {
 	activeStreamers map[string]*SonicJSONStreamer
 	mu              sync.RWMutex

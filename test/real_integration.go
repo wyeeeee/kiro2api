@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"kiro2api/logger"
 	"kiro2api/types"
-	"kiro2api/utils"
 )
 
 // RealIntegrationTester 真实集成测试器
@@ -20,7 +20,7 @@ type RealIntegrationTester struct {
 	server     *httptest.Server
 	router     *gin.Engine
 	mockAWS    *MockAWSServer
-	logger     utils.Logger
+	logger     interface{} // 简化logger类型，直接使用logger包的函数
 	config     *RealTestConfig
 }
 
@@ -39,7 +39,7 @@ type MockAWSServer struct {
 	server       *httptest.Server
 	mockData     []byte
 	responseType string
-	logger       utils.Logger
+	logger       interface{} // 直接使用logger包
 }
 
 // RealIntegrationResult 真实集成测试结果
@@ -86,11 +86,11 @@ func NewRealIntegrationTester(config *RealTestConfig) *RealIntegrationTester {
 
 	tester := &RealIntegrationTester{
 		config: config,
-		logger: utils.GetLogger(),
+		logger: nil, // 直接使用logger包的函数
 	}
 	
 	// 为测试强制设置Debug日志
-	tester.logger.Info("RealIntegrationTester初始化", utils.Bool("enable_mock_aws", config.EnableMockAWS))
+	// logger.Info("RealIntegrationTester初始化", logger.Bool("enable_mock_aws", config.EnableMockAWS))
 
 	// 初始化模拟AWS服务器
 	if config.EnableMockAWS {
@@ -765,7 +765,7 @@ func (r *RealIntegrationTester) Close() {
 // NewMockAWSServer 创建模拟AWS服务器
 func NewMockAWSServer() *MockAWSServer {
 	mock := &MockAWSServer{
-		logger: utils.GetLogger(),
+		logger: nil, // 直接使用logger包的函数
 	}
 
 	// 创建HTTP处理器

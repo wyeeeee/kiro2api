@@ -6,14 +6,14 @@ import (
 	"strings"
 	"time"
 
-	"kiro2api/utils"
+	"kiro2api/logger"
 )
 
 // ExpectationGenerator 期望值生成器
 type ExpectationGenerator struct {
 	protocolSpec *ProtocolSpecification
 	dedupRules   *DeduplicationRules
-	logger       utils.Logger
+	logger       interface{} // 直接使用logger包
 }
 
 // ExpectedOutput 期望输出
@@ -150,7 +150,7 @@ func NewExpectationGenerator() *ExpectationGenerator {
 	return &ExpectationGenerator{
 		protocolSpec: getDefaultProtocolSpec(),
 		dedupRules:   getDefaultDeduplicationRules(),
-		logger:       utils.GetLogger(),
+		logger:       nil, // 直接使用logger包的函数
 	}
 }
 

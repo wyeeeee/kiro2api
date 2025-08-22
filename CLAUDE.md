@@ -120,7 +120,7 @@ export GIN_MODE="release"                       # Gin模式（默认: release）
 3. **客户端选择**: `utils.DoSmartRequest()` 智能选择 HTTP 客户端
 4. **格式转换**: `converter/` 包将请求转换为 CodeWhisperer 格式
 5. **代理**: 转发到 AWS CodeWhisperer API
-6. **流处理**: `StreamParser` 处理实时 AWS EventStream 二进制解析
+6. **流处理**: `RobustEventStreamParser` 和 `CompliantEventStreamParser` 处理实时 AWS EventStream 二进制解析
 7. **响应转换**: 转换回客户端请求的格式
 
 ### 关键架构模式
@@ -140,8 +140,9 @@ export GIN_MODE="release"                       # Gin模式（默认: release）
 - 请求级别的去重管理，防止跨请求状态污染
 
 **流处理架构**:
-- 使用滑动窗口缓冲区的 `StreamParser` 进行实时 EventStream 解析
-- 支持零延迟流式传输
+- 使用 `RobustEventStreamParser` 和 `CompliantEventStreamParser` 进行实时 EventStream 解析
+- 配合 `SonicStreamingJSONAggregator` 提供高性能JSON流式聚合
+- 支持零延迟流式传输和滑动窗口缓冲区
 - 对象池优化：复用解析器实例
 
 ## 包结构
@@ -160,15 +161,19 @@ export GIN_MODE="release"                       # Gin模式（默认: release）
 
 **`parser/`** - 流处理
 - `robust_parser.go`: 增强的 AWS EventStream 解析器，支持环形缓冲区和错误恢复
-- `compliant_message_processor.go`: 符合标准的消息处理器，支持工具调用去重
 - `compliant_event_stream_parser.go`: 符合标准的EventStream解析器
+- `compliant_message_processor.go`: 符合标准的消息处理器，支持工具调用去重
 - `compliant_parser_pool.go`: 解析器对象池
+- `sonic_streaming_aggregator.go`: 基于Sonic的高性能流式JSON聚合器
 - `header_parser.go`: EventStream头部解析器
 - `ring_buffer.go`: 环形缓冲区实现
 - `session_manager.go`: 会话管理器
 - `tool_call_fsm.go`: 工具调用状态机
+- `tool_lifecycle_manager.go`: 工具生命周期管理器
 - `validation_rules.go`: 验证规则
 - `xml_tool_parser.go`: XML工具解析器
+- `event_stream_types.go`: EventStream类型定义
+- `response_validator.go`: 响应验证器
 - 将 EventStream 事件转换为客户端的 SSE 格式
 
 **`auth/`** - 令牌管理  
@@ -184,14 +189,19 @@ export GIN_MODE="release"                       # Gin模式（默认: release）
 - `image.go`: 多模态图片处理工具
 - `atomic_cache.go`: 原子操作的Token缓存
 - `json.go`: 高性能JSON序列化工具
-- `logger.go`: 增强的日志系统，支持多级别和格式化输出
 - `raw_data_saver.go`: 调试数据保存工具
+- `token_refresh_manager.go`: Token刷新管理器
+- `message.go`: 消息处理工具
+- `http.go`: HTTP工具函数
+- `uuid.go`: UUID生成工具
 
 **`types/`** - 数据结构定义
 - `anthropic.go`: Anthropic API 请求/响应结构
 - `openai.go`: OpenAI API 格式结构  
 - `codewhisperer.go`: AWS CodeWhisperer API 结构
 - `token.go`: 统一token管理结构
+- `model.go`: 模型定义结构
+- `common.go`: 通用数据结构
 
 **`logger/`** - 结构化日志系统
 - 支持环境变量配置：`LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE`, `LOG_CONSOLE`
@@ -547,7 +557,7 @@ curl -I http://localhost:8081/v1/models
 
 
 ### 内存管理优化
-- **对象池模式**: 使用 `sync.Pool` 复用 `StreamParser` 和字节缓冲区
+- **对象池模式**: 使用 `sync.Pool` 复用 `RobustEventStreamParser`、`SonicStreamingJSONAggregator` 和字节缓冲区
 - **预分配策略**: 缓冲区和事件切片预分配容量
 - **热点数据缓存**: Token缓存使用热点+冷缓存两级架构
 
@@ -620,7 +630,7 @@ curl -I http://localhost:8081/v1/models
 - **TLS优化**: 支持TLS 1.2-1.3，现代密码套件
 
 ### 流处理优化
-- 对象池：复用解析器实例
+- **对象池**: 使用 `sync.Pool` 复用 `RobustEventStreamParser` 和 `SonicStreamingJSONAggregator` 实例
 - **缓冲区管理**: 预分配4KB缓冲区，支持滑动窗口
 - **内存复用**: 事件切片预分配，减少GC压力
 
@@ -643,7 +653,7 @@ curl -I http://localhost:8081/v1/models
 
 ### 性能问题
 1. 监控HTTP客户端连接池状态
-2. 检查StreamParser对象池使用情况
+2. 检查 `RobustEventStreamParser` 和 `SonicStreamingJSONAggregator` 对象池使用情况
 3. 验证Token缓存命中率和清理效果
 4. 分析请求复杂度评估的准确性
 

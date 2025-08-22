@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/utils"
 )
@@ -14,7 +15,7 @@ import (
 // HexDataAnalyzer 十六进制数据解析器
 type HexDataAnalyzer struct {
 	rawDataRecord *utils.RawDataRecord
-	logger        utils.Logger
+	logger        interface{} // 直接使用logger包
 }
 
 // ParsedHexData 解析后的十六进制数据
@@ -32,7 +33,7 @@ type ParsedHexData struct {
 func NewHexDataAnalyzer(record *utils.RawDataRecord) *HexDataAnalyzer {
 	return &HexDataAnalyzer{
 		rawDataRecord: record,
-		logger:        utils.GetLogger(),
+		logger:        nil, // 直接使用logger包的函数
 	}
 }
 
@@ -48,9 +49,9 @@ func LoadHexDataFromFile(filePath string) (*HexDataAnalyzer, error) {
 
 // ParseHexData 解析十六进制数据为二进制流
 func (h *HexDataAnalyzer) ParseHexData() (*ParsedHexData, error) {
-	h.logger.Debug("开始解析十六进制数据",
-		utils.Int("hex_length", len(h.rawDataRecord.HexData)),
-		utils.String("original_md5", h.rawDataRecord.MD5Hash))
+	logger.Debug("开始解析十六进制数据",
+		logger.Int("hex_length", len(h.rawDataRecord.HexData)),
+		logger.String("original_md5", h.rawDataRecord.MD5Hash))
 
 	// 验证输入数据
 	if h.rawDataRecord.HexData == "" {
@@ -89,13 +90,13 @@ func (h *HexDataAnalyzer) ParseHexData() (*ParsedHexData, error) {
 	if !isValid {
 		result.ErrorMessage = fmt.Sprintf("MD5校验失败: 期望=%s, 实际=%s", 
 			h.rawDataRecord.MD5Hash, actualMD5)
-		h.logger.Warn("MD5校验失败",
-			utils.String("expected", h.rawDataRecord.MD5Hash),
-			utils.String("actual", actualMD5))
+		logger.Warn("MD5校验失败",
+			logger.String("expected", h.rawDataRecord.MD5Hash),
+			logger.String("actual", actualMD5))
 	} else {
-		h.logger.Debug("十六进制数据解析成功",
-			utils.Int("binary_size", len(binaryData)),
-			utils.String("md5_verified", actualMD5))
+		logger.Debug("十六进制数据解析成功",
+			logger.Int("binary_size", len(binaryData)),
+			logger.String("md5_verified", actualMD5))
 	}
 
 	return result, nil
@@ -123,7 +124,7 @@ func (h *HexDataAnalyzer) GetMetadata() *utils.Metadata {
 // EventStreamParser AWS Event Stream协议解析器
 type EventStreamParser struct {
 	compliantParser *parser.CompliantEventStreamParser
-	logger          utils.Logger
+	logger          interface{} // 直接使用logger包
 }
 
 // ParsedEvent 解析后的事件
@@ -155,7 +156,7 @@ func NewEventStreamParser() *EventStreamParser {
 	
 	return &EventStreamParser{
 		compliantParser: compliantParser,
-		logger:          utils.GetLogger(),
+		logger:          nil, // 直接使用logger包的函数
 	}
 }
 
@@ -171,8 +172,8 @@ func (p *EventStreamParser) Close() {
 func (p *EventStreamParser) ParseEventStream(data []byte) (*ParseResult, error) {
 	startTime := time.Now()
 	
-	p.logger.Debug("开始解析AWS Event Stream",
-		utils.Int("data_size", len(data)))
+	logger.Debug("开始解析AWS Event Stream",
+		logger.Int("data_size", len(data)))
 
 	result := &ParseResult{
 		Events:    make([]*ParsedEvent, 0),
@@ -186,9 +187,9 @@ func (p *EventStreamParser) ParseEventStream(data []byte) (*ParseResult, error) 
 	// 使用符合规范的解析器解析整个数据流
 	events, parseErr := p.compliantParser.ParseStream(data)
 	if parseErr != nil {
-		p.logger.Warn("解析EventStream时出现错误",
-			utils.Err(parseErr),
-			utils.Int("data_size", len(data)))
+		logger.Warn("解析EventStream时出现错误",
+			logger.Err(parseErr),
+			logger.Int("data_size", len(data)))
 		// 在非严格模式下继续处理
 	}
 
@@ -197,9 +198,9 @@ func (p *EventStreamParser) ParseEventStream(data []byte) (*ParseResult, error) 
 	for _, event := range events {
 		parsedEvent, err := p.convertToStandardEvent(event, eventIndex, 0)
 		if err != nil {
-			p.logger.Warn("转换事件格式失败",
-				utils.Err(err),
-				utils.Int("event_index", eventIndex))
+			logger.Warn("转换事件格式失败",
+				logger.Err(err),
+				logger.Int("event_index", eventIndex))
 			
 			// 创建错误事件记录
 			parsedEvent = &ParsedEvent{
@@ -223,10 +224,10 @@ func (p *EventStreamParser) ParseEventStream(data []byte) (*ParseResult, error) 
 	result.ParseDuration = time.Since(startTime)
 	result.Success = len(result.Events) > 0
 
-	p.logger.Debug("Event Stream解析完成",
-		utils.Int("total_events", result.TotalEvents),
-		utils.Int("total_bytes", result.TotalBytes),
-		utils.Duration("parse_duration", result.ParseDuration))
+	logger.Debug("Event Stream解析完成",
+		logger.Int("total_events", result.TotalEvents),
+		logger.Int("total_bytes", result.TotalBytes),
+		logger.Duration("parse_duration", result.ParseDuration))
 
 	return result, nil
 }

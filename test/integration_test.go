@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/utils"
 )
@@ -52,7 +53,7 @@ type TestSuite struct {
 	Summary   TestSummary    `json:"summary"`
 	StartTime time.Time      `json:"start_time"`
 	EndTime   time.Time      `json:"end_time"`
-	logger    utils.Logger
+	logger    interface{} // 直接使用logger包
 }
 
 // TestSummary 测试摘要
@@ -68,13 +69,13 @@ type TestSummary struct {
 
 // TestCaseGenerator 测试用例生成器
 type TestCaseGenerator struct {
-	logger utils.Logger
+	logger interface{} // 直接使用logger包
 }
 
 // NewTestCaseGenerator 创建测试用例生成器
 func NewTestCaseGenerator() *TestCaseGenerator {
 	return &TestCaseGenerator{
-		logger: utils.GetLogger(),
+		logger: nil, // 直接使用logger包的函数
 	}
 }
 
@@ -275,7 +276,7 @@ func extractExpectedContentFromSSE(sseEvents []SSEEvent) string {
 // ExecuteTestCase 执行测试用例
 func ExecuteTestCase(testCase *TestCase) (*TestResult, error) {
 	startTime := time.Now()
-	logger := utils.GetLogger()
+	// 直接使用logger包的函数
 	
 	logger.Debug("开始执行测试用例", utils.String("test_name", testCase.Name))
 
@@ -352,7 +353,7 @@ func NewTestSuite() *TestSuite {
 	return &TestSuite{
 		TestCases: make([]TestCase, 0),
 		Results:   make([]TestResult, 0),
-		logger:    utils.GetLogger(),
+		logger:    nil, // 直接使用logger包的函数
 	}
 }
 

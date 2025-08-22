@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"kiro2api/logger"
 	"kiro2api/utils"
 )
 
@@ -46,7 +47,7 @@ type SimulationStats struct {
 type ValidationFramework struct {
 	tolerance Tolerance
 	reporters []Reporter
-	logger    utils.Logger
+	logger    interface{} // 直接使用logger包
 	config    *ValidationConfig
 }
 
@@ -251,7 +252,7 @@ func NewValidationFramework(config *ValidationConfig) *ValidationFramework {
 			&MarkdownReporter{},
 			&TextReporter{},
 		},
-		logger: utils.GetLogger(),
+		logger: nil, // 直接使用logger包的函数
 		config: config,
 	}
 }
