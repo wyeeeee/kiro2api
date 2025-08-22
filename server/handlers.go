@@ -100,6 +100,37 @@ func extractPrintableText(data string) string {
 	return finalText
 }
 
+// extractRelevantHeaders 提取相关的请求头信息
+func extractRelevantHeaders(c *gin.Context) map[string]string {
+	relevantHeaders := map[string]string{}
+
+	// 提取关键的请求头
+	headerKeys := []string{
+		"Content-Type",
+		"Authorization",
+		"X-API-Key",
+		"X-Request-ID",
+		"X-Forwarded-For",
+		"Accept",
+		"Accept-Encoding",
+	}
+
+	for _, key := range headerKeys {
+		if value := c.GetHeader(key); value != "" {
+			// 对敏感信息进行脱敏处理
+			if key == "Authorization" && len(value) > 20 {
+				relevantHeaders[key] = value[:10] + "***" + value[len(value)-7:]
+			} else if key == "X-API-Key" && len(value) > 10 {
+				relevantHeaders[key] = value[:5] + "***" + value[len(value)-3:]
+			} else {
+				relevantHeaders[key] = value
+			}
+		}
+	}
+
+	return relevantHeaders
+}
+
 // shouldSkipDuplicateToolEvent 检查是否应该跳过重复的工具事件
 // 使用基于 tool_use_id 的去重逻辑，符合 Anthropic 标准
 func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.ToolDedupManager) bool {
@@ -238,6 +269,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	emptyReadsCount := 0
 	const maxEmptyReads = 3
 
+	// 跟踪解析状态用于元数据收集
+	var lastParseErr error
+	totalProcessedEvents := 0
+
 	for {
 		n, err := resp.Body.Read(buf)
 		totalReadBytes += n
@@ -250,6 +285,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 			// 使用符合规范的解析器解析流式数据
 			events, parseErr := compliantParser.ParseStream(buf[:n])
+			lastParseErr = parseErr // 保存最后的解析错误
 			if parseErr != nil {
 				logger.Warn("符合规范的解析器处理失败",
 					logger.Err(parseErr),
@@ -257,6 +293,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 				// 在非严格模式下继续处理
 			}
 
+			totalProcessedEvents += len(events) // 累计处理的事件数量
 			logger.Debug("解析到符合规范的CW事件批次",
 				logger.Int("batch_events", len(events)),
 				logger.Int("read_bytes", n),
@@ -572,11 +609,32 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		sender.SendEvent(c, event)
 	}
 
-	// 输出接收到的所有原始数据
+	// 输出接收到的所有原始数据，支持回放和测试
 	rawData := rawDataBuffer.String()
+	rawDataBytes := []byte(rawData)
+
+	// 生成请求ID（如果messageId不够唯一，可以使用更复杂的生成方式）
+	requestID := fmt.Sprintf("req_%s_%d", messageId, time.Now().Unix())
+
+	// 收集元数据
+	metadata := utils.Metadata{
+		ClientIP:       c.ClientIP(),
+		UserAgent:      c.GetHeader("User-Agent"),
+		RequestHeaders: extractRelevantHeaders(c),
+		ParseSuccess:   lastParseErr == nil, // 使用最后一次解析的错误状态
+		EventsCount:    totalProcessedEvents,
+	}
+
+	// 保存原始数据以供回放和测试
+	if err := utils.SaveRawDataForReplay(rawDataBytes, requestID, messageId, anthropicReq.Model, true, metadata); err != nil {
+		logger.Warn("保存原始数据失败", logger.Err(err))
+	}
+
+	// 保留原有的调试日志
 	logger.Debug("完整原始数据接收完成",
 		logger.Int("total_bytes", len(rawData)),
-		logger.String("raw_content", rawData))
+		logger.String("request_id", requestID),
+		logger.String("save_status", "saved_for_replay"))
 }
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件

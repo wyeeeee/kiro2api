@@ -267,7 +267,7 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 		return nil, 0, NewParseError(fmt.Sprintf("消息总长度异常: %d", totalLength), nil)
 	}
 	if totalLength > 16*1024*1024 { // 16MB 限制
-		return nil, 0, NewParseError(fmt.Sprintf("消息长度过大: %d", totalLength), nil)
+		return nil, 4, NewParseError(fmt.Sprintf("消息长度过大: %d", totalLength), nil) // 🔧 修复: 返回4字节而非0，避免死循环
 	}
 
 	if int(totalLength) > len(data) {
