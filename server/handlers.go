@@ -604,7 +604,30 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		// 冲刷尾部挂起内容
 		flushPending()
 	}
-	finalEvents := createAnthropicFinalEvents(totalOutputChars)
+	
+	// *** 关键修复：智能判断stopReason，修复claude-cli提前结束问题 ***
+	// 检查是否有工具调用完成但未处理tool_result（应该用tool_use而不是end_turn）
+	stopReason := "end_turn" // 默认
+	
+	if !hasToolResult {
+		// 检查是否有已完成的工具调用（非tool_result延续请求）
+		if dedupManager != nil {
+			// 通过工具映射检查是否有工具调用
+			hasCompletedTools := len(toolUseIdByBlockIndex) > 0
+			if hasCompletedTools {
+				stopReason = "tool_use"
+				logger.Debug("检测到工具调用完成，设置stop_reason为tool_use以继续对话",
+					logger.Int("completed_tools", len(toolUseIdByBlockIndex)),
+					logger.Bool("has_tool_result", hasToolResult))
+			}
+		}
+	} else {
+		// tool_result延续请求应该返回end_turn
+		logger.Debug("tool_result延续请求完成，设置stop_reason为end_turn",
+			logger.Bool("has_tool_result", hasToolResult))
+	}
+	
+	finalEvents := createAnthropicFinalEvents(totalOutputChars, stopReason)
 	for _, event := range finalEvents {
 		sender.SendEvent(c, event)
 	}
@@ -671,7 +694,7 @@ func createAnthropicStreamEvents(messageId, inputContent, model string) []map[st
 }
 
 // createAnthropicFinalEvents 创建Anthropic流式结束事件
-func createAnthropicFinalEvents(outputTokens int) []map[string]any {
+func createAnthropicFinalEvents(outputTokens int, stopReason string) []map[string]any {
 	return []map[string]any{
 		{
 			"index": 0,
@@ -680,7 +703,7 @@ func createAnthropicFinalEvents(outputTokens int) []map[string]any {
 		{
 			"type": "message_delta",
 			"delta": map[string]any{
-				"stop_reason":   "end_turn",
+				"stop_reason":   stopReason,
 				"stop_sequence": nil,
 			},
 			"usage": map[string]any{

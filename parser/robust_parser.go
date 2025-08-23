@@ -35,9 +35,9 @@ func NewRobustEventStreamParser(strictMode bool) *RobustEventStreamParser {
 		strictMode:    strictMode,
 		maxErrors:     10,
 		crcTable:      crc32.MakeTable(crc32.IEEE),
-		buffer:        make([]byte, 0, 4096),
-		ringBuffer:    NewRingBuffer(64 * 1024), // 64KB环形缓冲区
-		useRingBuffer: false,                    // 默认不启用，保持兼容性
+		buffer:        make([]byte, 0, 256*1024), // *** 关键修复：提升到256KB以处理16KB+工具调用 ***
+		ringBuffer:    NewRingBuffer(512 * 1024), // *** 环形缓冲区也提升到512KB ***
+		useRingBuffer: true,                      // 默认不启用，保持兼容性
 	}
 }
 
@@ -116,7 +116,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 		}
 
 		// 预先检查消息长度是否合理
-		totalLength := binary.BigEndian.Uint32(rp.buffer[offset:offset+4])
+		totalLength := binary.BigEndian.Uint32(rp.buffer[offset : offset+4])
 		if totalLength < 16 || totalLength > 16*1024*1024 {
 			logger.Warn("检测到异常消息长度，跳过该位置",
 				logger.Int("offset", offset),
@@ -136,7 +136,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 		}
 
 		// *** 关键修复：使用精确的消息边界数据 ***
-		messageData := rp.buffer[offset:offset+int(totalLength)]
+		messageData := rp.buffer[offset : offset+int(totalLength)]
 		message, _, err := rp.parseSingleMessageWithValidation(messageData)
 
 		if err != nil {
@@ -222,7 +222,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 
 		// *** 关键修复：使用确切的消息长度而不是解析器返回的consumed ***
 		offset += int(totalLength)
-		
+
 		// 安全检查：确保不会超出缓冲区
 		if offset > len(rp.buffer) {
 			logger.Warn("偏移量超出缓冲区，纠正",
@@ -380,12 +380,12 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	headerData := data[12 : 12+headerLength] // 从第12字节开始（跳过 Prelude CRC）
 	payloadStart := int(12 + headerLength)
 	payloadEnd := int(totalLength) - 4
-	
+
 	// *** 关键修复：严格边界检查 ***
 	if payloadStart > payloadEnd || payloadEnd > len(data) {
 		return nil, int(totalLength), NewParseError(fmt.Sprintf("payload边界异常: start=%d, end=%d, data_len=%d", payloadStart, payloadEnd, len(data)), nil)
 	}
-	
+
 	payloadData := data[payloadStart:payloadEnd]
 
 	// 添加详细的payload调试信息
@@ -475,7 +475,7 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 						return string(payloadData)
 					}()),
 					logger.Int("payload_len", len(payloadData)))
-				
+
 				// 尝试简单的JSON修复
 				payloadStr := string(payloadData)
 				if strings.Contains(payloadStr, "\"input\":") && strings.Contains(payloadStr, "\"name\":") {
@@ -619,15 +619,15 @@ func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
 	// 使用更严格的字符串查找，避免匹配到损坏的ID
 	searchStr := "tooluse_"
 	startPos := 0
-	
+
 	for {
 		idx := strings.Index(payload[startPos:], searchStr)
 		if idx == -1 {
 			break
 		}
-		
+
 		actualStart := startPos + idx
-		
+
 		// 确保前面是引号或其他分隔符，避免匹配到 "tooluluse_" 这样的损坏ID
 		if actualStart > 0 {
 			prevChar := payload[actualStart-1]
@@ -637,7 +637,7 @@ func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
 				continue
 			}
 		}
-		
+
 		// 查找ID的结束位置
 		end := actualStart + len(searchStr)
 		for end < len(payload) {
@@ -651,10 +651,10 @@ func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
 			}
 			end++
 		}
-		
+
 		if end > actualStart+len(searchStr) {
 			toolUseId := payload[actualStart:end]
-			
+
 			// 验证格式有效性
 			if rp.isValidToolUseIdFormat(toolUseId) {
 				toolUseIds = append(toolUseIds, toolUseId)
@@ -667,7 +667,7 @@ func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
 					logger.String("invalid_id", toolUseId))
 			}
 		}
-		
+
 		startPos = actualStart + 1
 	}
 

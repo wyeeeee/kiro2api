@@ -1653,12 +1653,13 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			// 获取工具的块索引
 			toolIndex := h.toolManager.GetBlockIndex(evt.ToolUseId)
 			if toolIndex >= 0 {
-				// 验证输入片段的基本格式（可选的安全检查）
-				if len(evt.Input) > 10000 { // 防止异常大的input片段
-					logger.Warn("工具调用输入片段过大，截断处理",
+				// 验证输入片段的基本格式（智能处理大片段）
+				if len(evt.Input) > 50000 { // 提高阈值到50KB，避免正常大型内容被截断
+					logger.Warn("工具调用输入片段非常大，跳过增量事件发送（但保留完整数据用于聚合）",
 						logger.String("toolUseId", evt.ToolUseId),
 						logger.Int("originalLength", len(evt.Input)))
-					evt.Input = evt.Input[:1000] + "... (truncated)"
+					// 不截断数据，只是跳过增量事件发送，让聚合器处理完整数据
+					return []SSEEvent{}, nil
 				}
 
 				logger.Debug("发送工具参数增量事件",
@@ -1901,8 +1902,8 @@ func (h *LegacyToolUseEventHandler) attemptJSONFix(input string) string {
 	// 6. 验证修复后的JSON基本结构
 	if !json.Valid([]byte(fixed)) {
 		logger.Debug("修复后JSON仍然无效，尝试构建基础结构")
-		// 如果修复后还是无效，构建最基本的结构
-		return "{\"todos\":[{\"content\":\"修复数据损坏\",\"status\":\"pending\",\"activeForm\":\"修复数据损坏\"}]}"
+		// 如果修复后还是无效，构建最基本的结构（移除硬编码的中文内容）
+		return "{\"todos\":[{\"content\":\"data_recovery\",\"status\":\"pending\",\"activeForm\":\"data_recovery\"}]}"
 	}
 
 	logger.Debug("JSON修复完成", logger.String("result", fixed[:min(100, len(fixed))]))

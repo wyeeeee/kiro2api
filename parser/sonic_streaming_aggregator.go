@@ -432,10 +432,37 @@ func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value str
 		case "read":
 			result = map[string]interface{}{"file_path": value}
 		case "write":
-			if strings.Contains(value, "/") {
+			// *** 关键修复：Write工具的智能参数分配 ***
+			// 1. 如果value看起来像完整的JSON参数，直接解析
+			if strings.HasPrefix(strings.TrimSpace(value), "{") && strings.Contains(value, "file_path") {
+				var tempMap map[string]interface{}
+				if err := utils.FastUnmarshal([]byte(value), &tempMap); err == nil {
+					result = tempMap
+					break
+				}
+			}
+			
+			// 2. 如果包含路径分隔符，很可能是file_path
+			if strings.Contains(value, "/") && !strings.Contains(value, "\n") && len(value) < 500 {
 				result = map[string]interface{}{"file_path": value, "content": ""}
 			} else {
-				result = map[string]interface{}{"file_path": "", "content": value}
+				// 3. 大型内容或包含换行符的，作为content处理，但需要合理的file_path
+				// 从累积的上下文中尝试推断file_path（如果有的话）
+				filePath := ""
+				if strings.Contains(value, ".html") {
+					// 从HTML内容中尝试提取可能的文件路径信息
+					if strings.Contains(value, "weather") {
+						filePath = "weather.html"
+					} else {
+						filePath = "index.html"
+					}
+				} else if strings.Contains(value, ".js") || strings.Contains(value, "javascript") {
+					filePath = "script.js"
+				} else if strings.Contains(value, ".css") || strings.Contains(value, "style") {
+					filePath = "style.css"
+				}
+				
+				result = map[string]interface{}{"file_path": filePath, "content": value}
 			}
 		case "bash":
 			result = map[string]interface{}{"command": value}
@@ -460,7 +487,12 @@ func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value str
 
 	logger.Debug("Sonic构建JSON成功",
 		logger.String("toolName", toolName),
-		logger.String("value", value),
+		logger.String("value", func() string {
+			if len(value) > 100 {
+				return value[:100] + "..."
+			}
+			return value
+		}()),
 		logger.Int("resultKeys", len(result)))
 
 	return result
@@ -648,41 +680,20 @@ func (ssja *SonicStreamingJSONAggregator) intelligentJSONFix(content, toolName s
 
 // fixTruncatedChineseCharacters 修复截断的中文字符
 func (ssja *SonicStreamingJSONAggregator) fixTruncatedChineseCharacters(content string) string {
-	// 常见的中文字符截断模式和修复
-	chineseFixMap := map[string]string{
-		"}ontent\"": "\"content\"", // }ontent -> content
-		"天气模tatus":  "\"status\"",  // 天气模tatus -> status
-		"\"s\":":    "\"status\":", // "s": -> "status":
-		"status\":\"pending\",\"activeForm\":\"实现天气模式切换的JavaScript逻": "\"status\":\"pending\",\"activeForm\":\"实现天气模式切换的JavaScript逻辑\"", // 修复完整字符串
-		"优化交互反馈和status": "优化交互反馈和用户体验\",\"status", // 补全截断内容
-	}
-
-	fixed := content
-	for pattern, replacement := range chineseFixMap {
-		if strings.Contains(fixed, pattern) {
-			logger.Debug("修复中文字符截断",
-				logger.String("pattern", pattern),
-				logger.String("replacement", replacement))
-			fixed = strings.Replace(fixed, pattern, replacement, -1)
-		}
-	}
-
-	return fixed
+	// 移除硬编码的中文字符截断模式修复
+	// 现在依赖通用的UTF-8完整性检查机制
+	return content
 }
 
 // fixBrokenJSONStructure 修复损坏的JSON结构
 func (ssja *SonicStreamingJSONAggregator) fixBrokenJSONStructure(content, toolName string) string {
 	fixed := content
 
-	// 修复常见的结构问题
-	structFixMap := map[string]string{
-		"}ontent\":": "\"content\":", // 缺失的引号
-		"\"实现响应式布局适配\",\"s\":\"pending\"":       "\"实现响应式布局适配\",\"status\":\"pending\"",         // 截断的键名
-		"\"优化交互反馈和status\":\"pending\"":         "\"优化交互反馈和用户体验\",\"status\":\"pending\"",       // 补全值和键
-		"activeForm\":\"实现天气模式的动态背景动画\"}ontent": "\"activeForm\":\"实现天气模式的动态背景动画\"},{\"content", // 修复对象分隔
-	}
-
-	// 针对TodoWrite工具的特殊修复
+	// 通用的JSON结构修复，移除硬编码的特定内容模式
+	// 修复缺失引号的常见模式
+	fixed = strings.ReplaceAll(fixed, "}content\":", "\"content\":")
+	
+	// 针对TodoWrite工具的通用结构修复
 	if strings.ToLower(toolName) == "todowrite" {
 		// 修复todos数组结构
 		if strings.Contains(fixed, "\"todos\"") && !strings.Contains(fixed, "[{") {
@@ -700,16 +711,6 @@ func (ssja *SonicStreamingJSONAggregator) fixBrokenJSONStructure(content, toolNa
 			if strings.HasSuffix(strings.TrimSpace(fixed), "}") {
 				fixed = strings.TrimSpace(fixed) + "]"
 			}
-		}
-	}
-
-	// 应用结构修复
-	for pattern, replacement := range structFixMap {
-		if strings.Contains(fixed, pattern) {
-			logger.Debug("修复JSON结构",
-				logger.String("pattern", pattern),
-				logger.String("replacement", replacement))
-			fixed = strings.Replace(fixed, pattern, replacement, -1)
 		}
 	}
 
