@@ -161,9 +161,7 @@ func (cesp *CompliantEventStreamParser) generateSummary(messages []*EventStreamM
 			summary.EventTypes[eventType]++
 
 			switch eventType {
-			case EventTypes.TOOL_CALL_REQUEST, EventTypes.TOOL_CALL_RESULT,
-				EventTypes.TOOL_CALL_ERROR, EventTypes.TOOL_EXECUTION_START,
-				EventTypes.TOOL_EXECUTION_END:
+			case EventTypes.TOOL_CALL_REQUEST, EventTypes.TOOL_CALL_ERROR:
 				summary.HasToolCalls = true
 			case EventTypes.COMPLETION, EventTypes.COMPLETION_CHUNK:
 				summary.HasCompletions = true

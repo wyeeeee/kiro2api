@@ -13,6 +13,7 @@ import (
 
 	"kiro2api/logger"
 	"kiro2api/types"
+	"kiro2api/utils"
 )
 
 // RealIntegrationTester 真实集成测试器
@@ -107,7 +108,7 @@ func NewRealIntegrationTester(config *RealTestConfig) *RealIntegrationTester {
 func (r *RealIntegrationTester) TestWithRawData(rawDataFile string) (*RealIntegrationResult, error) {
 	startTime := time.Now()
 
-	r.logger.Debug("开始真实集成测试", utils.String("raw_data_file", rawDataFile))
+	logger.Debug("开始真实集成测试", logger.String("raw_data_file", rawDataFile))
 
 	// 1. 加载原始数据
 	analyzer, err := LoadHexDataFromFile(rawDataFile)
@@ -165,8 +166,8 @@ func (r *RealIntegrationTester) TestWithRawData(rawDataFile string) (*RealIntegr
 	result.EventSequence = r.buildEventSequence(result.StreamEvents)
 	
 	// 调试：检查EventSequence中的事件类型
-	r.logger.Info("EventSequence构建完成", 
-		utils.Int("total_events", len(result.EventSequence)))
+	logger.Info("EventSequence构建完成", 
+		logger.Int("total_events", len(result.EventSequence)))
 	
 	eventTypeCount := make(map[string]int)
 	hasContentBlockStart := false
@@ -180,23 +181,23 @@ func (r *RealIntegrationTester) TestWithRawData(rawDataFile string) (*RealIntegr
 			if cb, ok := eventCapture.Data["content_block"].(map[string]interface{}); ok {
 				if cbType, ok := cb["type"].(string); ok && cbType == "tool_use" {
 					hasToolUseEvents = true
-					r.logger.Info("发现tool_use事件", 
-						utils.String("tool_id", fmt.Sprintf("%v", cb["id"])),
-						utils.String("tool_name", fmt.Sprintf("%v", cb["name"])))
+					logger.Info("发现tool_use事件", 
+						logger.String("tool_id", fmt.Sprintf("%v", cb["id"])),
+						logger.String("tool_name", fmt.Sprintf("%v", cb["name"])))
 				}
 			}
 		}
 	}
 	
-	r.logger.Info("事件类型统计", 
-		utils.Any("event_types", eventTypeCount),
-		utils.Bool("has_content_block_start", hasContentBlockStart),
-		utils.Bool("has_tool_use_events", hasToolUseEvents))
+	logger.Info("事件类型统计", 
+		logger.Any("event_types", eventTypeCount),
+		logger.Bool("has_content_block_start", hasContentBlockStart),
+		logger.Bool("has_tool_use_events", hasToolUseEvents))
 
-	r.logger.Debug("真实集成测试完成",
-		utils.Duration("processing_time", result.ProcessingTime),
-		utils.Bool("success", result.Success),
-		utils.Int("events_captured", len(result.StreamEvents)))
+	logger.Debug("真实集成测试完成",
+		logger.Duration("processing_time", result.ProcessingTime),
+		logger.Bool("success", result.Success),
+		logger.Int("events_captured", len(result.StreamEvents)))
 
 	return result, nil
 }
@@ -205,7 +206,7 @@ func (r *RealIntegrationTester) TestWithRawData(rawDataFile string) (*RealIntegr
 func (r *RealIntegrationTester) TestWithRawDataDirect(binaryData []byte) (*RealIntegrationResult, error) {
 	startTime := time.Now()
 
-	r.logger.Debug("开始直接测试", utils.Int("data_size", len(binaryData)))
+	logger.Debug("开始直接测试", logger.Int("data_size", len(binaryData)))
 
 	// 1. 配置模拟AWS响应
 	if r.mockAWS != nil {
@@ -236,10 +237,10 @@ func (r *RealIntegrationTester) TestWithRawDataDirect(binaryData []byte) (*RealI
 	// 从流事件中构建 EventSequence
 	result.EventSequence = r.buildEventSequence(result.StreamEvents)
 
-	r.logger.Debug("直接测试完成",
-		utils.Duration("processing_time", result.ProcessingTime),
-		utils.Bool("success", result.Success),
-		utils.Int("events_captured", len(result.StreamEvents)))
+	logger.Debug("直接测试完成",
+		logger.Duration("processing_time", result.ProcessingTime),
+		logger.Bool("success", result.Success),
+		logger.Int("events_captured", len(result.StreamEvents)))
 
 	return result, nil
 }
@@ -284,7 +285,7 @@ func (r *RealIntegrationTester) setupHTTPServer() {
 	// 创建测试服务器
 	r.server = httptest.NewServer(r.router)
 
-	r.logger.Debug("HTTP测试服务器已启动", utils.String("url", r.server.URL))
+	logger.Debug("HTTP测试服务器已启动", logger.String("url", r.server.URL))
 }
 
 // setupTestRoutes 设置测试路由
@@ -401,7 +402,7 @@ func (r *RealIntegrationTester) handleStreamResponse(c *gin.Context, req types.A
 		parser := NewEventStreamParser()
 		defer parser.Close()
 
-		r.logger.Debug("开始处理模拟AWS数据", utils.Int("data_size", len(r.mockAWS.mockData)))
+		logger.Debug("开始处理模拟AWS数据", logger.Int("data_size", len(r.mockAWS.mockData)))
 
 		// *** 关键修复：使用完整的消息处理管道 ***
 		// 不能直接发送原始事件载荷，必须通过CompliantMessageProcessor处理
@@ -410,17 +411,17 @@ func (r *RealIntegrationTester) handleStreamResponse(c *gin.Context, req types.A
 		// 这会同时解析消息并通过消息处理器处理，返回正确的SSE事件
 		sseEvents, processErr := parser.compliantParser.ParseStream(r.mockAWS.mockData)
 		if processErr != nil {
-			r.logger.Warn("解析和处理事件流失败", utils.Err(processErr))
+			logger.Warn("解析和处理事件流失败", logger.Err(processErr))
 			// 在非严格模式下继续处理可能的部分结果
 		}
 
-		r.logger.Debug("处理完成", utils.Int("generated_sse_events", len(sseEvents)))
+		logger.Debug("处理完成", logger.Int("generated_sse_events", len(sseEvents)))
 
 		// 发送处理后的SSE事件
 		for i, sseEvent := range sseEvents {
-			r.logger.Debug("发送SSE事件", 
-				utils.Int("event_index", i),
-				utils.String("event_type", sseEvent.Event))
+			logger.Debug("发送SSE事件", 
+				logger.Int("event_index", i),
+				logger.String("event_type", sseEvent.Event))
 			
 			if sseEventData, err := utils.FastMarshal(sseEvent.Data); err == nil {
 				// 如果事件名称为空，使用默认的data事件
@@ -431,7 +432,7 @@ func (r *RealIntegrationTester) handleStreamResponse(c *gin.Context, req types.A
 				c.SSEvent(eventName, string(sseEventData))
 				c.Writer.Flush()
 			} else {
-				r.logger.Warn("序列化SSE事件数据失败", utils.Err(err), utils.Int("event_index", i))
+				logger.Warn("序列化SSE事件数据失败", logger.Err(err), logger.Int("event_index", i))
 			}
 		}
 	} else {
@@ -653,7 +654,7 @@ func (r *RealIntegrationTester) processStreamResponse(
 			responseBuilder.WriteString(chunk)
 			result.Stats.ResponseSize += n
 			
-			r.logger.Debug("读取到数据块", utils.Int("chunk_size", n))
+			logger.Debug("读取到数据块", logger.Int("chunk_size", n))
 		}
 
 		if err != nil {
@@ -668,11 +669,11 @@ func (r *RealIntegrationTester) processStreamResponse(
 	fullResponse := responseBuilder.String()
 	result.ResponseBody = fullResponse
 	
-	r.logger.Debug("完整响应读取完成", utils.Int("total_size", len(fullResponse)))
+	logger.Debug("完整响应读取完成", logger.Int("total_size", len(fullResponse)))
 	
 	// 解析完整的SSE流
 	events := r.parseSSEEvents(fullResponse)
-	r.logger.Debug("解析SSE事件完成", utils.Int("parsed_events", len(events)))
+	logger.Debug("解析SSE事件完成", logger.Int("parsed_events", len(events)))
 	
 	for _, event := range events {
 		// 记录第一个事件的时间
@@ -751,12 +752,12 @@ func (r *RealIntegrationTester) parseSSEEvents(chunk string) []interface{} {
 func (r *RealIntegrationTester) Close() {
 	if r.server != nil {
 		r.server.Close()
-		r.logger.Debug("HTTP测试服务器已关闭")
+		logger.Debug("HTTP测试服务器已关闭")
 	}
 
 	if r.mockAWS != nil {
 		r.mockAWS.Close()
-		r.logger.Debug("Mock AWS服务器已关闭")
+		logger.Debug("Mock AWS服务器已关闭")
 	}
 }
 
@@ -775,7 +776,7 @@ func NewMockAWSServer() *MockAWSServer {
 	// 创建测试服务器
 	mock.server = httptest.NewServer(mux)
 
-	mock.logger.Debug("Mock AWS服务器已启动", utils.String("url", mock.server.URL))
+	logger.Debug("Mock AWS服务器已启动", logger.String("url", mock.server.URL))
 
 	return mock
 }
@@ -784,16 +785,16 @@ func NewMockAWSServer() *MockAWSServer {
 func (m *MockAWSServer) SetMockData(data []byte, responseType string) {
 	m.mockData = data
 	m.responseType = responseType
-	m.logger.Debug("Mock AWS数据已设置", 
-		utils.Int("data_size", len(data)),
-		utils.String("response_type", responseType))
+	logger.Debug("Mock AWS数据已设置", 
+		logger.Int("data_size", len(data)),
+		logger.String("response_type", responseType))
 }
 
 // handleRequest 处理请求
 func (m *MockAWSServer) handleRequest(w http.ResponseWriter, r *http.Request) {
-	m.logger.Debug("Mock AWS收到请求", 
-		utils.String("method", r.Method),
-		utils.String("path", r.URL.Path))
+	logger.Debug("Mock AWS收到请求", 
+		logger.String("method", r.Method),
+		logger.String("path", r.URL.Path))
 
 	// 设置响应头
 	switch m.responseType {

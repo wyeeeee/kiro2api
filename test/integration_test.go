@@ -81,7 +81,7 @@ func NewTestCaseGenerator() *TestCaseGenerator {
 
 // GenerateTestCaseFromFile 从文件生成测试用例
 func (g *TestCaseGenerator) GenerateTestCaseFromFile(filePath string) (*TestCase, error) {
-	g.logger.Debug("从文件生成测试用例", utils.String("file_path", filePath))
+	logger.Debug("从文件生成测试用例", logger.String("file_path", filePath))
 
 	// 1. 加载和解析hex数据
 	analyzer, err := LoadHexDataFromFile(filePath)
@@ -112,7 +112,7 @@ func (g *TestCaseGenerator) GenerateTestCaseFromFile(filePath string) (*TestCase
 	// 这确保期望输出和实际输出使用相同的SSE事件格式
 	sseEvents, err := parser.compliantParser.ParseStream(hexData.BinaryData)
 	if err != nil {
-		g.logger.Warn("使用CompliantEventStreamParser解析失败，回退到旧方法", utils.Err(err))
+		logger.Warn("使用CompliantEventStreamParser解析失败，回退到旧方法", logger.Err(err))
 		
 		// 回退到原来的方法
 		expectationGenerator := NewExpectationGenerator()
@@ -146,13 +146,22 @@ func (g *TestCaseGenerator) GenerateTestCaseFromFile(filePath string) (*TestCase
 	// 需要转换parser.SSEEvent为expectation_generator.SSEEvent格式
 	expectedSSEEvents := convertParserSSEToExpectedSSE(sseEvents)
 	
+	// 创建期望生成器实例
+	expectationGenerator := NewExpectationGenerator()
+	
+	// 使用期望生成器的公开方法正确提取所有数据
+	toolCalls := expectationGenerator.ExtractToolCalls(expectedSSEEvents)
+	contentBlocks := expectationGenerator.ExtractContentBlocks(expectedSSEEvents)  
+	finalStats := expectationGenerator.CalculateStats(expectedSSEEvents, toolCalls, contentBlocks)
+	validationRules := expectationGenerator.GenerateValidationRules(expectedSSEEvents, toolCalls, contentBlocks)
+	
 	expectedOutput := &ExpectedOutput{
 		SSEEvents:       expectedSSEEvents,
-		ToolCalls:       extractExpectedToolCallsFromSSE(expectedSSEEvents),
-		ContentBlocks:   []ExpectedContentBlock{}, // 暂时为空
-		FinalStats:      ExpectedStats{},           // 暂时为空
+		ToolCalls:       toolCalls,
+		ContentBlocks:   contentBlocks,     // 不再为空！
+		FinalStats:      finalStats,        // 不再为空！
 		GeneratedAt:     time.Now(),
-		ValidationRules: []ValidationRule{},       // 暂时为空
+		ValidationRules: validationRules,   // 不再为空！
 	}
 
 	// 4. 创建测试用例
@@ -173,10 +182,12 @@ func (g *TestCaseGenerator) GenerateTestCaseFromFile(filePath string) (*TestCase
 		},
 	}
 
-	g.logger.Debug("测试用例生成完成", 
-		utils.String("test_name", testCase.Name),
-		utils.Int("expected_events", len(expectedOutput.SSEEvents)),
-		utils.Int("tool_calls", len(expectedOutput.ToolCalls)))
+	logger.Debug("测试用例生成完成", 
+		logger.String("test_name", testCase.Name),
+		logger.Int("expected_events", len(expectedOutput.SSEEvents)),
+		logger.Int("tool_calls", len(expectedOutput.ToolCalls)),
+		logger.Int("content_blocks", len(expectedOutput.ContentBlocks)),
+		logger.Int("total_chars", expectedOutput.FinalStats.OutputCharacters))
 
 	return testCase, nil
 }
@@ -278,7 +289,7 @@ func ExecuteTestCase(testCase *TestCase) (*TestResult, error) {
 	startTime := time.Now()
 	// 直接使用logger包的函数
 	
-	logger.Debug("开始执行测试用例", utils.String("test_name", testCase.Name))
+	logger.Debug("开始执行测试用例", logger.String("test_name", testCase.Name))
 
 	result := &TestResult{
 		TestCase: testCase,
@@ -340,10 +351,10 @@ func ExecuteTestCase(testCase *TestCase) (*TestResult, error) {
 	result.ExecutionTime = time.Since(startTime)
 
 	logger.Debug("测试用例执行完成",
-		utils.String("test_name", testCase.Name),
-		utils.Bool("success", result.Success),
-		utils.Float64("score", validationResult.OverallScore),
-		utils.Duration("execution_time", result.ExecutionTime))
+		logger.String("test_name", testCase.Name),
+		logger.Bool("success", result.Success),
+		logger.String("score", fmt.Sprintf("%.4f", validationResult.OverallScore)),
+		logger.Duration("execution_time", result.ExecutionTime))
 
 	return result, nil
 }
@@ -365,18 +376,18 @@ func (ts *TestSuite) AddTestCase(testCase TestCase) {
 // RunAllTests 运行所有测试
 func (ts *TestSuite) RunAllTests() error {
 	ts.StartTime = time.Now()
-	ts.logger.Debug("开始运行测试套件", utils.Int("total_tests", len(ts.TestCases)))
+	logger.Debug("开始运行测试套件", logger.Int("total_tests", len(ts.TestCases)))
 
 	for i, testCase := range ts.TestCases {
-		ts.logger.Debug("执行测试用例", 
-			utils.Int("test_index", i+1),
-			utils.String("test_name", testCase.Name))
+		logger.Debug("执行测试用例", 
+			logger.Int("test_index", i+1),
+			logger.String("test_name", testCase.Name))
 
 		result, err := ExecuteTestCase(&testCase)
 		if err != nil {
-			ts.logger.Warn("测试用例执行失败",
-				utils.String("test_name", testCase.Name),
-				utils.Err(err))
+			logger.Warn("测试用例执行失败",
+				logger.String("test_name", testCase.Name),
+				logger.Err(err))
 		}
 
 		if result != nil {
@@ -387,10 +398,10 @@ func (ts *TestSuite) RunAllTests() error {
 	ts.EndTime = time.Now()
 	ts.calculateSummary()
 
-	ts.logger.Debug("测试套件执行完成",
-		utils.Int("passed", ts.Summary.PassedTests),
-		utils.Int("failed", ts.Summary.FailedTests),
-		utils.Float64("success_rate", ts.Summary.SuccessRate))
+	logger.Debug("测试套件执行完成",
+		logger.Int("passed", ts.Summary.PassedTests),
+		logger.Int("failed", ts.Summary.FailedTests),
+		logger.String("success_rate", fmt.Sprintf("%.4f", ts.Summary.SuccessRate)))
 
 	return nil
 }

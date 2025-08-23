@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"encoding/json"
+	"fmt"
 	"kiro2api/logger"
 	"kiro2api/utils"
 	"strings"
@@ -54,6 +56,32 @@ func validateRequiredArguments(toolName string, args map[string]interface{}) (bo
 	return true, ""
 }
 
+// validateToolCallFormat 验证工具调用的基本格式
+func (tlm *ToolLifecycleManager) validateToolCallFormat(toolCall ToolCall) error {
+	// 验证基本字段
+	if strings.TrimSpace(toolCall.ID) == "" {
+		return fmt.Errorf("工具调用ID不能为空")
+	}
+	
+	if strings.TrimSpace(toolCall.Function.Name) == "" {
+		return fmt.Errorf("工具名称不能为空")
+	}
+	
+	if toolCall.Type != "function" && toolCall.Type != "" {
+		return fmt.Errorf("不支持的工具类型: %s", toolCall.Type)
+	}
+	
+	// 验证参数JSON格式
+	if toolCall.Function.Arguments != "" {
+		var args map[string]interface{}
+		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+			return fmt.Errorf("工具参数JSON格式无效: %w", err)
+		}
+	}
+	
+	return nil
+}
+
 // NewToolLifecycleManager 创建工具生命周期管理器
 func NewToolLifecycleManager() *ToolLifecycleManager {
 	return &ToolLifecycleManager{
@@ -73,10 +101,34 @@ func (tlm *ToolLifecycleManager) Reset() {
 }
 
 // HandleToolCallRequest 处理工具调用请求
+// HandleToolCallRequest 处理工具调用请求（增强参数验证）
 func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) []SSEEvent {
-	events := make([]SSEEvent, 0, len(request.ToolCalls)*4)
+	events := make([]SSEEvent, 0, len(request.ToolCalls)*2) // 调整预分配容量
 
 	for _, toolCall := range request.ToolCalls {
+		// 严格验证工具调用基本格式
+		if err := tlm.validateToolCallFormat(toolCall); err != nil {
+			logger.Warn("工具调用格式验证失败",
+				logger.String("tool_id", toolCall.ID),
+				logger.String("tool_name", toolCall.Function.Name),
+				logger.Err(err))
+			
+			// 发送错误事件
+			events = append(events, SSEEvent{
+				Event: "error",
+				Data: map[string]interface{}{
+					"type": "invalid_request_error",
+					"error": map[string]interface{}{
+						"type":    "invalid_tool_parameters",
+						"message": err.Error(),
+						"tool_id": toolCall.ID,
+						"tool_name": toolCall.Function.Name,
+					},
+				},
+			})
+			continue
+		}
+
 		// 检查工具是否已存在，避免重复创建
 		if existing, exists := tlm.activeTools[toolCall.ID]; exists {
 			logger.Debug("工具已存在，更新参数",
@@ -135,18 +187,8 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 			logger.String("tool_name", toolCall.Function.Name),
 			logger.Int("block_index", execution.BlockIndex))
 
-		// 1. 生成 TOOL_EXECUTION_START 事件
-		events = append(events, SSEEvent{
-			Event: EventTypes.TOOL_EXECUTION_START,
-			Data: map[string]interface{}{
-				"type":         EventTypes.TOOL_EXECUTION_START,
-				"tool_call_id": toolCall.ID,
-				"tool_name":    toolCall.Function.Name,
-				"timestamp":    execution.StartTime.Format(time.RFC3339),
-			},
-		})
-
-		// 2. 生成标准的 content_block_start 事件
+		// 1. 生成标准的 content_block_start 事件（符合Anthropic规范）
+		// 这替代了原来的 TOOL_EXECUTION_START 非标准事件
 		events = append(events, SSEEvent{
 			Event: "content_block_start",
 			Data: map[string]interface{}{
@@ -156,12 +198,12 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 					"type":  "tool_use",
 					"id":    toolCall.ID,
 					"name":  toolCall.Function.Name,
-					"input": make(map[string]interface{}),
+					"input": arguments, // 使用解析后的参数而不是空对象
 				},
 			},
 		})
 
-		// 3. 生成参数输入事件
+		// 2. 如果有参数，生成参数输入增量事件
 		if len(arguments) > 0 {
 			argsJSON, _ := utils.SafeMarshal(arguments)
 			events = append(events, SSEEvent{
@@ -185,7 +227,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 
 // HandleToolCallResult 处理工具调用结果
 func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []SSEEvent {
-	events := make([]SSEEvent, 0, 4)
+	events := make([]SSEEvent, 0, 3) // 增加预分配容量以支持更多事件
 
 	execution, exists := tlm.activeTools[result.ToolCallID]
 	if !exists {
@@ -210,18 +252,8 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 		logger.String("tool_name", execution.Name),
 		logger.Int64("execution_time", executionTime))
 
-	// 1. 生成 TOOL_CALL_RESULT 事件
-	events = append(events, SSEEvent{
-		Event: EventTypes.TOOL_CALL_RESULT,
-		Data: map[string]interface{}{
-			"type":           EventTypes.TOOL_CALL_RESULT,
-			"tool_call_id":   result.ToolCallID,
-			"result":         result.Result,
-			"execution_time": executionTime,
-		},
-	})
-
-	// 2. 生成 content_block_stop 事件
+	// 1. 生成标准的 content_block_stop 事件（符合Anthropic规范）
+	// 这替代了原来的 TOOL_CALL_RESULT 和 TOOL_EXECUTION_END 非标准事件
 	events = append(events, SSEEvent{
 		Event: "content_block_stop",
 		Data: map[string]interface{}{
@@ -230,23 +262,12 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 		},
 	})
 
-	// 3. 生成 TOOL_EXECUTION_END 事件
-	events = append(events, SSEEvent{
-		Event: EventTypes.TOOL_EXECUTION_END,
-		Data: map[string]interface{}{
-			"type":         EventTypes.TOOL_EXECUTION_END,
-			"tool_call_id": result.ToolCallID,
-			"tool_name":    execution.Name,
-			"duration":     executionTime,
-			"timestamp":    now.Format(time.RFC3339),
-		},
-	})
-
 	// 移动到已完成工具列表
 	tlm.completedTools[result.ToolCallID] = execution
 	delete(tlm.activeTools, result.ToolCallID)
 
-	// 4. 如果所有工具都完成了，生成 message_delta 事件
+	// 2. 如果所有工具都完成了，生成 message_delta 事件（符合Anthropic规范）
+	// 这提供了工具执行完成的状态信息，替代了 TOOL_EXECUTION_END 的功能
 	if tlm.allToolsCompleted() {
 		events = append(events, SSEEvent{
 			Event: "message_delta",
@@ -261,6 +282,16 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 				},
 			},
 		})
+
+		// 3. 可选：生成 message_stop 事件表示消息完全结束
+		events = append(events, SSEEvent{
+			Event: "message_stop",
+			Data: map[string]interface{}{
+				"type":          "message_stop",
+				"stop_reason":   "tool_use",
+				"stop_sequence": nil,
+			},
+		})
 	}
 
 	return events
@@ -268,7 +299,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 
 // HandleToolCallError 处理工具调用错误
 func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []SSEEvent {
-	events := make([]SSEEvent, 0, 3)
+	events := make([]SSEEvent, 0, 3) // 增加预分配容量
 
 	execution, exists := tlm.activeTools[errorInfo.ToolCallID]
 	if !exists {
@@ -290,18 +321,22 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 		logger.String("error", errorInfo.Error),
 		logger.Int64("execution_time", executionTime))
 
-	// 1. 生成 TOOL_CALL_ERROR 事件
+	// 1. 生成标准的错误事件（符合Anthropic规范）
+	// 这替代了原来的 TOOL_CALL_ERROR 非标准事件
 	events = append(events, SSEEvent{
-		Event: EventTypes.TOOL_CALL_ERROR,
+		Event: "error",
 		Data: map[string]interface{}{
-			"type":           EventTypes.TOOL_CALL_ERROR,
-			"tool_call_id":   errorInfo.ToolCallID,
-			"error":          errorInfo.Error,
-			"execution_time": executionTime,
+			"type": "error",
+			"error": map[string]interface{}{
+				"type":         "tool_error",
+				"message":      errorInfo.Error,
+				"tool_call_id": errorInfo.ToolCallID,
+			},
 		},
 	})
 
-	// 2. 生成 content_block_stop 事件
+	// 2. 生成标准的 content_block_stop 事件（符合Anthropic规范）
+	// 即使出错也要正确结束内容块
 	events = append(events, SSEEvent{
 		Event: "content_block_stop",
 		Data: map[string]interface{}{
@@ -310,16 +345,19 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 		},
 	})
 
-	// 3. 生成 TOOL_EXECUTION_END 事件（即使出错也要标记结束）
+	// 3. 生成 message_delta 事件表示消息因错误而停止
+	// 这替代了 TOOL_EXECUTION_END 的功能，提供错误状态信息
 	events = append(events, SSEEvent{
-		Event: EventTypes.TOOL_EXECUTION_END,
+		Event: "message_delta", 
 		Data: map[string]interface{}{
-			"type":         EventTypes.TOOL_EXECUTION_END,
-			"tool_call_id": errorInfo.ToolCallID,
-			"tool_name":    execution.Name,
-			"duration":     executionTime,
-			"timestamp":    now.Format(time.RFC3339),
-			"error":        errorInfo.Error,
+			"type": "message_delta",
+			"delta": map[string]interface{}{
+				"stop_reason":   "tool_error",
+				"stop_sequence": nil,
+			},
+			"usage": map[string]interface{}{
+				"output_tokens": 0,
+			},
 		},
 	})
 

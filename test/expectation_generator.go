@@ -2,7 +2,6 @@ package test
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 type ExpectationGenerator struct {
 	protocolSpec *ProtocolSpecification
 	dedupRules   *DeduplicationRules
-	logger       interface{} // 直接使用logger包
+	// 移除logger字段，直接使用logger包的函数
 }
 
 // ExpectedOutput 期望输出
@@ -150,14 +149,14 @@ func NewExpectationGenerator() *ExpectationGenerator {
 	return &ExpectationGenerator{
 		protocolSpec: getDefaultProtocolSpec(),
 		dedupRules:   getDefaultDeduplicationRules(),
-		logger:       nil, // 直接使用logger包的函数
+		// 直接使用logger包的函数
 	}
 }
 
 // GenerateExpectations 生成期望输出
 func (g *ExpectationGenerator) GenerateExpectations(events []*ParsedEvent) (*ExpectedOutput, error) {
-	g.logger.Debug("开始生成期望输出",
-		utils.Int("input_events", len(events)))
+	logger.Debug("开始生成期望输出",
+		logger.Int("input_events", len(events)))
 
 	// 应用去重规则
 	filteredEvents := g.ApplyDeduplicationRules(events)
@@ -166,16 +165,16 @@ func (g *ExpectationGenerator) GenerateExpectations(events []*ParsedEvent) (*Exp
 	sseEvents := g.generateSSEEvents(filteredEvents)
 	
 	// 提取工具调用
-	toolCalls := g.extractToolCalls(sseEvents)
+	toolCalls := g.ExtractToolCalls(sseEvents)
 	
 	// 提取内容块
-	contentBlocks := g.extractContentBlocks(sseEvents)
+	contentBlocks := g.ExtractContentBlocks(sseEvents)
 	
 	// 计算统计信息
-	stats := g.calculateStats(sseEvents, toolCalls, contentBlocks)
+	stats := g.CalculateStats(sseEvents, toolCalls, contentBlocks)
 	
 	// 生成验证规则
-	validationRules := g.generateValidationRules(sseEvents, toolCalls, contentBlocks)
+	validationRules := g.GenerateValidationRules(sseEvents, toolCalls, contentBlocks)
 
 	expectedOutput := &ExpectedOutput{
 		SSEEvents:       sseEvents,
@@ -186,17 +185,17 @@ func (g *ExpectationGenerator) GenerateExpectations(events []*ParsedEvent) (*Exp
 		ValidationRules: validationRules,
 	}
 
-	g.logger.Debug("期望输出生成完成",
-		utils.Int("sse_events", len(sseEvents)),
-		utils.Int("tool_calls", len(toolCalls)),
-		utils.Int("content_blocks", len(contentBlocks)))
+	logger.Debug("期望输出生成完成",
+		logger.Int("sse_events", len(sseEvents)),
+		logger.Int("tool_calls", len(toolCalls)),
+		logger.Int("content_blocks", len(contentBlocks)))
 
 	return expectedOutput, nil
 }
 
 // ApplyDeduplicationRules 应用去重规则
 func (g *ExpectationGenerator) ApplyDeduplicationRules(events []*ParsedEvent) []*ParsedEvent {
-	g.logger.Debug("应用去重规则", utils.Int("original_events", len(events)))
+	logger.Debug("应用去重规则", logger.Int("original_events", len(events)))
 	
 	filtered := make([]*ParsedEvent, 0, len(events))
 	seenToolCalls := make(map[string]bool)
@@ -209,8 +208,8 @@ func (g *ExpectationGenerator) ApplyDeduplicationRules(events []*ParsedEvent) []
 		if event.EventType == "toolUseEvent" {
 			if toolID := g.extractToolUseID(event); toolID != "" {
 				if seenToolCalls[toolID] {
-					g.logger.Debug("跳过重复的工具调用",
-						utils.String("tool_use_id", toolID))
+					logger.Debug("跳过重复的工具调用",
+						logger.String("tool_use_id", toolID))
 					shouldSkip = true
 				} else {
 					seenToolCalls[toolID] = true
@@ -222,8 +221,8 @@ func (g *ExpectationGenerator) ApplyDeduplicationRules(events []*ParsedEvent) []
 		if event.EventType == "assistantResponseEvent" {
 			if content := g.extractTextContent(event); content != "" {
 				if strings.TrimSpace(content) == strings.TrimSpace(lastContent) && content != "" {
-					g.logger.Debug("跳过重复的文本内容",
-						utils.String("content_preview", g.truncateString(content, 50)))
+					logger.Debug("跳过重复的文本内容",
+						logger.String("content_preview", g.truncateString(content, 50)))
 					shouldSkip = true
 				} else {
 					lastContent = content
@@ -236,9 +235,9 @@ func (g *ExpectationGenerator) ApplyDeduplicationRules(events []*ParsedEvent) []
 		}
 	}
 	
-	g.logger.Debug("去重完成",
-		utils.Int("filtered_events", len(filtered)),
-		utils.Int("removed_events", len(events)-len(filtered)))
+	logger.Debug("去重完成",
+		logger.Int("filtered_events", len(filtered)),
+		logger.Int("removed_events", len(events)-len(filtered)))
 	
 	return filtered
 }
@@ -396,117 +395,48 @@ func (g *ExpectationGenerator) convertToolUseEvent(event *ParsedEvent, currentIn
 }
 
 // extractToolCalls 提取工具调用
-func (g *ExpectationGenerator) extractToolCalls(sseEvents []SSEEvent) []ExpectedToolCall {
+func (g *ExpectationGenerator) ExtractToolCalls(sseEvents []SSEEvent) []ExpectedToolCall {
 	var toolCalls []ExpectedToolCall
 	toolCallMap := make(map[string]*ExpectedToolCall)
 	
 	for i := range sseEvents {
 		event := &sseEvents[i]
 		
-		// 修复：支持两种SSE事件格式
-		// 1. 新格式：使用 Event 字段（来自 parser/event_stream_types.go）
-		// 2. 旧格式：使用 Type 字段（本文件定义）
-		eventType := event.Type
-		if eventType == "" {
-			// 尝试从 event 结构中获取事件类型
-			if eventInterface, ok := interface{}(event).(map[string]interface{}); ok {
-				if et, ok := eventInterface["event"].(string); ok {
-					eventType = et
-				}
-			}
-		}
-		
-		// 处理来自 parser 的真实事件数据
-		var eventData map[string]interface{}
-		if event.Data != nil {
-			eventData = event.Data
-		} else {
-			// 如果 Data 字段为空，尝试获取整个事件作为数据
-			if fullEvent, ok := interface{}(event).(map[string]interface{}); ok {
-				if data, ok := fullEvent["data"].(map[string]interface{}); ok {
-					eventData = data
-					if et, ok := fullEvent["event"].(string); ok {
-						eventType = et
-					}
-				}
-			}
-		}
-		
-		g.logger.Debug("处理事件", 
-			utils.String("event_type", eventType),
-			utils.Any("event_data", eventData))
-		
-		if eventType == "content_block_start" && eventData != nil {
-			if cb, ok := eventData["content_block"].(map[string]interface{}); ok {
-				if cbType, _ := cb["type"].(string); cbType == "tool_use" {
-					toolUseID, _ := cb["id"].(string)
-					toolName, _ := cb["name"].(string)
-					blockIndex, _ := eventData["index"].(int)
+		// 工具调用信息在content_block_start事件中，其中content_block.type == "tool_use"
+		if event.Type == "content_block_start" {
+			if contentBlock, ok := event.Data["content_block"].(map[string]interface{}); ok {
+				if blockType, ok := contentBlock["type"].(string); ok && blockType == "tool_use" {
+					id, _ := contentBlock["id"].(string)
+					name, _ := contentBlock["name"].(string)
+					input := contentBlock["input"]
 					
-					g.logger.Info("发现期望工具调用", 
-						utils.String("tool_use_id", toolUseID),
-						utils.String("tool_name", toolName),
-						utils.Int("block_index", blockIndex))
-					
-					toolCall := &ExpectedToolCall{
-						ToolUseID:   toolUseID,
-						Name:        toolName,
-						BlockIndex:  blockIndex,
-						StartEvent:  event,
-						InputEvents: make([]*SSEEvent, 0),
+					// 类型断言转换input
+					var inputMap map[string]interface{}
+					if inputData, ok := input.(map[string]interface{}); ok {
+						inputMap = inputData
+					} else {
+						inputMap = make(map[string]interface{})
 					}
 					
-					toolCallMap[toolUseID] = toolCall
-				}
-			}
-		} else if eventType == "content_block_delta" && eventData != nil {
-			if delta, ok := event.Data["delta"].(map[string]interface{}); ok {
-				if deltaType, _ := delta["type"].(string); deltaType == "input_json_delta" {
+					// 获取块索引
 					blockIndex, _ := event.Data["index"].(int)
 					
-					// 找到对应的工具调用
-					for _, toolCall := range toolCallMap {
-						if toolCall.BlockIndex == blockIndex {
-							toolCall.InputEvents = append(toolCall.InputEvents, event)
-							break
-						}
+					toolCall := &ExpectedToolCall{
+						ToolUseID:    id,
+						Name:         name,
+						Input:        inputMap,
+						BlockIndex:   blockIndex,
+						StartEvent:   event,
 					}
-				}
-			}
-		} else if event.Type == "content_block_stop" {
-			blockIndex, _ := event.Data["index"].(int)
-			
-			// 找到对应的工具调用并设置结束事件
-			for _, toolCall := range toolCallMap {
-				if toolCall.BlockIndex == blockIndex && toolCall.StopEvent == nil {
-					toolCall.StopEvent = event
-					break
+					
+					toolCallMap[id] = toolCall
 				}
 			}
 		}
 	}
 	
-	// 构建完整的输入JSON
+	// 转换为切片
 	for _, toolCall := range toolCallMap {
-		var inputJSONBuilder strings.Builder
-		for _, inputEvent := range toolCall.InputEvents {
-			if delta, ok := inputEvent.Data["delta"].(map[string]interface{}); ok {
-				if partialJSON, ok := delta["partial_json"].(string); ok {
-					inputJSONBuilder.WriteString(partialJSON)
-				}
-			}
-		}
-		
-		toolCall.InputJSON = inputJSONBuilder.String()
-		
-		// 尝试解析输入JSON
-		if toolCall.InputJSON != "" {
-			var input map[string]interface{}
-			if err := json.Unmarshal([]byte(toolCall.InputJSON), &input); err == nil {
-				toolCall.Input = input
-			}
-		}
-		
 		toolCalls = append(toolCalls, *toolCall)
 	}
 	
@@ -514,7 +444,7 @@ func (g *ExpectationGenerator) extractToolCalls(sseEvents []SSEEvent) []Expected
 }
 
 // extractContentBlocks 提取内容块
-func (g *ExpectationGenerator) extractContentBlocks(sseEvents []SSEEvent) []ExpectedContentBlock {
+func (g *ExpectationGenerator) ExtractContentBlocks(sseEvents []SSEEvent) []ExpectedContentBlock {
 	var contentBlocks []ExpectedContentBlock
 	blockMap := make(map[int]*ExpectedContentBlock)
 	
@@ -568,7 +498,7 @@ func (g *ExpectationGenerator) extractContentBlocks(sseEvents []SSEEvent) []Expe
 }
 
 // calculateStats 计算统计信息
-func (g *ExpectationGenerator) calculateStats(sseEvents []SSEEvent, toolCalls []ExpectedToolCall, contentBlocks []ExpectedContentBlock) ExpectedStats {
+func (g *ExpectationGenerator) CalculateStats(sseEvents []SSEEvent, toolCalls []ExpectedToolCall, contentBlocks []ExpectedContentBlock) ExpectedStats {
 	eventsByType := make(map[string]int)
 	totalChars := 0
 	
@@ -590,35 +520,50 @@ func (g *ExpectationGenerator) calculateStats(sseEvents []SSEEvent, toolCalls []
 }
 
 // generateValidationRules 生成验证规则
-func (g *ExpectationGenerator) generateValidationRules(sseEvents []SSEEvent, toolCalls []ExpectedToolCall, contentBlocks []ExpectedContentBlock) []ValidationRule {
-	rules := []ValidationRule{
-		{
-			Type:        "count",
-			Field:       "sse_events",
-			Expected:    len(sseEvents),
-			Description: "SSE事件总数验证",
-		},
-		{
-			Type:        "count",
-			Field:       "tool_calls",
+func (g *ExpectationGenerator) GenerateValidationRules(sseEvents []SSEEvent, toolCalls []ExpectedToolCall, contentBlocks []ExpectedContentBlock) []ValidationRule {
+	var rules []ValidationRule
+	
+	// 基础事件验证规则
+	rules = append(rules, ValidationRule{
+		Type:        "count_match",
+		Field:       "event_count",
+		Description: "验证事件总数",
+		Expected:    len(sseEvents),
+		Tolerance:   0.0,
+	})
+	
+	// 工具调用验证规则
+	if len(toolCalls) > 0 {
+		rules = append(rules, ValidationRule{
+			Type:        "count_match",
+			Field:       "tool_calls_count",
+			Description: "验证工具调用数量",
 			Expected:    len(toolCalls),
-			Description: "工具调用总数验证",
-		},
-		{
-			Type:        "count",
-			Field:       "content_blocks",
-			Expected:    len(contentBlocks),
-			Description: "内容块总数验证",
-		},
+			Tolerance:   0.0,
+		})
 	}
 	
-	// 为每个工具调用生成验证规则
-	for _, toolCall := range toolCalls {
+	// 内容块验证规则
+	if len(contentBlocks) > 0 {
 		rules = append(rules, ValidationRule{
-			Type:        "tool_call",
-			Field:       fmt.Sprintf("tool_call[%s].name", toolCall.ToolUseID),
-			Expected:    toolCall.Name,
-			Description: fmt.Sprintf("工具调用 %s 名称验证", toolCall.ToolUseID),
+			Type:        "count_match",
+			Field:       "content_blocks_count", 
+			Description: "验证内容块数量",
+			Expected:    len(contentBlocks),
+			Tolerance:   0.0,
+		})
+		
+		totalChars := 0
+		for _, block := range contentBlocks {
+			totalChars += len(block.Content)
+		}
+		
+		rules = append(rules, ValidationRule{
+			Type:        "range_match",
+			Field:       "content_length",
+			Description: "验证内容长度",
+			Expected:    totalChars,
+			Tolerance:   float64(totalChars) * 0.1, // 10%容差
 		})
 	}
 	

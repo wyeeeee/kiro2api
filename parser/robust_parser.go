@@ -126,7 +126,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 				if recoveryOffset > 0 {
 					offset += recoveryOffset + 1
 				} else {
-					offset += 4 // 跳过一个可能的长度字段
+					offset += 1 // 跳过一个可能的长度字段
 				}
 			} else if strings.Contains(err.Error(), "长度") || strings.Contains(err.Error(), "消息总长度异常") {
 				// 长度异常：快速跳过
@@ -492,24 +492,59 @@ func (rp *RobustEventStreamParser) validateToolUseIdIntegrity(message *EventStre
 func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
 	var toolUseIds []string
 
-	// 直接查找包含 tooluse_ 的字符串
-	if strings.Contains(payload, "tooluse_") {
-		start := strings.Index(payload, "tooluse_")
-		if start >= 0 {
-			// 查找ID的结束位置
-			end := start + 8 // "tooluse_" 长度
-			for end < len(payload) && (payload[end] != '"' && payload[end] != ',' && payload[end] != '}' && payload[end] != ' ') {
-				end++
+	// 使用更严格的字符串查找，避免匹配到损坏的ID
+	searchStr := "tooluse_"
+	startPos := 0
+	
+	for {
+		idx := strings.Index(payload[startPos:], searchStr)
+		if idx == -1 {
+			break
+		}
+		
+		actualStart := startPos + idx
+		
+		// 确保前面是引号或其他分隔符，避免匹配到 "tooluluse_" 这样的损坏ID
+		if actualStart > 0 {
+			prevChar := payload[actualStart-1]
+			if prevChar != '"' && prevChar != ':' && prevChar != ' ' && prevChar != '{' {
+				// 跳过这个匹配，可能是损坏的ID
+				startPos = actualStart + 1
+				continue
 			}
-			if end > start+8 {
-				toolUseId := payload[start:end]
+		}
+		
+		// 查找ID的结束位置
+		end := actualStart + len(searchStr)
+		for end < len(payload) {
+			char := payload[end]
+			// 有效的tool_use_id字符: 字母、数字、下划线、连字符
+			if !((char >= 'a' && char <= 'z') ||
+				(char >= 'A' && char <= 'Z') ||
+				(char >= '0' && char <= '9') ||
+				char == '_' || char == '-') {
+				break
+			}
+			end++
+		}
+		
+		if end > actualStart+len(searchStr) {
+			toolUseId := payload[actualStart:end]
+			
+			// 验证格式有效性
+			if rp.isValidToolUseIdFormat(toolUseId) {
 				toolUseIds = append(toolUseIds, toolUseId)
 				logger.Debug("提取到tool_use_id",
 					logger.String("tool_use_id", toolUseId),
-					logger.Int("start_pos", start),
+					logger.Int("start_pos", actualStart),
 					logger.Int("end_pos", end))
+			} else {
+				logger.Warn("跳过格式无效的tool_use_id",
+					logger.String("invalid_id", toolUseId))
 			}
 		}
+		
+		startPos = actualStart + 1
 	}
 
 	return toolUseIds
@@ -522,20 +557,34 @@ func (rp *RobustEventStreamParser) isValidToolUseIdFormat(toolUseId string) bool
 		return false
 	}
 
-	// 长度检查
-	if len(toolUseId) < 20 {
+	// 长度检查 - 标准格式应该是 "tooluse_" + 22字符的Base64编码ID
+	if len(toolUseId) < 20 || len(toolUseId) > 50 {
+		logger.Debug("tool_use_id长度异常",
+			logger.String("id", toolUseId),
+			logger.Int("length", len(toolUseId)))
 		return false
 	}
 
-	// 字符有效性检查（base64字符 + 下划线）
+	// 字符有效性检查（base64字符 + 下划线和连字符）
 	suffix := toolUseId[8:]
-	for _, char := range suffix {
+	for i, char := range suffix {
 		if !((char >= 'a' && char <= 'z') ||
 			(char >= 'A' && char <= 'Z') ||
 			(char >= '0' && char <= '9') ||
 			char == '_' || char == '-') {
+			logger.Debug("tool_use_id包含无效字符",
+				logger.String("id", toolUseId),
+				logger.Int("invalid_pos", i+8),
+				logger.String("invalid_char", string(char)))
 			return false
 		}
+	}
+
+	// 检查是否包含明显的损坏模式（如多余的"ul"）
+	if strings.Contains(toolUseId, "tooluluse_") || strings.Contains(toolUseId, "tooluse_tooluse_") {
+		logger.Warn("检测到明显损坏的tool_use_id模式",
+			logger.String("id", toolUseId))
+		return false
 	}
 
 	return true

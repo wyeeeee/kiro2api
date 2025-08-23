@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -243,6 +244,156 @@ func TestExtractField(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestIncrementalToolEventFix 测试工具调用增量事件修复
+func TestIncrementalToolEventFix(t *testing.T) {
+	// 设置环境变量启用增量事件
+	os.Setenv("ENABLE_INCREMENTAL_TOOL_EVENTS", "true")
+	defer os.Unsetenv("ENABLE_INCREMENTAL_TOOL_EVENTS")
+
+	// 创建处理器
+	toolManager := NewToolLifecycleManager()
+	aggregator := NewSonicStreamingJSONAggregatorWithCallback(nil)
+	
+	handler := &LegacyToolUseEventHandler{
+		toolManager: toolManager,
+		aggregator:  aggregator,
+	}
+
+	t.Run("流式工具调用修复验证", func(t *testing.T) {
+		// 第一个片段：注册工具
+		firstFragment := &EventStreamMessage{
+			Payload: []byte(`{"name":"Write","toolUseId":"tooluse_fix_test","input":"","stop":false}`),
+			Headers: map[string]HeaderValue{
+				":event-type":   {Value: "toolUseEvent"},
+				":message-type": {Value: "event"},
+			},
+		}
+
+		// 处理第一个片段 - 应该注册工具并返回开始事件
+		events1, err := handler.handleToolCallEvent(firstFragment)
+		if err != nil {
+			t.Fatalf("第一个片段处理失败: %v", err)
+		}
+		
+		if len(events1) == 0 {
+			t.Fatal("第一个片段应该返回工具注册事件")
+		}
+		
+		t.Logf("第一个片段事件数量: %d", len(events1))
+
+		// 第二个片段：输入片段 - 修复前会返回空事件，修复后应该返回增量事件
+		secondFragment := &EventStreamMessage{
+			Payload: []byte(`{"name":"Write","toolUseId":"tooluse_fix_test","input":"{\"file_path\":\"/test","stop":false}`),
+			Headers: map[string]HeaderValue{
+				":event-type":   {Value: "toolUseEvent"},
+				":message-type": {Value: "event"},
+			},
+		}
+
+		events2, err := handler.handleToolCallEvent(secondFragment)
+		if err != nil {
+			t.Fatalf("第二个片段处理失败: %v", err)
+		}
+		
+		// 核心验证：修复后应该返回增量事件，而不是空事件
+		if len(events2) == 0 {
+			t.Error("❌ 修复失败：第二个片段仍然返回空事件，claude-cli将无法接收到增量更新")
+		} else {
+			t.Logf("✅ 修复成功：第二个片段返回了 %d 个事件", len(events2))
+			
+			// 验证事件类型
+			for i, event := range events2 {
+				if event.Event == "content_block_delta" {
+					t.Logf("✅ 事件 %d: 正确的增量事件类型 'content_block_delta'", i)
+					
+					// 验证事件数据结构
+					if data, ok := event.Data.(map[string]interface{}); ok {
+						if delta, exists := data["delta"]; exists {
+							t.Logf("✅ 包含 delta 字段: %+v", delta)
+						} else {
+							t.Error("❌ 缺少 delta 字段")
+						}
+					}
+				} else {
+					t.Logf("事件 %d: 类型 '%s'", i, event.Event)
+				}
+			}
+		}
+
+		// 第三个片段：更多输入
+		thirdFragment := &EventStreamMessage{
+			Payload: []byte(`{"name":"Write","toolUseId":"tooluse_fix_test","input":".txt\"}","stop":false}`),
+			Headers: map[string]HeaderValue{
+				":event-type":   {Value: "toolUseEvent"},
+				":message-type": {Value: "event"},
+			},
+		}
+
+		events3, err := handler.handleToolCallEvent(thirdFragment)
+		if err != nil {
+			t.Fatalf("第三个片段处理失败: %v", err)
+		}
+		
+		if len(events3) > 0 {
+			t.Logf("✅ 第三个片段也返回了增量事件: %d", len(events3))
+		}
+
+		// 第四个片段：完成
+		finalFragment := &EventStreamMessage{
+			Payload: []byte(`{"name":"Write","toolUseId":"tooluse_fix_test","input":"","stop":true}`),
+			Headers: map[string]HeaderValue{
+				":event-type":   {Value: "toolUseEvent"},
+				":message-type": {Value: "event"},
+			},
+		}
+
+		events4, err := handler.handleToolCallEvent(finalFragment)
+		if err != nil {
+			t.Fatalf("最终片段处理失败: %v", err)
+		}
+		
+		if len(events4) > 0 {
+			t.Logf("✅ 最终片段返回了完成事件: %d", len(events4))
+		}
+	})
+
+	t.Run("配置禁用时的行为", func(t *testing.T) {
+		// 禁用增量事件
+		os.Setenv("ENABLE_INCREMENTAL_TOOL_EVENTS", "false")
+		defer os.Setenv("ENABLE_INCREMENTAL_TOOL_EVENTS", "true")
+
+		// 先注册工具
+		firstFragment := &EventStreamMessage{
+			Payload: []byte(`{"name":"Write","toolUseId":"tooluse_disabled_test","input":"","stop":false}`),
+			Headers: map[string]HeaderValue{
+				":event-type":   {Value: "toolUseEvent"},
+				":message-type": {Value: "event"},
+			},
+		}
+		handler.handleToolCallEvent(firstFragment)
+
+		// 输入片段 - 配置禁用时应该返回空事件
+		inputFragment := &EventStreamMessage{
+			Payload: []byte(`{"name":"Write","toolUseId":"tooluse_disabled_test","input":"{\"test\":\"value\"}","stop":false}`),
+			Headers: map[string]HeaderValue{
+				":event-type":   {Value: "toolUseEvent"},
+				":message-type": {Value: "event"},
+			},
+		}
+
+		events, err := handler.handleToolCallEvent(inputFragment)
+		if err != nil {
+			t.Fatalf("处理失败: %v", err)
+		}
+		
+		if len(events) != 0 {
+			t.Errorf("配置禁用时应该返回空事件，但得到了 %d 个事件", len(events))
+		} else {
+			t.Log("✅ 配置禁用时正确返回空事件")
+		}
+	})
 }
 
 // BenchmarkIsToolCallEvent 性能基准测试

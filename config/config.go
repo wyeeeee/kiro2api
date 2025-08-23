@@ -39,6 +39,14 @@ func IsStreamDisabled() bool {
 	return os.Getenv("DISABLE_STREAM") == "true"
 }
 
+// EnableIncrementalToolEvents 检查是否启用工具调用增量事件发送
+// 这是修复claude-cli工具调用问题的新特性，默认启用
+func EnableIncrementalToolEvents() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("ENABLE_INCREMENTAL_TOOL_EVENTS")))
+	// 默认启用，只有明确设置为false时才禁用
+	return value != "false" && value != "0"
+}
+
 // RefreshTokenURL 刷新token的URL (social方式)
 const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
 
