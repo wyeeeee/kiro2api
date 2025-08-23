@@ -2,11 +2,14 @@ package parser
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"kiro2api/logger"
 	"strings"
+	"sync"
+	"time"
 )
 
 // RobustEventStreamParser 带CRC校验和错误恢复的解析器
@@ -19,6 +22,10 @@ type RobustEventStreamParser struct {
 	buffer        []byte      // 保留原有buffer用于兼容
 	ringBuffer    *RingBuffer // 新的环形缓冲区
 	useRingBuffer bool        // 是否使用环形缓冲区
+	// *** 新增：并发访问控制和状态保护 ***
+	mu            sync.RWMutex // 保护并发访问
+	lastProcessed int64        // 最后处理的字节数，用于监控
+	parsingActive bool         // 是否正在解析中，防止重入
 }
 
 // NewRobustEventStreamParser 创建健壮的事件流解析器
@@ -58,6 +65,32 @@ func (rp *RobustEventStreamParser) Reset() {
 
 // ParseStream 解析流数据并返回消息
 func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessage, error) {
+	// *** 关键修复：并发访问保护 ***
+	rp.mu.Lock()
+	defer rp.mu.Unlock()
+
+	// 防止重入调用
+	if rp.parsingActive {
+		logger.Warn("检测到解析重入调用，等待当前解析完成")
+		return []*EventStreamMessage{}, nil
+	}
+	rp.parsingActive = true
+	defer func() {
+		rp.parsingActive = false
+	}()
+
+	// 记录处理开始时间，用于性能监控
+	startTime := time.Now()
+	defer func() {
+		duration := time.Since(startTime)
+		rp.lastProcessed = time.Now().Unix()
+		if duration > 100*time.Millisecond {
+			logger.Warn("解析耗时过长，可能存在性能问题",
+				logger.Duration("duration", duration),
+				logger.Int("input_bytes", len(data)))
+		}
+	}()
+
 	if rp.useRingBuffer {
 		return rp.parseStreamWithRingBuffer(data)
 	}
@@ -72,7 +105,39 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 	consecutiveErrors := 0
 
 	for offset < len(rp.buffer) && rp.errorCount < rp.maxErrors {
-		message, consumed, err := rp.parseSingleMessageWithValidation(rp.buffer[offset:])
+		// *** 关键修复：严格验证消息边界 ***
+		if offset+16 > len(rp.buffer) {
+			// 数据不足以包含完整的消息头
+			logger.Debug("缓冲区数据不足，等待更多数据",
+				logger.Int("offset", offset),
+				logger.Int("buffer_len", len(rp.buffer)),
+				logger.Int("need_min", 16))
+			break
+		}
+
+		// 预先检查消息长度是否合理
+		totalLength := binary.BigEndian.Uint32(rp.buffer[offset:offset+4])
+		if totalLength < 16 || totalLength > 16*1024*1024 {
+			logger.Warn("检测到异常消息长度，跳过该位置",
+				logger.Int("offset", offset),
+				logger.Int("totalLength", int(totalLength)))
+			offset++
+			continue
+		}
+
+		// 检查是否有足够的数据来解析完整消息
+		if offset+int(totalLength) > len(rp.buffer) {
+			logger.Debug("消息数据不完整，等待更多数据",
+				logger.Int("offset", offset),
+				logger.Int("need_total", int(totalLength)),
+				logger.Int("buffer_len", len(rp.buffer)),
+				logger.Int("available", len(rp.buffer)-offset))
+			break
+		}
+
+		// *** 关键修复：使用精确的消息边界数据 ***
+		messageData := rp.buffer[offset:offset+int(totalLength)]
+		message, _, err := rp.parseSingleMessageWithValidation(messageData)
 
 		if err != nil {
 			if rp.strictMode {
@@ -126,7 +191,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 				if recoveryOffset > 0 {
 					offset += recoveryOffset + 1
 				} else {
-					offset += 1 // 跳过一个可能的长度字段
+					offset += 4 // 跳过一个可能的长度字段
 				}
 			} else if strings.Contains(err.Error(), "长度") || strings.Contains(err.Error(), "消息总长度异常") {
 				// 长度异常：快速跳过
@@ -155,10 +220,19 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 				logger.Int("payload_len", len(message.Payload)))
 		}
 
-		offset += consumed
+		// *** 关键修复：使用确切的消息长度而不是解析器返回的consumed ***
+		offset += int(totalLength)
+		
+		// 安全检查：确保不会超出缓冲区
+		if offset > len(rp.buffer) {
+			logger.Warn("偏移量超出缓冲区，纠正",
+				logger.Int("offset", offset),
+				logger.Int("buffer_len", len(rp.buffer)))
+			offset = len(rp.buffer)
+		}
 	}
 
-	// 简化的缓冲区管理：安全移除已处理的数据
+	// *** 关键修复：更安全的缓冲区管理 ***
 	if offset > 0 {
 		remaining := len(rp.buffer) - offset
 
@@ -178,13 +252,35 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 				rp.buffer = rp.buffer[:remaining]
 			}
 
-			// 快速验证剩余数据是否可能是有效消息的开始
-			if remaining >= 12 {
-				totalLen := binary.BigEndian.Uint32(rp.buffer[:4])
-				if totalLen >= 16 && totalLen <= 16*1024*1024 {
-					logger.Debug("缓冲区包含潜在的下一条消息",
-						logger.Int("remaining_bytes", remaining),
-						logger.Int("expected_msg_len", int(totalLen)))
+			// *** 新增：验证剩余数据的完整性 ***
+			if remaining >= 4 {
+				// 检查剩余数据是否以有效的消息长度开始
+				remainingTotalLen := binary.BigEndian.Uint32(rp.buffer[:4])
+				if remainingTotalLen >= 16 && remainingTotalLen <= 16*1024*1024 {
+					if remaining >= 12 {
+						// 进一步验证Prelude CRC
+						headerLength := binary.BigEndian.Uint32(rp.buffer[4:8])
+						if headerLength <= remainingTotalLen-16 {
+							logger.Debug("缓冲区包含潜在的下一条消息",
+								logger.Int("remaining_bytes", remaining),
+								logger.Int("expected_msg_len", int(remainingTotalLen)),
+								logger.Int("header_len", int(headerLength)))
+						} else {
+							logger.Warn("剩余数据头部长度异常，可能数据损坏",
+								logger.Int("header_length", int(headerLength)),
+								logger.Int("total_length", int(remainingTotalLen)))
+							// 清空可能损坏的数据
+							rp.buffer = rp.buffer[:0]
+							remaining = 0
+						}
+					}
+				} else {
+					logger.Warn("剩余数据不是有效消息开始，清空缓冲区",
+						logger.Int("invalid_length", int(remainingTotalLen)),
+						logger.Int("remaining_bytes", remaining))
+					// 清空无效数据
+					rp.buffer = rp.buffer[:0]
+					remaining = 0
 				}
 			}
 		} else {
@@ -244,6 +340,11 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	totalLength := binary.BigEndian.Uint32(data[:4])
 	headerLength := binary.BigEndian.Uint32(data[4:8])
 
+	// *** 关键修复：严格验证数据完整性 ***
+	if int(totalLength) != len(data) {
+		return nil, 0, NewParseError(fmt.Sprintf("数据长度不匹配: 期望 %d 字节，实际 %d 字节", totalLength, len(data)), nil)
+	}
+
 	// AWS EventStream 格式验证：检查 Prelude CRC
 	if len(data) < 12 {
 		return nil, 0, NewParseError("数据长度不足以包含 Prelude CRC", nil)
@@ -270,10 +371,6 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 		return nil, 4, NewParseError(fmt.Sprintf("消息长度过大: %d", totalLength), nil) // 🔧 修复: 返回4字节而非0，避免死循环
 	}
 
-	if int(totalLength) > len(data) {
-		return nil, 0, NewParseError(fmt.Sprintf("数据不完整: 需要 %d 字节，实际 %d 字节", totalLength, len(data)), nil)
-	}
-
 	// 头部长度验证（考虑 Prelude CRC）
 	if headerLength > totalLength-16 { // 总长度减去固定开销: 4+4+4+4=16
 		return nil, int(totalLength), NewParseError(fmt.Sprintf("头部长度异常: %d", headerLength), nil)
@@ -281,8 +378,14 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 
 	// 提取消息各部分（考虑 Prelude CRC）
 	headerData := data[12 : 12+headerLength] // 从第12字节开始（跳过 Prelude CRC）
-	payloadStart := 12 + headerLength
+	payloadStart := int(12 + headerLength)
 	payloadEnd := int(totalLength) - 4
+	
+	// *** 关键修复：严格边界检查 ***
+	if payloadStart > payloadEnd || payloadEnd > len(data) {
+		return nil, int(totalLength), NewParseError(fmt.Sprintf("payload边界异常: start=%d, end=%d, data_len=%d", payloadStart, payloadEnd, len(data)), nil)
+	}
+	
 	payloadData := data[payloadStart:payloadEnd]
 
 	// 添加详细的payload调试信息
@@ -319,9 +422,6 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 				logger.String("expected_crc", fmt.Sprintf("%08x", expectedCRC)),
 				logger.String("calculated_crc", fmt.Sprintf("%08x", calculatedCRC)))
 		}
-	} else {
-		// logger.Debug("CRC校验通过",
-		// logger.String("crc", fmt.Sprintf("%08x", expectedCRC)))
 	}
 
 	// 解析头部 - 支持空头部的容错处理和断点续传
@@ -359,6 +459,30 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	// 验证头部 - 宽松验证
 	if err := rp.headerParser.ValidateHeaders(headers); err != nil {
 		logger.Warn("头部验证失败，但继续处理", logger.Err(err))
+	}
+
+	// *** 关键修复：增强payload完整性验证 ***
+	if len(payloadData) > 0 {
+		// 验证payload是否为有效的JSON（如果是JSON类型）
+		if contentType := GetContentTypeFromHeaders(headers); contentType == "application/json" {
+			if !json.Valid(payloadData) {
+				// JSON无效但不是致命错误，记录警告
+				logger.Warn("检测到无效JSON payload",
+					logger.String("payload_preview", func() string {
+						if len(payloadData) > 50 {
+							return string(payloadData[:50]) + "..."
+						}
+						return string(payloadData)
+					}()),
+					logger.Int("payload_len", len(payloadData)))
+				
+				// 尝试简单的JSON修复
+				payloadStr := string(payloadData)
+				if strings.Contains(payloadStr, "\"input\":") && strings.Contains(payloadStr, "\"name\":") {
+					logger.Debug("检测到可能的工具调用payload损坏，记录但继续处理")
+				}
+			}
+		}
 	}
 
 	message := &EventStreamMessage{

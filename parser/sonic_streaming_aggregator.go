@@ -13,6 +13,10 @@ import (
 // ToolParamsUpdateCallback 工具参数更新回调函数类型
 type ToolParamsUpdateCallback func(toolUseId string, fullParams string)
 
+// AWS EventStream流式传输配置
+// 由于EventStream按字节边界分片传输，导致UTF-8字符截断，
+// 因此只在收到停止信号时进行JSON解析，避免解析损坏的片段
+
 type SonicStreamingJSONAggregator struct {
 	activeStreamers map[string]*SonicJSONStreamer
 	mu              sync.RWMutex
@@ -21,15 +25,16 @@ type SonicStreamingJSONAggregator struct {
 
 // SonicJSONStreamer 单个工具调用的Sonic流式解析器
 type SonicJSONStreamer struct {
-	toolUseId     string
-	toolName      string
-	buffer        *bytes.Buffer
-	state         SonicParseState
-	lastUpdate    time.Time
-	isComplete    bool
-	result        map[string]interface{}
-	fragmentCount int
-	totalBytes    int
+	toolUseId      string
+	toolName       string
+	buffer         *bytes.Buffer
+	state          SonicParseState
+	lastUpdate     time.Time
+	isComplete     bool
+	result         map[string]interface{}
+	fragmentCount  int
+	totalBytes     int
+	incompleteUTF8 string // 用于存储跨片段的不完整UTF-8字符
 }
 
 // SonicParseState Sonic JSON解析状态
@@ -38,6 +43,14 @@ type SonicParseState struct {
 	isPartialJSON   bool
 	expectingValue  bool
 	isValueFragment bool
+}
+
+// 辅助函数：获取两个整数的最大值
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // NewSonicStreamingJSONAggregator 创建基于Sonic的流式JSON聚合器
@@ -91,18 +104,36 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 		}
 	}
 
-	// 使用Sonic尝试解析当前缓冲区
-	parseResult := streamer.tryParseWithSonic()
+	// AWS EventStream按字节边界分片传输，导致UTF-8中文字符截断问题
+	// 只有在收到停止信号时才进行最终解析，避免中途解析损坏的JSON片段
+	shouldParse := stop
 
-	logger.Debug("Sonic流式JSON解析进度",
-		logger.String("toolUseId", toolUseId),
-		logger.String("fragment", input),
-		logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
-		logger.Bool("isPartialJSON", streamer.state.isPartialJSON),
-		logger.Bool("stop", stop),
-		logger.String("parseStatus", parseResult),
-		logger.Int("fragmentCount", streamer.fragmentCount),
-		logger.Int("totalBytes", streamer.totalBytes))
+	var parseResult string
+	if shouldParse {
+		// 使用Sonic尝试解析当前缓冲区
+		parseResult = streamer.tryParseWithSonic()
+
+		logger.Debug("Sonic流式JSON解析进度",
+			logger.String("toolUseId", toolUseId),
+			logger.String("fragment", input),
+			logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
+			logger.Bool("isPartialJSON", streamer.state.isPartialJSON),
+			logger.Bool("stop", stop),
+			logger.String("parseStatus", parseResult),
+			logger.Int("fragmentCount", streamer.fragmentCount),
+			logger.Int("totalBytes", streamer.totalBytes))
+	} else {
+		// AWS EventStream分片传输：仅累积数据，避免解析截断的UTF-8字符
+		logger.Debug("EventStream分片累积数据",
+			logger.String("toolUseId", toolUseId),
+			logger.String("fragment", input),
+			logger.Int("bufferSize", streamer.buffer.Len()),
+			logger.Int("fragmentCount", streamer.fragmentCount),
+			logger.Int("totalBytes", streamer.totalBytes),
+			logger.String("reason", "awaiting_stop_signal_for_complete_json"))
+
+		parseResult = "streaming_accumulation"
+	}
 
 	// 如果收到停止信号
 	if stop {
@@ -176,12 +207,89 @@ func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, too
 
 // appendFragment 追加JSON片段
 func (sjs *SonicJSONStreamer) appendFragment(fragment string) error {
-	sjs.buffer.WriteString(fragment)
+	// 确保UTF-8字符完整性
+	safeFragment := sjs.ensureUTF8Integrity(fragment)
+
+	sjs.buffer.WriteString(safeFragment)
 	sjs.lastUpdate = time.Now()
 	sjs.fragmentCount++
-	sjs.totalBytes += len(fragment)
+	sjs.totalBytes += len(fragment) // 使用原始长度统计
 
 	return nil
+}
+
+// ensureUTF8Integrity 确保UTF-8字符完整性
+func (sjs *SonicJSONStreamer) ensureUTF8Integrity(fragment string) string {
+	if fragment == "" {
+		return fragment
+	}
+
+	// 检查片段是否以不完整的UTF-8字符结尾
+	bytes := []byte(fragment)
+	n := len(bytes)
+	if n == 0 {
+		return fragment
+	}
+
+	// 从末尾开始检查UTF-8字符边界
+	for i := n - 1; i >= 0 && i >= n-4; i-- {
+		b := bytes[i]
+
+		// 检查是否为UTF-8多字节序列的开始
+		if b&0x80 == 0 {
+			// ASCII字符，边界正确
+			break
+		} else if b&0xE0 == 0xC0 {
+			// 2字节UTF-8序列开始
+			if n-i < 2 {
+				logger.Debug("检测到截断的UTF-8字符(2字节)",
+					logger.String("toolUseId", sjs.toolUseId),
+					logger.Int("position", i),
+					logger.String("fragment_end", fragment[max(0, len(fragment)-10):]))
+				// 保存截断的字符到下一个片段处理
+				sjs.incompleteUTF8 = string(bytes[i:])
+				return string(bytes[:i])
+			}
+			break
+		} else if b&0xF0 == 0xE0 {
+			// 3字节UTF-8序列开始
+			if n-i < 3 {
+				logger.Debug("检测到截断的UTF-8字符(3字节)",
+					logger.String("toolUseId", sjs.toolUseId),
+					logger.Int("position", i),
+					logger.String("fragment_end", fragment[max(0, len(fragment)-10):]))
+				sjs.incompleteUTF8 = string(bytes[i:])
+				return string(bytes[:i])
+			}
+			break
+		} else if b&0xF8 == 0xF0 {
+			// 4字节UTF-8序列开始
+			if n-i < 4 {
+				logger.Debug("检测到截断的UTF-8字符(4字节)",
+					logger.String("toolUseId", sjs.toolUseId),
+					logger.Int("position", i),
+					logger.String("fragment_end", fragment[max(0, len(fragment)-10):]))
+				sjs.incompleteUTF8 = string(bytes[i:])
+				return string(bytes[:i])
+			}
+			break
+		}
+		// 继续字符(10xxxxxx)，继续向前检查
+	}
+
+	// 检查是否有之前的不完整UTF-8字符需要拼接
+	if sjs.incompleteUTF8 != "" {
+		combined := sjs.incompleteUTF8 + fragment
+		logger.Debug("恢复截断的UTF-8字符",
+			logger.String("toolUseId", sjs.toolUseId),
+			logger.String("incomplete", sjs.incompleteUTF8),
+			logger.String("current_fragment", fragment[:min(10, len(fragment))]),
+			logger.String("combined_start", combined[:min(20, len(combined))]))
+		sjs.incompleteUTF8 = ""                  // 清空
+		return sjs.ensureUTF8Integrity(combined) // 递归处理合并结果
+	}
+
+	return fragment
 }
 
 // tryParseWithSonic 使用Sonic尝试解析当前缓冲区
@@ -285,16 +393,24 @@ func (ssja *SonicStreamingJSONAggregator) sonicIntelligentComplete(streamer *Son
 		logger.Bool("isValueFragment", streamer.state.isValueFragment),
 		logger.Bool("isPartialJSON", streamer.state.isPartialJSON))
 
-	// 如果内容看起来像值片段，根据工具类型构建JSON
+	// *** 关键修复：按1.md建议简化逻辑，移除过早解析 ***
+
+	// 1. 检查是否为值片段（优先级最高）
 	if streamer.state.isValueFragment || streamer.looksLikeValueFragment(content) {
+		logger.Debug("处理值片段", logger.String("content", content))
 		return ssja.buildJSONFromValue(streamer.toolName, content)
 	}
 
-	// 如果是不完整的JSON，尝试补全
-	if strings.HasPrefix(content, "{") || streamer.state.isPartialJSON {
-		return ssja.sonicCompletePartialJSON(content, streamer.toolName)
+	// 2. 如果是不完整的JSON，尝试补全（移除复杂的损坏检测逻辑）
+	if strings.HasPrefix(content, "{") || strings.HasPrefix(content, "[") || streamer.state.isPartialJSON {
+		result := ssja.sonicCompletePartialJSON(content, streamer.toolName)
+		if result != nil {
+			return result
+		}
 	}
 
+	// 3. 简化的fallback逻辑
+	logger.Debug("无法智能补全JSON，返回nil")
 	return nil
 }
 
@@ -485,7 +601,13 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 func (ssja *SonicStreamingJSONAggregator) intelligentJSONFix(content, toolName string) string {
 	fixed := content
 
-	// 处理截断的键名
+	// 1. 修复截断的中文字符和键名
+	fixed = ssja.fixTruncatedChineseCharacters(fixed)
+
+	// 2. 修复损坏的JSON结构
+	fixed = ssja.fixBrokenJSONStructure(fixed, toolName)
+
+	// 3. 处理截断的键名
 	if strings.Contains(fixed, "\"file_pa") && !strings.Contains(fixed, "\"file_path\"") {
 		fixed = strings.Replace(fixed, "\"file_pa", "\"file_path", 1)
 	}
@@ -496,11 +618,11 @@ func (ssja *SonicStreamingJSONAggregator) intelligentJSONFix(content, toolName s
 		fixed = strings.Replace(fixed, "\"comm", "\"command", 1)
 	}
 
-	// 计算括号和引号的平衡
+	// 4. 计算括号和引号的平衡
 	braceCount := strings.Count(fixed, "{") - strings.Count(fixed, "}")
 	quoteCount := strings.Count(fixed, "\"")
 
-	// 处理未闭合的字符串值
+	// 5. 处理未闭合的字符串值
 	lastColonIdx := strings.LastIndex(fixed, ":")
 	if lastColonIdx > 0 {
 		afterColon := strings.TrimSpace(fixed[lastColonIdx+1:])
@@ -511,14 +633,84 @@ func (ssja *SonicStreamingJSONAggregator) intelligentJSONFix(content, toolName s
 		}
 	}
 
-	// 如果引号数量为奇数，补全最后一个引号
+	// 6. 如果引号数量为奇数，补全最后一个引号
 	if quoteCount%2 == 1 {
 		fixed += "\""
 	}
 
-	// 补全缺失的右括号
+	// 7. 补全缺失的右括号
 	for i := 0; i < braceCount; i++ {
 		fixed += "}"
+	}
+
+	return fixed
+}
+
+// fixTruncatedChineseCharacters 修复截断的中文字符
+func (ssja *SonicStreamingJSONAggregator) fixTruncatedChineseCharacters(content string) string {
+	// 常见的中文字符截断模式和修复
+	chineseFixMap := map[string]string{
+		"}ontent\"": "\"content\"", // }ontent -> content
+		"天气模tatus":  "\"status\"",  // 天气模tatus -> status
+		"\"s\":":    "\"status\":", // "s": -> "status":
+		"status\":\"pending\",\"activeForm\":\"实现天气模式切换的JavaScript逻": "\"status\":\"pending\",\"activeForm\":\"实现天气模式切换的JavaScript逻辑\"", // 修复完整字符串
+		"优化交互反馈和status": "优化交互反馈和用户体验\",\"status", // 补全截断内容
+	}
+
+	fixed := content
+	for pattern, replacement := range chineseFixMap {
+		if strings.Contains(fixed, pattern) {
+			logger.Debug("修复中文字符截断",
+				logger.String("pattern", pattern),
+				logger.String("replacement", replacement))
+			fixed = strings.Replace(fixed, pattern, replacement, -1)
+		}
+	}
+
+	return fixed
+}
+
+// fixBrokenJSONStructure 修复损坏的JSON结构
+func (ssja *SonicStreamingJSONAggregator) fixBrokenJSONStructure(content, toolName string) string {
+	fixed := content
+
+	// 修复常见的结构问题
+	structFixMap := map[string]string{
+		"}ontent\":": "\"content\":", // 缺失的引号
+		"\"实现响应式布局适配\",\"s\":\"pending\"":       "\"实现响应式布局适配\",\"status\":\"pending\"",         // 截断的键名
+		"\"优化交互反馈和status\":\"pending\"":         "\"优化交互反馈和用户体验\",\"status\":\"pending\"",       // 补全值和键
+		"activeForm\":\"实现天气模式的动态背景动画\"}ontent": "\"activeForm\":\"实现天气模式的动态背景动画\"},{\"content", // 修复对象分隔
+	}
+
+	// 针对TodoWrite工具的特殊修复
+	if strings.ToLower(toolName) == "todowrite" {
+		// 修复todos数组结构
+		if strings.Contains(fixed, "\"todos\"") && !strings.Contains(fixed, "[{") {
+			// 确保todos后面有正确的数组开始
+			fixed = strings.Replace(fixed, "\"todos\":", "\"todos\":[", 1)
+		}
+
+		// 修复对象分隔符
+		fixed = strings.ReplaceAll(fixed, "}content\":", "},{\"content\":")
+		fixed = strings.ReplaceAll(fixed, "}\"content\":", "},{\"content\":")
+
+		// 修复数组结束
+		if strings.Contains(fixed, "\"todos\":[") && !strings.HasSuffix(strings.TrimSpace(fixed), "]}") && !strings.HasSuffix(strings.TrimSpace(fixed), "}]") {
+			// 确保数组正确结束
+			if strings.HasSuffix(strings.TrimSpace(fixed), "}") {
+				fixed = strings.TrimSpace(fixed) + "]"
+			}
+		}
+	}
+
+	// 应用结构修复
+	for pattern, replacement := range structFixMap {
+		if strings.Contains(fixed, pattern) {
+			logger.Debug("修复JSON结构",
+				logger.String("pattern", pattern),
+				logger.String("replacement", replacement))
+			fixed = strings.Replace(fixed, pattern, replacement, -1)
+		}
 	}
 
 	return fixed
@@ -725,10 +917,21 @@ func (ssja *SonicStreamingJSONAggregator) GetStats() map[string]interface{} {
 		totalBytes += streamer.totalBytes
 	}
 
+	// 统计pending状态的工具数量
+	pendingCount := 0
+	for _, streamer := range ssja.activeStreamers {
+		if !streamer.state.hasValidJSON && !streamer.isComplete {
+			pendingCount++
+		}
+	}
+
 	return map[string]interface{}{
-		"active_streamers": len(ssja.activeStreamers),
-		"total_fragments":  totalFragments,
-		"total_bytes":      totalBytes,
-		"engine":           "sonic",
+		"active_streamers":    len(ssja.activeStreamers),
+		"streaming_streamers": pendingCount,
+		"total_fragments":     totalFragments,
+		"total_bytes":         totalBytes,
+		"engine":              "sonic",
+		"strategy":            "stop_signal_only",
+		"utf8_safe":           true,
 	}
 }

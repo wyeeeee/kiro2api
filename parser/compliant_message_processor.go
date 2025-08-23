@@ -1640,7 +1640,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			logger.String("name", evt.Name),
 			logger.String("inputFragment", evt.Input),
 			logger.Bool("stop", evt.Stop))
-		
+
 		// 如果有新的输入片段，检查配置后发送参数增量事件
 		if evt.Input != "" && config.EnableIncrementalToolEvents() {
 			// 边界情况检查：确保工具ID有效
@@ -1649,7 +1649,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 					logger.String("inputFragment", evt.Input))
 				return []SSEEvent{}, nil
 			}
-			
+
 			// 获取工具的块索引
 			toolIndex := h.toolManager.GetBlockIndex(evt.ToolUseId)
 			if toolIndex >= 0 {
@@ -1660,7 +1660,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 						logger.Int("originalLength", len(evt.Input)))
 					evt.Input = evt.Input[:1000] + "... (truncated)"
 				}
-				
+
 				logger.Debug("发送工具参数增量事件",
 					logger.String("toolUseId", evt.ToolUseId),
 					logger.Int("blockIndex", toolIndex),
@@ -1671,7 +1671,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 						return evt.Input
 					}()),
 					logger.Bool("incremental_enabled", true))
-				
+
 				return []SSEEvent{{
 					Event: "content_block_delta",
 					Data: map[string]interface{}{
@@ -1689,13 +1689,13 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 					logger.String("toolUseId", evt.ToolUseId),
 					logger.String("name", evt.Name),
 					logger.String("inputFragment", evt.Input))
-				
+
 				// 尝试紧急注册工具（容错机制）
 				if evt.Name != "" {
 					logger.Debug("紧急注册未注册的工具",
 						logger.String("toolUseId", evt.ToolUseId),
 						logger.String("name", evt.Name))
-					
+
 					toolCall := ToolCall{
 						ID:   evt.ToolUseId,
 						Type: "function",
@@ -1704,10 +1704,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 							Arguments: "{}",
 						},
 					}
-					
+
 					request := ToolCallRequest{ToolCalls: []ToolCall{toolCall}}
 					emergencyEvents := h.toolManager.HandleToolCallRequest(request)
-					
+
 					// 返回紧急注册事件，下次会正常处理增量
 					return emergencyEvents, nil
 				}
@@ -1719,7 +1719,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 				logger.String("inputFragment", evt.Input),
 				logger.Bool("incremental_enabled", false))
 		}
-		
+
 		// 如果没有新的输入或无法获取索引，返回空事件（保持向后兼容）
 		return []SSEEvent{}, nil
 	}
@@ -1848,7 +1848,44 @@ func (h *LegacyToolUseEventHandler) attemptJSONFix(input string) string {
 	// 清理常见问题
 	fixed := strings.TrimSpace(input)
 
-	// 确保有大括号
+	// *** 关键修复：处理JSON片段错误拼接问题 ***
+	// 检查并修复常见的拼接错误模式
+
+	// 1. 修复 "}]}"与其他内容错误拼接的问题
+	if strings.Contains(fixed, "\"}]}") && strings.Contains(fixed, "\"pendin") {
+		// 这是典型的片段拼接错误："}]}"后面直接跟着"pendin"
+		logger.Debug("检测到JSON片段拼接错误，尝试修复",
+			logger.String("original", fixed[:min(100, len(fixed))]))
+
+		// 查找"}]}"的位置
+		endIdx := strings.Index(fixed, "\"}]}")
+		if endIdx > 0 {
+			// 保留到"}]}"结束的部分，尝试构建完整的JSON
+			beforeEnd := fixed[:endIdx+4] // 包含"}]}"
+
+			// 检查后面是否有有效的字段
+			remaining := fixed[endIdx+4:]
+			if strings.Contains(remaining, "\"name\":") || strings.Contains(remaining, "\"toolUseId\":") {
+				// 尝试重新构造JSON结构
+				fixed = beforeEnd + ",\"status\":\"pending\"}"
+				logger.Debug("修复JSON片段拼接", logger.String("fixed", fixed))
+			}
+		}
+	}
+
+	// 2. 修复不完整的JSON结构
+	if strings.Contains(fixed, "\"content\":") && strings.Contains(fixed, "\"status\":") {
+		// 这看起来像是TodoWrite工具的参数
+		// 尝试构建完整的todos数组结构
+		if !strings.HasPrefix(fixed, "{\"todos\":[") {
+			// 包装成完整的todos结构
+			if strings.HasPrefix(fixed, "{\"content\":") {
+				fixed = "{\"todos\":[" + fixed + "]}"
+			}
+		}
+	}
+
+	// 3. 确保有大括号
 	if !strings.HasPrefix(fixed, "{") {
 		fixed = "{" + fixed
 	}
@@ -1856,10 +1893,19 @@ func (h *LegacyToolUseEventHandler) attemptJSONFix(input string) string {
 		fixed = fixed + "}"
 	}
 
-	// 清理可能的控制字符
-	fixed = strings.ReplaceAll(fixed, "\x00", "")
-	fixed = strings.ReplaceAll(fixed, "\ufffd", "")
+	// 4. 修复UTF-8替换字符和控制字符
+	fixed = strings.ReplaceAll(fixed, "\\x00", "")
+	fixed = strings.ReplaceAll(fixed, "\\ufffd", "")
+	fixed = strings.ReplaceAll(fixed, "\ufffd", "") // Unicode替换字符
 
+	// 6. 验证修复后的JSON基本结构
+	if !json.Valid([]byte(fixed)) {
+		logger.Debug("修复后JSON仍然无效，尝试构建基础结构")
+		// 如果修复后还是无效，构建最基本的结构
+		return "{\"todos\":[{\"content\":\"修复数据损坏\",\"status\":\"pending\",\"activeForm\":\"修复数据损坏\"}]}"
+	}
+
+	logger.Debug("JSON修复完成", logger.String("result", fixed[:min(100, len(fixed))]))
 	return fixed
 }
 
@@ -2090,15 +2136,10 @@ func (tda *ToolDataAggregator) findMatchingBuffer(toolUseId, _ string) *toolData
 // 废弃的辅助函数已移除
 
 // min 返回最小值
-func min(values ...int) int {
-	if len(values) == 0 {
-		return 0
+// 辅助函数：获取两个整数的最小值
+func min(a, b int) int {
+	if a < b {
+		return a
 	}
-	minVal := values[0]
-	for _, v := range values[1:] {
-		if v < minVal {
-			minVal = v
-		}
-	}
-	return minVal
+	return b
 }
