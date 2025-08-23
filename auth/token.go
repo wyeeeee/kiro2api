@@ -96,7 +96,6 @@ func getRefreshManager() *utils.TokenRefreshManager {
 	return refreshManager
 }
 
-
 // refreshTokenAndReturn 刷新token并返回TokenInfo，使用token池管理
 func refreshTokenAndReturn() (types.TokenInfo, error) {
 	pool := getTokenPool()
@@ -457,4 +456,3 @@ func ClearTokenCache() {
 	cache.Clear()
 	logger.Info("原子Token缓存已清除")
 }
-

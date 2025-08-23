@@ -62,15 +62,15 @@ func (tlm *ToolLifecycleManager) validateToolCallFormat(toolCall ToolCall) error
 	if strings.TrimSpace(toolCall.ID) == "" {
 		return fmt.Errorf("工具调用ID不能为空")
 	}
-	
+
 	if strings.TrimSpace(toolCall.Function.Name) == "" {
 		return fmt.Errorf("工具名称不能为空")
 	}
-	
+
 	if toolCall.Type != "function" && toolCall.Type != "" {
 		return fmt.Errorf("不支持的工具类型: %s", toolCall.Type)
 	}
-	
+
 	// 验证参数JSON格式
 	if toolCall.Function.Arguments != "" {
 		var args map[string]interface{}
@@ -78,7 +78,7 @@ func (tlm *ToolLifecycleManager) validateToolCallFormat(toolCall ToolCall) error
 			return fmt.Errorf("工具参数JSON格式无效: %w", err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -112,16 +112,16 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 				logger.String("tool_id", toolCall.ID),
 				logger.String("tool_name", toolCall.Function.Name),
 				logger.Err(err))
-			
+
 			// 发送错误事件
 			events = append(events, SSEEvent{
 				Event: "error",
 				Data: map[string]interface{}{
 					"type": "invalid_request_error",
 					"error": map[string]interface{}{
-						"type":    "invalid_tool_parameters",
-						"message": err.Error(),
-						"tool_id": toolCall.ID,
+						"type":      "invalid_tool_parameters",
+						"message":   err.Error(),
+						"tool_id":   toolCall.ID,
 						"tool_name": toolCall.Function.Name,
 					},
 				},
@@ -135,7 +135,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 				logger.String("tool_id", toolCall.ID),
 				logger.String("tool_name", toolCall.Function.Name),
 				logger.String("existing_status", existing.Status.String()))
-			
+
 			// 解析工具调用参数
 			var arguments map[string]interface{}
 			if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
@@ -145,7 +145,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 					logger.Err(err))
 				arguments = make(map[string]interface{})
 			}
-			
+
 			// 更新现有工具的参数
 			if len(arguments) > 0 {
 				existing.Arguments = arguments
@@ -348,7 +348,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 	// 3. 生成 message_delta 事件表示消息因错误而停止
 	// 这替代了 TOOL_EXECUTION_END 的功能，提供错误状态信息
 	events = append(events, SSEEvent{
-		Event: "message_delta", 
+		Event: "message_delta",
 		Data: map[string]interface{}{
 			"type": "message_delta",
 			"delta": map[string]interface{}{

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"kiro2api/logger"
@@ -26,9 +25,9 @@ func main() {
 
 	// 检查必需的环境变量
 	if os.Getenv("AWS_REFRESHTOKEN") == "" {
-		fmt.Printf("错误: AWS_REFRESHTOKEN环境变量未设置\n")
-		fmt.Printf("请设置AWS_REFRESHTOKEN环境变量后重新启动程序\n")
-		fmt.Printf("示例: export AWS_REFRESHTOKEN=\"your_refresh_token_here\"\n")
+		logger.Error("AWS_REFRESHTOKEN环境变量未设置")
+		logger.Error("请设置AWS_REFRESHTOKEN环境变量后重新启动程序")
+		logger.Error("示例: export AWS_REFRESHTOKEN=\"your_refresh_token_here\"")
 		os.Exit(1)
 	}
 

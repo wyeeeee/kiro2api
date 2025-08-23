@@ -434,7 +434,7 @@ func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value str
 					break
 				}
 			}
-			
+
 			// 2. 如果包含路径分隔符，很可能是file_path
 			if strings.Contains(value, "/") && !strings.Contains(value, "\n") && len(value) < 500 {
 				result = map[string]interface{}{"file_path": value, "content": ""}
@@ -454,7 +454,7 @@ func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value str
 				} else if strings.Contains(value, ".css") || strings.Contains(value, "style") {
 					filePath = "style.css"
 				}
-				
+
 				result = map[string]interface{}{"file_path": filePath, "content": value}
 			}
 		case "bash":
@@ -685,7 +685,7 @@ func (ssja *SonicStreamingJSONAggregator) fixBrokenJSONStructure(content, toolNa
 	// 通用的JSON结构修复，移除硬编码的特定内容模式
 	// 修复缺失引号的常见模式
 	fixed = strings.ReplaceAll(fixed, "}content\":", "\"content\":")
-	
+
 	// 针对TodoWrite工具的通用结构修复
 	if strings.ToLower(toolName) == "todowrite" {
 		// 修复todos数组结构
