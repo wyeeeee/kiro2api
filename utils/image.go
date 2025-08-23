@@ -3,8 +3,6 @@ package utils
 import (
 	"encoding/base64"
 	"fmt"
-	"net/http"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -65,38 +63,6 @@ func DetectImageFormat(data []byte) (string, error) {
 }
 
 // ProcessImageData 处理图片数据，检测格式并编码为 base64
-func ProcessImageData(data []byte, source string) (*types.ImageSource, error) {
-	// 检测图片格式
-	mediaType, err := DetectImageFormat(data)
-	if err != nil {
-		// 尝试从文件扩展名获取格式
-		ext := strings.ToLower(filepath.Ext(source))
-		if mt, ok := SupportedImageFormats[ext]; ok {
-			mediaType = mt
-		} else {
-			// 尝试使用 HTTP 内容类型检测
-			mediaType = http.DetectContentType(data)
-			if !strings.HasPrefix(mediaType, "image/") {
-				return nil, fmt.Errorf("无法检测图片格式: %v", err)
-			}
-		}
-	}
-
-	// 验证是否为支持的格式
-	if !IsSupportedImageFormat(mediaType) {
-		return nil, fmt.Errorf("不支持的图片格式: %s", mediaType)
-	}
-
-	// 编码为 base64
-	base64Data := base64.StdEncoding.EncodeToString(data)
-
-	return &types.ImageSource{
-		Type:      "base64",
-		MediaType: mediaType,
-		Data:      base64Data,
-	}, nil
-}
-
 // IsSupportedImageFormat 检查是否为支持的图片格式
 func IsSupportedImageFormat(mediaType string) bool {
 	// 以 GetImageFormatFromMediaType 为单一事实来源，避免多处维护
@@ -143,29 +109,6 @@ func CreateCodeWhispererImage(imageSource *types.ImageSource) *types.CodeWhisper
 }
 
 // ParseImageFromContentBlock 从 ContentBlock 解析图片信息
-func ParseImageFromContentBlock(block types.ContentBlock) (*types.ImageSource, error) {
-	if block.Type != "image" || block.Source == nil {
-		return nil, fmt.Errorf("不是图片类型的内容块")
-	}
-
-	// 验证图片格式
-	if !IsSupportedImageFormat(block.Source.MediaType) {
-		return nil, fmt.Errorf("不支持的图片格式: %s", block.Source.MediaType)
-	}
-
-	// 验证 base64 数据
-	if block.Source.Type != "base64" || block.Source.Data == "" {
-		return nil, fmt.Errorf("无效的图片数据格式")
-	}
-
-	// 验证 base64 编码
-	_, err := base64.StdEncoding.DecodeString(block.Source.Data)
-	if err != nil {
-		return nil, fmt.Errorf("无效的 base64 编码: %v", err)
-	}
-
-	return block.Source, nil
-}
 
 // ValidateImageContent 验证图片内容的完整性
 func ValidateImageContent(imageSource *types.ImageSource) error {

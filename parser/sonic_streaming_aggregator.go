@@ -53,13 +53,6 @@ func max(a, b int) int {
 	return b
 }
 
-// NewSonicStreamingJSONAggregator 创建基于Sonic的流式JSON聚合器
-func NewSonicStreamingJSONAggregator() *SonicStreamingJSONAggregator {
-	return &SonicStreamingJSONAggregator{
-		activeStreamers: make(map[string]*SonicJSONStreamer),
-	}
-}
-
 // NewSonicStreamingJSONAggregatorWithCallback 创建带回调的Sonic流式JSON聚合器
 func NewSonicStreamingJSONAggregatorWithCallback(callback ToolParamsUpdateCallback) *SonicStreamingJSONAggregator {
 	logger.Debug("创建Sonic流式JSON聚合器",

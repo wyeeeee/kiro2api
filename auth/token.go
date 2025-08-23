@@ -96,11 +96,6 @@ func getRefreshManager() *utils.TokenRefreshManager {
 	return refreshManager
 }
 
-// RefreshTokenForServer 刷新token，用于服务器模式，返回错误而不是退出程序
-func RefreshTokenForServer() error {
-	_, err := refreshTokenAndReturn()
-	return err
-}
 
 // refreshTokenAndReturn 刷新token并返回TokenInfo，使用token池管理
 func refreshTokenAndReturn() (types.TokenInfo, error) {
@@ -463,65 +458,3 @@ func ClearTokenCache() {
 	logger.Info("原子Token缓存已清除")
 }
 
-// ClearTokenCacheByIndex 清除指定索引的token缓存
-func ClearTokenCacheByIndex(idx int) {
-	cache := getAtomicCache()
-	cache.Delete(idx)
-	logger.Info("指定索引Token缓存已清除", logger.Int("index", idx))
-}
-
-// GetTokenPoolStats 获取token池统计信息
-func GetTokenPoolStats() map[string]any {
-	pool := getTokenPool()
-	if pool == nil {
-		return map[string]any{
-			"pool_enabled": false,
-			"message":      "Token池未初始化",
-		}
-	}
-
-	stats := pool.GetStats()
-	stats["pool_enabled"] = true
-
-	// 添加原子缓存统计信息
-	cache := getAtomicCache()
-	cacheStats := cache.GetStats()
-	for k, v := range cacheStats {
-		stats["cache_"+k] = v
-	}
-
-	// 添加刷新管理器统计信息
-	refreshMgr := getRefreshManager()
-	refreshStats := refreshMgr.GetStats()
-	for k, v := range refreshStats {
-		stats["refresh_"+k] = v
-	}
-
-	return stats
-}
-
-// ForceRefreshToken 强制刷新指定索引的token
-func ForceRefreshToken(idx int) error {
-	pool := getTokenPool()
-	if pool == nil {
-		return fmt.Errorf("Token池未初始化")
-	}
-
-	cache := getAtomicCache()
-
-	// 清除指定索引的缓存
-	cache.Delete(idx)
-
-	// 刷新指定索引的token
-	tokenInfo, err := refreshTokenByIndex(pool, idx)
-	if err != nil {
-		return fmt.Errorf("强制刷新索引%d的token失败: %v", idx, err)
-	}
-
-	// 缓存新的token
-	cache.Set(idx, &tokenInfo)
-	pool.MarkTokenSuccess(idx)
-
-	logger.Info("强制刷新Token成功", logger.Int("token_index", idx))
-	return nil
-}

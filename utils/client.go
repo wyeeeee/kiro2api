@@ -148,20 +148,3 @@ func DoSmartRequest(httpReq *http.Request, anthropicReq *types.AnthropicRequest)
 }
 
 // GetOptimalClient 获取最优HTTP客户端
-func GetOptimalClient(anthropicReq *types.AnthropicRequest) *http.Client {
-	if anthropicReq == nil {
-		return SharedHTTPClient
-	}
-
-	// 流式请求优先使用流式客户端
-	if anthropicReq.Stream {
-		return StreamingClient
-	}
-
-	// 非流式请求根据复杂度选择
-	if AnalyzeRequestComplexity(*anthropicReq) == ComplexRequest {
-		return LongRequestClient
-	}
-
-	return SharedHTTPClient
-}
