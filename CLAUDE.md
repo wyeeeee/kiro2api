@@ -46,10 +46,9 @@ go test ./...
 
 # 运行特定包测试
 go test ./parser -v
-go test ./test -v
 
 # 性能基准测试
-go test ./test -bench=BenchmarkRealIntegration -benchmem
+go test ./... -bench=. -benchmem
 
 # 代码质量检查
 go vet ./...
@@ -694,6 +693,5 @@ curl -I http://localhost:8081/v1/models
 # 开发时注意
 - 本程序运行需要的环境变量设置在.env文件，支持Social（默认）和IdC两种认证方式
 - 项目使用了增强的流式解析器，支持错误恢复和环形缓冲区
-- 完整的测试系统位于 `test/` 目录，支持原始数据回放和集成测试
 - 代码已通过go fmt、go vet和依赖清理，保持高质量标准
 - Anthropic工具调用规范文档 https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview
