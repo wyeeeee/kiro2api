@@ -2,11 +2,11 @@ package parser
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"kiro2api/logger"
+	"kiro2api/utils"
 	"strings"
 	"sync"
 	"time"
@@ -14,14 +14,12 @@ import (
 
 // RobustEventStreamParser 带CRC校验和错误恢复的解析器
 type RobustEventStreamParser struct {
-	headerParser  *HeaderParser
-	strictMode    bool
-	errorCount    int
-	maxErrors     int
-	crcTable      *crc32.Table
-	buffer        []byte      // 保留原有buffer用于兼容
-	ringBuffer    *RingBuffer // 新的环形缓冲区
-	useRingBuffer bool        // 是否使用环形缓冲区
+	headerParser *HeaderParser
+	strictMode   bool
+	errorCount   int
+	maxErrors    int
+	crcTable     *crc32.Table
+	ringBuffer   *RingBuffer // 新的环形缓冲区
 	// *** 新增：并发访问控制和状态保护 ***
 	mu            sync.RWMutex // 保护并发访问
 	lastProcessed int64        // 最后处理的字节数，用于监控
@@ -31,21 +29,11 @@ type RobustEventStreamParser struct {
 // NewRobustEventStreamParser 创建健壮的事件流解析器
 func NewRobustEventStreamParser(strictMode bool) *RobustEventStreamParser {
 	return &RobustEventStreamParser{
-		headerParser:  NewHeaderParser(),
-		strictMode:    strictMode,
-		maxErrors:     10,
-		crcTable:      crc32.MakeTable(crc32.IEEE),
-		buffer:        make([]byte, 0, 256*1024), // *** 关键修复：提升到256KB以处理16KB+工具调用 ***
-		ringBuffer:    NewRingBuffer(512 * 1024), // *** 环形缓冲区也提升到512KB ***
-		useRingBuffer: true,                      // 默认不启用，保持兼容性
-	}
-}
-
-// EnableRingBuffer 启用环形缓冲区
-func (rp *RobustEventStreamParser) EnableRingBuffer(enable bool) {
-	rp.useRingBuffer = enable
-	if enable && rp.ringBuffer == nil {
-		rp.ringBuffer = NewRingBuffer(64 * 1024)
+		headerParser: NewHeaderParser(),
+		strictMode:   strictMode,
+		maxErrors:    10,
+		crcTable:     crc32.MakeTable(crc32.IEEE),
+		ringBuffer:   NewRingBuffer(512 * 1024), // *** 环形缓冲区也提升到512KB ***
 	}
 }
 
@@ -56,7 +44,6 @@ func (rp *RobustEventStreamParser) SetMaxErrors(maxErrors int) {
 
 // Reset 重置解析器状态
 func (rp *RobustEventStreamParser) Reset() {
-	rp.buffer = rp.buffer[:0]
 	rp.errorCount = 0
 	if rp.ringBuffer != nil {
 		rp.ringBuffer.Reset()
@@ -91,238 +78,8 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 		}
 	}()
 
-	if rp.useRingBuffer {
-		return rp.parseStreamWithRingBuffer(data)
-	}
+	return rp.parseStreamWithRingBuffer(data)
 
-	// 原有的buffer处理逻辑
-	rp.buffer = append(rp.buffer, data...)
-
-	messages := make([]*EventStreamMessage, 0, 8)
-	offset := 0
-
-	lastErrorOffset := -1
-	consecutiveErrors := 0
-
-	for offset < len(rp.buffer) && rp.errorCount < rp.maxErrors {
-		// *** 关键修复：严格验证消息边界 ***
-		if offset+16 > len(rp.buffer) {
-			// 数据不足以包含完整的消息头
-			logger.Debug("缓冲区数据不足，等待更多数据",
-				logger.Int("offset", offset),
-				logger.Int("buffer_len", len(rp.buffer)),
-				logger.Int("need_min", 16))
-			break
-		}
-
-		// 预先检查消息长度是否合理
-		totalLength := binary.BigEndian.Uint32(rp.buffer[offset : offset+4])
-		if totalLength < 16 || totalLength > 16*1024*1024 {
-			logger.Warn("检测到异常消息长度，跳过该位置",
-				logger.Int("offset", offset),
-				logger.Int("totalLength", int(totalLength)))
-			offset++
-			continue
-		}
-
-		// 检查是否有足够的数据来解析完整消息
-		if offset+int(totalLength) > len(rp.buffer) {
-			logger.Debug("消息数据不完整，等待更多数据",
-				logger.Int("offset", offset),
-				logger.Int("need_total", int(totalLength)),
-				logger.Int("buffer_len", len(rp.buffer)),
-				logger.Int("available", len(rp.buffer)-offset))
-			break
-		}
-
-		// *** 关键修复：使用精确的消息边界数据 ***
-		messageData := rp.buffer[offset : offset+int(totalLength)]
-		message, _, err := rp.parseSingleMessageWithValidation(messageData)
-
-		if err != nil {
-			if rp.strictMode {
-				return messages, fmt.Errorf("严格模式下解析失败: %w", err)
-			}
-
-			// 检测死循环：如果在同一位置连续出错
-			if offset == lastErrorOffset {
-				consecutiveErrors++
-				if consecutiveErrors > 3 {
-					// 强制跳过一定字节数以打破循环
-					skipBytes := minInt(32, len(rp.buffer)-offset)
-					if skipBytes <= 1 {
-						logger.Warn("无法跳过更多数据，停止解析",
-							logger.Int("offset", offset),
-							logger.Int("buffer_len", len(rp.buffer)))
-						break
-					}
-					offset += skipBytes
-					logger.Warn("检测到解析死循环，强制跳过字节",
-						logger.Int("skip_bytes", skipBytes),
-						logger.Int("new_offset", offset))
-					consecutiveErrors = 0
-					continue
-				}
-			} else {
-				lastErrorOffset = offset
-				consecutiveErrors = 1
-			}
-
-			// 对于流数据场景：数据可能尚未完全到达
-			if isMoreDataNeededError(err) {
-				logger.Debug("数据不完整，等待更多数据",
-					logger.Int("offset", offset),
-					logger.Int("buffer_len", len(rp.buffer)))
-				break
-			}
-
-			// 记录错误
-			logger.Warn("消息解析失败，尝试恢复",
-				logger.Err(err),
-				logger.Int("offset", offset),
-				logger.Int("error_count", rp.errorCount))
-			rp.errorCount++
-
-			// 智能恢复：根据错误类型选择策略
-			var recoveryOffset int
-			if strings.Contains(err.Error(), "CRC") {
-				// CRC错误：尝试找到下一个有效消息
-				recoveryOffset = rp.findNextMessageBoundary(rp.buffer[offset+1:])
-				if recoveryOffset > 0 {
-					offset += recoveryOffset + 1
-				} else {
-					offset += 4 // 跳过一个可能的长度字段
-				}
-			} else if strings.Contains(err.Error(), "长度") || strings.Contains(err.Error(), "消息总长度异常") {
-				// 长度异常：快速跳过
-				offset += 16 // 跳过最小消息大小
-			} else {
-				// 其他错误：逐字节查找
-				recoveryOffset = rp.findNextMessageBoundary(rp.buffer[offset+1:])
-				if recoveryOffset > 0 {
-					offset += recoveryOffset + 1
-				} else {
-					offset++
-				}
-			}
-
-			logger.Debug("错误恢复策略执行",
-				logger.String("error_type", err.Error()[:minInt(50, len(err.Error()))]),
-				logger.Int("new_offset", offset))
-			continue
-		}
-
-		if message != nil {
-			messages = append(messages, message)
-			logger.Debug("成功解析消息",
-				logger.String("message_type", message.GetMessageType()),
-				logger.String("event_type", message.GetEventType()),
-				logger.Int("payload_len", len(message.Payload)))
-		}
-
-		// *** 关键修复：使用确切的消息长度而不是解析器返回的consumed ***
-		offset += int(totalLength)
-
-		// 安全检查：确保不会超出缓冲区
-		if offset > len(rp.buffer) {
-			logger.Warn("偏移量超出缓冲区，纠正",
-				logger.Int("offset", offset),
-				logger.Int("buffer_len", len(rp.buffer)))
-			offset = len(rp.buffer)
-		}
-	}
-
-	// *** 关键修复：更安全的缓冲区管理 ***
-	if offset > 0 {
-		remaining := len(rp.buffer) - offset
-
-		if remaining > 0 {
-			// 保留未处理的数据
-			if remaining < len(rp.buffer)/2 && cap(rp.buffer) > 8192 {
-				// 如果剩余数据很少且缓冲区很大，重新分配以节省内存
-				newBuffer := make([]byte, remaining)
-				copy(newBuffer, rp.buffer[offset:])
-				rp.buffer = newBuffer
-				logger.Debug("重新分配缓冲区以节省内存",
-					logger.Int("old_cap", cap(rp.buffer)),
-					logger.Int("new_size", remaining))
-			} else {
-				// 移动数据到缓冲区开始位置
-				copy(rp.buffer[:remaining], rp.buffer[offset:])
-				rp.buffer = rp.buffer[:remaining]
-			}
-
-			// *** 新增：验证剩余数据的完整性 ***
-			if remaining >= 4 {
-				// 检查剩余数据是否以有效的消息长度开始
-				remainingTotalLen := binary.BigEndian.Uint32(rp.buffer[:4])
-				if remainingTotalLen >= 16 && remainingTotalLen <= 16*1024*1024 {
-					if remaining >= 12 {
-						// 进一步验证Prelude CRC
-						headerLength := binary.BigEndian.Uint32(rp.buffer[4:8])
-						if headerLength <= remainingTotalLen-16 {
-							logger.Debug("缓冲区包含潜在的下一条消息",
-								logger.Int("remaining_bytes", remaining),
-								logger.Int("expected_msg_len", int(remainingTotalLen)),
-								logger.Int("header_len", int(headerLength)))
-						} else {
-							logger.Warn("剩余数据头部长度异常，可能数据损坏",
-								logger.Int("header_length", int(headerLength)),
-								logger.Int("total_length", int(remainingTotalLen)))
-							// 清空可能损坏的数据
-							rp.buffer = rp.buffer[:0]
-							remaining = 0
-						}
-					}
-				} else {
-					logger.Warn("剩余数据不是有效消息开始，清空缓冲区",
-						logger.Int("invalid_length", int(remainingTotalLen)),
-						logger.Int("remaining_bytes", remaining))
-					// 清空无效数据
-					rp.buffer = rp.buffer[:0]
-					remaining = 0
-				}
-			}
-		} else {
-			// 没有剩余数据，清空缓冲区
-			rp.buffer = rp.buffer[:0]
-			// 如果缓冲区过大，重置为默认大小
-			if cap(rp.buffer) > 64*1024 {
-				rp.buffer = make([]byte, 0, 4096)
-				logger.Debug("重置缓冲区到默认大小")
-			}
-		}
-
-		logger.Debug("缓冲区清理完成",
-			logger.Int("processed", offset),
-			logger.Int("remaining", remaining))
-	}
-
-	if rp.errorCount >= rp.maxErrors {
-		return messages, fmt.Errorf("错误次数过多 (%d)，停止解析", rp.errorCount)
-	}
-
-	return messages, nil
-}
-
-// isMoreDataNeededError 判断是否属于"等待更多数据"的可恢复情况
-func isMoreDataNeededError(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-
-	// 仅数据帧本身不完整才等待更多数据
-	if strings.Contains(s, "数据不完整: 需要") && !strings.Contains(s, "头部") {
-		return true
-	}
-
-	// 头部解析相关错误应该尝试恢复而不是等待
-	if strings.Contains(s, "数据不足：需要更多数据继续解析") {
-		return false // 改为立即尝试恢复
-	}
-
-	return false
 }
 
 // parseSingleMessageWithValidation 解析单个消息并进行CRC校验
@@ -465,7 +222,7 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	if len(payloadData) > 0 {
 		// 验证payload是否为有效的JSON（如果是JSON类型）
 		if contentType := GetContentTypeFromHeaders(headers); contentType == "application/json" {
-			if !json.Valid(payloadData) {
+			if !utils.Valid(payloadData) {
 				// JSON无效但不是致命错误，记录警告
 				logger.Warn("检测到无效JSON payload",
 					logger.String("payload_preview", func() string {
@@ -503,51 +260,6 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 		logger.Int("payload_len", len(payloadData)))
 
 	return message, int(totalLength), nil
-}
-
-// findNextMessageBoundary 查找下一个消息边界，用于错误恢复
-func (rp *RobustEventStreamParser) findNextMessageBoundary(data []byte) int {
-	// 优化：使用步进搜索减少CPU开销
-	step := 1
-	maxSearch := minInt(1024, len(data)) // 限制搜索范围
-
-	for i := 0; i < maxSearch-16; i += step {
-		// 快速检查：是否可能是消息开始
-		if i+12 > len(data) {
-			break
-		}
-
-		totalLen := binary.BigEndian.Uint32(data[i : i+4])
-
-		// 快速筛选：长度必须合理
-		if totalLen < 16 || totalLen > 16*1024*1024 {
-			continue
-		}
-
-		headerLen := binary.BigEndian.Uint32(data[i+4 : i+8])
-		if headerLen > totalLen-16 {
-			continue
-		}
-
-		// 验证 Prelude CRC（快速验证）
-		if i+12 <= len(data) {
-			preludeCRC := binary.BigEndian.Uint32(data[i+8 : i+12])
-			calculatedCRC := crc32.ChecksumIEEE(data[i : i+8])
-			if preludeCRC == calculatedCRC {
-				logger.Debug("找到有效消息边界（CRC验证通过）",
-					logger.Int("offset", i),
-					logger.Int("msg_len", int(totalLen)))
-				return i
-			}
-		}
-
-		// 如果前几次没找到，增加步长加快搜索
-		if i > 64 && i%64 == 0 {
-			step = 4
-		}
-	}
-
-	return 0
 }
 
 // ParseEventsFromReader 从Reader读取并解析事件流
@@ -712,14 +424,6 @@ func (rp *RobustEventStreamParser) isValidToolUseIdFormat(toolUseId string) bool
 	}
 
 	return true
-}
-
-// minInt 返回两个整数中的最小值
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // parseStreamWithRingBuffer 使用环形缓冲区解析流数据

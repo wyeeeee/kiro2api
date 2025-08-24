@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"encoding/json"
 	"fmt"
 	"kiro2api/logger"
 	"kiro2api/utils"
@@ -74,7 +73,7 @@ func (tlm *ToolLifecycleManager) validateToolCallFormat(toolCall ToolCall) error
 	// 验证参数JSON格式
 	if toolCall.Function.Arguments != "" {
 		var args map[string]interface{}
-		if err := json.Unmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
+		if err := utils.FastUnmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 			return fmt.Errorf("工具参数JSON格式无效: %w", err)
 		}
 	}

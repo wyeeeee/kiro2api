@@ -1,8 +1,9 @@
 package types
 
 import (
-	"encoding/json"
 	"fmt"
+
+	"github.com/bytedance/sonic"
 )
 
 // CodeWhispererRequest 表示 CodeWhisperer API 的请求结构
@@ -607,13 +608,13 @@ func referencesToDict(refs []Reference) []map[string]interface{} {
 
 // MarshalJSON 自定义JSON序列化
 func (are *AssistantResponseEvent) MarshalJSON() ([]byte, error) {
-	return json.Marshal(are.ToDict())
+	return sonic.Marshal(are.ToDict())
 }
 
 // UnmarshalJSON 自定义JSON反序列化
 func (are *AssistantResponseEvent) UnmarshalJSON(data []byte) error {
 	var dict map[string]interface{}
-	if err := json.Unmarshal(data, &dict); err != nil {
+	if err := sonic.Unmarshal(data, &dict); err != nil {
 		return fmt.Errorf("JSON反序列化失败: %w", err)
 	}
 
@@ -622,7 +623,7 @@ func (are *AssistantResponseEvent) UnmarshalJSON(data []byte) error {
 
 // ToJSON 转换为JSON字符串
 func (are *AssistantResponseEvent) ToJSON() (string, error) {
-	data, err := json.Marshal(are)
+	data, err := sonic.Marshal(are)
 	if err != nil {
 		return "", fmt.Errorf("JSON序列化失败: %w", err)
 	}
@@ -631,7 +632,7 @@ func (are *AssistantResponseEvent) ToJSON() (string, error) {
 
 // ToJSONIndent 转换为格式化的JSON字符串
 func (are *AssistantResponseEvent) ToJSONIndent() (string, error) {
-	data, err := json.MarshalIndent(are, "", "  ")
+	data, err := sonic.ConfigStd.MarshalIndent(are, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("JSON序列化失败: %w", err)
 	}
@@ -640,7 +641,7 @@ func (are *AssistantResponseEvent) ToJSONIndent() (string, error) {
 
 // FromJSON 从JSON字符串创建AssistantResponseEvent
 func (are *AssistantResponseEvent) FromJSON(jsonStr string) error {
-	return json.Unmarshal([]byte(jsonStr), are)
+	return sonic.Unmarshal([]byte(jsonStr), are)
 }
 
 // NewAssistantResponseEventFromJSON 从JSON字符串创建新的AssistantResponseEvent

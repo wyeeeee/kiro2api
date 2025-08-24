@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"encoding/json"
 	"fmt"
 	"kiro2api/config"
 	"kiro2api/logger"
@@ -157,14 +156,14 @@ func (cmp *CompliantMessageProcessor) preprocessCodeWhispererPayload(message *Ev
 		// 验证移除前缀后是否为有效JSON
 		candidate := payloadStr[4:] // 移除 "vent" 前缀
 		var testData map[string]interface{}
-		if err := json.Unmarshal([]byte(candidate), &testData); err == nil {
+		if err := utils.FastUnmarshal([]byte(candidate), &testData); err == nil {
 			jsonPayload = candidate
 		}
 	} else if strings.HasPrefix(payloadStr, "event{") && len(payloadStr) > 5 {
 		// 验证移除前缀后是否为有效JSON
 		candidate := payloadStr[5:] // 移除 "event" 前缀
 		var testData map[string]interface{}
-		if err := json.Unmarshal([]byte(candidate), &testData); err == nil {
+		if err := utils.FastUnmarshal([]byte(candidate), &testData); err == nil {
 			jsonPayload = candidate
 		}
 	}
@@ -235,7 +234,7 @@ func (cmp *CompliantMessageProcessor) processEventMessage(message *EventStreamMe
 func (cmp *CompliantMessageProcessor) processErrorMessage(message *EventStreamMessage) ([]SSEEvent, error) {
 	var errorData map[string]interface{}
 	if len(message.Payload) > 0 {
-		if err := json.Unmarshal(message.Payload, &errorData); err != nil {
+		if err := utils.FastUnmarshal(message.Payload, &errorData); err != nil {
 			logger.Warn("解析错误消息载荷失败", logger.Err(err))
 			errorData = map[string]interface{}{
 				"message": string(message.Payload),
@@ -272,7 +271,7 @@ func (cmp *CompliantMessageProcessor) processErrorMessage(message *EventStreamMe
 func (cmp *CompliantMessageProcessor) processExceptionMessage(message *EventStreamMessage) ([]SSEEvent, error) {
 	var exceptionData map[string]interface{}
 	if len(message.Payload) > 0 {
-		if err := json.Unmarshal(message.Payload, &exceptionData); err != nil {
+		if err := utils.FastUnmarshal(message.Payload, &exceptionData); err != nil {
 			logger.Warn("解析异常消息载荷失败", logger.Err(err))
 			exceptionData = map[string]interface{}{
 				"message": string(message.Payload),
@@ -324,7 +323,7 @@ type CompletionEventHandler struct {
 
 func (h *CompletionEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -386,7 +385,7 @@ type CompletionChunkEventHandler struct {
 
 func (h *CompletionChunkEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -450,7 +449,7 @@ type ToolCallRequestHandler struct {
 
 func (h *ToolCallRequestHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -476,7 +475,7 @@ func (h *ToolCallRequestHandler) Handle(message *EventStreamMessage) ([]SSEEvent
 
 	// 将input转换为JSON字符串
 	if len(input) > 0 {
-		if argsJSON, err := json.Marshal(input); err == nil {
+		if argsJSON, err := utils.FastMarshal(input); err == nil {
 			toolCall.Function.Arguments = string(argsJSON)
 		}
 	}
@@ -500,7 +499,7 @@ type ToolCallResultHandler struct {
 
 func (h *ToolCallResultHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -548,7 +547,7 @@ type ToolCallErrorHandler struct {
 
 func (h *ToolCallErrorHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var errorInfo ToolCallError
-	if err := json.Unmarshal(message.Payload, &errorInfo); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &errorInfo); err != nil {
 		return nil, err
 	}
 
@@ -562,7 +561,7 @@ type ToolExecutionStartHandler struct {
 
 func (h *ToolExecutionStartHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -608,7 +607,7 @@ type ToolExecutionEndHandler struct{}
 
 func (h *ToolExecutionEndHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -627,7 +626,7 @@ type SessionStartHandler struct {
 
 func (h *SessionStartHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -660,7 +659,7 @@ type SessionEndHandler struct {
 
 func (h *SessionEndHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(message.Payload, &data); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
 
@@ -776,12 +775,12 @@ func isToolCallEvent(payload []byte) bool {
 func (h *StandardAssistantResponseEventHandler) handleToolCallEvent(message *EventStreamMessage) ([]SSEEvent, error) {
 	// 首先尝试解析为工具使用事件
 	var evt toolUseEvent
-	if err := json.Unmarshal(message.Payload, &evt); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &evt); err != nil {
 		logger.Debug("无法解析为toolUseEvent格式，尝试解析为assistantResponseEvent格式", logger.Err(err))
 
 		// 尝试解析为assistantResponseEvent格式并委托给legacy处理器
 		var assistantEvt assistantResponseEvent
-		if err2 := json.Unmarshal(message.Payload, &assistantEvt); err2 != nil {
+		if err2 := utils.FastUnmarshal(message.Payload, &assistantEvt); err2 != nil {
 			logger.Warn("工具调用事件解析失败（尝试了两种格式）",
 				logger.Err(err), logger.String("assistant_err", err2.Error()))
 			return []SSEEvent{}, nil
@@ -1054,7 +1053,7 @@ func (h *StandardAssistantResponseEventHandler) handleFullAssistantEvent(evt *Fu
 // handleLegacyFormat 处理legacy格式
 func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byte) ([]SSEEvent, error) {
 	var evt assistantResponseEvent
-	if err := json.Unmarshal(payload, &evt); err != nil {
+	if err := utils.FastUnmarshal(payload, &evt); err != nil {
 		return nil, fmt.Errorf("解析legacy assistantResponseEvent失败: %w", err)
 	}
 
@@ -1284,7 +1283,7 @@ func (h *LegacyAssistantEventHandler) Handle(message *EventStreamMessage) ([]SSE
 
 	// 如果完整格式解析失败，回退到legacy格式
 	var evt assistantResponseEvent
-	if err := json.Unmarshal(message.Payload, &evt); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &evt); err != nil {
 		return nil, fmt.Errorf("解析assistantResponseEvent失败 (完整格式和legacy格式都失败): %w", err)
 	}
 
@@ -1522,7 +1521,7 @@ func (h *LegacyToolUseEventHandler) Handle(message *EventStreamMessage) ([]SSEEv
 
 	// 原有的legacy处理逻辑
 	var evt toolUseEvent
-	if err := json.Unmarshal(message.Payload, &evt); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &evt); err != nil {
 		return nil, err
 	}
 
@@ -1566,7 +1565,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 
 	// 尝试解析为工具使用事件
 	var evt toolUseEvent
-	if err := json.Unmarshal(message.Payload, &evt); err != nil {
+	if err := utils.FastUnmarshal(message.Payload, &evt); err != nil {
 		logger.Warn("解析工具调用事件失败，尝试容错处理",
 			logger.Err(err),
 			logger.String("payload", string(message.Payload)))
@@ -1739,7 +1738,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 	if fullInput != "" {
 		// 现在验证聚合后的完整JSON格式
 		var testArgs map[string]interface{}
-		if err := json.Unmarshal([]byte(fullInput), &testArgs); err != nil {
+		if err := utils.FastUnmarshal([]byte(fullInput), &testArgs); err != nil {
 			logger.Warn("聚合后的工具调用参数JSON格式仍然无效，尝试修复",
 				logger.String("toolUseId", evt.ToolUseId),
 				logger.String("fullInput", fullInput),
@@ -1747,7 +1746,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 
 			// 尝试修复JSON格式
 			fixedInput := h.attemptJSONFix(fullInput)
-			if err := json.Unmarshal([]byte(fixedInput), &testArgs); err == nil {
+			if err := utils.FastUnmarshal([]byte(fixedInput), &testArgs); err == nil {
 				// 更新已注册工具的参数
 				h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
 				logger.Debug("成功修复并更新工具参数",
@@ -1900,7 +1899,7 @@ func (h *LegacyToolUseEventHandler) attemptJSONFix(input string) string {
 	fixed = strings.ReplaceAll(fixed, "\ufffd", "") // Unicode替换字符
 
 	// 6. 验证修复后的JSON基本结构
-	if !json.Valid([]byte(fixed)) {
+	if !utils.Valid([]byte(fixed)) {
 		logger.Debug("修复后JSON仍然无效，尝试构建基础结构")
 		// 如果修复后还是无效，构建最基本的结构（移除硬编码的中文内容）
 		return "{\"todos\":[{\"content\":\"data_recovery\",\"status\":\"pending\",\"activeForm\":\"data_recovery\"}]}"
@@ -2020,7 +2019,7 @@ func (tda *ToolDataAggregator) ProcessToolData(toolUseId, name, input string, st
 		// 额外校验：打印关键字段与长度，辅助定位缺参/路径截断
 		if name == "Write" || name == "Bash" {
 			var obj map[string]any
-			if err := json.Unmarshal([]byte(fullInput), &obj); err == nil {
+			if err := utils.FastUnmarshal([]byte(fullInput), &obj); err == nil {
 				switch name {
 				case "Write":
 					fp, _ := obj["file_path"].(string)
@@ -2078,7 +2077,7 @@ func (tda *ToolDataAggregator) reconstructJSON(parts []string) string {
 
 	// 验证JSON格式
 	var temp interface{}
-	if err := json.Unmarshal([]byte(cleaned), &temp); err == nil {
+	if err := utils.FastUnmarshal([]byte(cleaned), &temp); err == nil {
 		logger.Debug("JSON重组成功",
 			logger.Int("原始长度", len(rawInput)),
 			logger.Int("清理后长度", len(cleaned)))

@@ -1,9 +1,9 @@
 package parser
 
 import (
-	"encoding/json"
 	"fmt"
 	"kiro2api/types"
+	"kiro2api/utils"
 	"strings"
 	"time"
 )
@@ -539,7 +539,7 @@ func convertFullAssistantEventToSSE(evt *FullAssistantResponseEvent, state *tool
 // parseFullAssistantResponseEvent 解析完整的助手响应事件
 func parseFullAssistantResponseEvent(payload []byte) (*FullAssistantResponseEvent, error) {
 	var data map[string]interface{}
-	if err := json.Unmarshal(payload, &data); err != nil {
+	if err := utils.FastUnmarshal(payload, &data); err != nil {
 		return nil, fmt.Errorf("解析JSON失败: %w", err)
 	}
 

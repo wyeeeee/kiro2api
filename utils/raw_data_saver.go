@@ -3,7 +3,6 @@ package utils
 import (
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -116,7 +115,7 @@ func saveToFile(record RawDataRecord) error {
 	filepath := filepath.Join(saveDir, filename)
 
 	// 序列化为JSON
-	jsonData, err := json.MarshalIndent(record, "", "  ")
+	jsonData, err := MarshalIndent(record, "", "  ")
 	if err != nil {
 		return fmt.Errorf("序列化记录失败: %w", err)
 	}
@@ -160,7 +159,7 @@ func LoadRawDataForReplay(filepath string) (*RawDataRecord, error) {
 	}
 
 	var record RawDataRecord
-	if err := json.Unmarshal(data, &record); err != nil {
+	if err := FastUnmarshal(data, &record); err != nil {
 		return nil, fmt.Errorf("解析JSON失败: %w", err)
 	}
 

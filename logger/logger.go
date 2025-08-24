@@ -2,7 +2,6 @@ package logger
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 // Level 日志级别类型
@@ -175,23 +176,14 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 		entry[field.Key] = field.Value
 	}
 
-	// 优化的JSON序列化（使用对象池）
+	// 优化的JSON序列化（使用sonic高性能库）
 	var jsonData []byte
 	if l.enablePool {
-		buf := bytesBufferPool.Get().(*bytes.Buffer)
-		buf.Reset()
-		defer bytesBufferPool.Put(buf)
-
-		encoder := json.NewEncoder(buf)
-		encoder.Encode(entry)
-		jsonData = buf.Bytes()
-		// 移除最后的换行符（Encode会自动添加）
-		if len(jsonData) > 0 && jsonData[len(jsonData)-1] == '\n' {
-			jsonData = jsonData[:len(jsonData)-1]
-		}
+		// 使用sonic的高性能序列化
+		jsonData, _ = sonic.Marshal(entry)
 	} else {
-		// 退化到原始实现
-		jsonData, _ = json.Marshal(entry)
+		// 退化到安全实现
+		jsonData, _ = sonic.ConfigStd.Marshal(entry)
 	}
 
 	// 输出日志（优化：减少锁竞争）
