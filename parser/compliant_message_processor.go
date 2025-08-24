@@ -3,7 +3,6 @@ package parser
 import (
 	"kiro2api/logger"
 	"kiro2api/utils"
-	"strings"
 )
 
 // CompliantMessageProcessor 符合规范的消息处理器
@@ -116,61 +115,18 @@ func (cmp *CompliantMessageProcessor) ProcessMessage(message *EventStreamMessage
 			return string(message.Payload)
 		}()))
 
-	// 预处理payload - 修复CodeWhisperer特殊格式
-	processedMessage := cmp.preprocessCodeWhispererPayload(message)
-
 	// 根据消息类型分别处理
 	switch messageType {
 	case MessageTypes.EVENT:
-		return cmp.processEventMessage(processedMessage, eventType)
+		return cmp.processEventMessage(message, eventType)
 	case MessageTypes.ERROR:
-		return cmp.processErrorMessage(processedMessage)
+		return cmp.processErrorMessage(message)
 	case MessageTypes.EXCEPTION:
-		return cmp.processExceptionMessage(processedMessage)
+		return cmp.processExceptionMessage(message)
 	default:
 		logger.Warn("未知消息类型", logger.String("message_type", messageType))
 		return []SSEEvent{}, nil
 	}
-}
-
-// preprocessCodeWhispererPayload 预处理CodeWhisperer特殊格式的payload
-func (cmp *CompliantMessageProcessor) preprocessCodeWhispererPayload(message *EventStreamMessage) *EventStreamMessage {
-	payloadStr := string(message.Payload)
-
-	// 检查是否是CodeWhisperer特殊格式: "vent{...}" 或 "event{...}"
-	// 注意：只有在payload真正以这些前缀开头并且后面是有效JSON时才进行修复
-	var jsonPayload string
-	if strings.HasPrefix(payloadStr, "vent{") && len(payloadStr) > 4 {
-		// 验证移除前缀后是否为有效JSON
-		candidate := payloadStr[4:] // 移除 "vent" 前缀
-		var testData map[string]interface{}
-		if err := utils.FastUnmarshal([]byte(candidate), &testData); err == nil {
-			jsonPayload = candidate
-		}
-	} else if strings.HasPrefix(payloadStr, "event{") && len(payloadStr) > 5 {
-		// 验证移除前缀后是否为有效JSON
-		candidate := payloadStr[5:] // 移除 "event" 前缀
-		var testData map[string]interface{}
-		if err := utils.FastUnmarshal([]byte(candidate), &testData); err == nil {
-			jsonPayload = candidate
-		}
-	}
-
-	if jsonPayload != "" {
-		logger.Debug("修复CodeWhisperer格式",
-			logger.String("原始", payloadStr[:min(50, len(payloadStr))]),
-			logger.String("修复后", jsonPayload[:min(50, len(jsonPayload))]))
-
-		// 创建修复后的消息副本
-		return &EventStreamMessage{
-			MessageType: message.MessageType,
-			EventType:   message.EventType,
-			Headers:     message.Headers,
-			Payload:     []byte(jsonPayload),
-		}
-	}
-
-	return message
 }
 
 // processEventMessage 处理事件消息

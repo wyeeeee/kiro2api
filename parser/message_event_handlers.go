@@ -2,10 +2,8 @@ package parser
 
 import (
 	"fmt"
-	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/utils"
-	"regexp"
 	"strings"
 	"time"
 )
@@ -596,12 +594,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 	// 尝试解析为工具使用事件
 	var evt toolUseEvent
 	if err := utils.FastUnmarshal(message.Payload, &evt); err != nil {
-		logger.Warn("解析工具调用事件失败，尝试容错处理",
+		logger.Warn("解析工具调用事件失败",
 			logger.Err(err),
 			logger.String("payload", string(message.Payload)))
 
-		// 尝试容错解析 - 可能是部分数据或格式不完整
-		return h.handlePartialToolEvent(message.Payload)
 	}
 
 	logger.Debug("成功解析工具调用事件",
@@ -671,7 +667,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			logger.Bool("stop", evt.Stop))
 
 		// 如果有新的输入片段，检查配置后发送参数增量事件
-		if evt.Input != "" && config.EnableIncrementalToolEvents() {
+		if evt.Input != "" {
 			// 边界情况检查：确保工具ID有效
 			if evt.ToolUseId == "" {
 				logger.Warn("工具调用片段缺少有效的toolUseId，跳过增量事件发送",
@@ -742,12 +738,6 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 					return emergencyEvents, nil
 				}
 			}
-		} else if evt.Input != "" && !config.EnableIncrementalToolEvents() {
-			// 配置禁用增量事件时的调试信息
-			logger.Debug("工具调用增量事件已禁用，跳过发送",
-				logger.String("toolUseId", evt.ToolUseId),
-				logger.String("inputFragment", evt.Input),
-				logger.Bool("incremental_enabled", false))
 		}
 
 		// 如果没有新的输入或无法获取索引，返回空事件（保持向后兼容）
@@ -769,24 +759,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		// 现在验证聚合后的完整JSON格式
 		var testArgs map[string]interface{}
 		if err := utils.FastUnmarshal([]byte(fullInput), &testArgs); err != nil {
-			logger.Warn("聚合后的工具调用参数JSON格式仍然无效，尝试修复",
+			logger.Warn("聚合后的工具调用参数JSON格式仍然无效",
 				logger.String("toolUseId", evt.ToolUseId),
 				logger.String("fullInput", fullInput),
 				logger.Err(err))
-
-			// 尝试修复JSON格式
-			fixedInput := h.attemptJSONFix(fullInput)
-			if err := utils.FastUnmarshal([]byte(fixedInput), &testArgs); err == nil {
-				// 更新已注册工具的参数
-				h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
-				logger.Debug("成功修复并更新工具参数",
-					logger.String("toolUseId", evt.ToolUseId),
-					logger.String("fixed_input", fixedInput))
-			} else {
-				logger.Warn("聚合后JSON修复失败，使用空参数",
-					logger.String("toolUseId", evt.ToolUseId))
-				h.toolManager.UpdateToolArguments(evt.ToolUseId, make(map[string]interface{}))
-			}
 		} else {
 			// 聚合后的JSON格式正确，更新工具参数
 			h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
@@ -817,124 +793,4 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		logger.Bool("is_complete", evt.Stop))
 
 	return events, nil
-}
-
-// handlePartialToolEvent 处理部分或损坏的工具事件数据
-func (h *LegacyToolUseEventHandler) handlePartialToolEvent(payload []byte) ([]SSEEvent, error) {
-	payloadStr := string(payload)
-
-	logger.Debug("尝试容错处理部分工具事件",
-		logger.Int("payload_len", len(payload)),
-		logger.String("payload_preview", func() string {
-			if len(payloadStr) > 100 {
-				return payloadStr[:100] + "..."
-			}
-			return payloadStr
-		}()))
-
-	// 尝试提取基本字段
-	toolUseId := h.extractField(payloadStr, "toolUseId")
-	toolName := h.extractField(payloadStr, "name")
-
-	if toolUseId != "" && toolName != "" {
-		logger.Debug("成功从部分数据中提取工具信息",
-			logger.String("toolUseId", toolUseId),
-			logger.String("name", toolName))
-
-		// 创建基本的工具调用
-		toolCall := ToolCall{
-			ID:   toolUseId,
-			Type: "function",
-			Function: ToolCallFunction{
-				Name:      toolName,
-				Arguments: "{}",
-			},
-		}
-
-		request := ToolCallRequest{
-			ToolCalls: []ToolCall{toolCall},
-		}
-
-		return h.toolManager.HandleToolCallRequest(request), nil
-	}
-
-	logger.Warn("无法从部分数据中提取有效工具信息")
-	return []SSEEvent{}, nil
-}
-
-// extractField 从JSON字符串中提取字段值
-func (h *LegacyToolUseEventHandler) extractField(jsonStr, fieldName string) string {
-	pattern := fmt.Sprintf(`"%s"\s*:\s*"([^"]*)"`, fieldName)
-	re := regexp.MustCompile(pattern)
-	matches := re.FindStringSubmatch(jsonStr)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-	return ""
-}
-
-// attemptJSONFix 尝试修复常见的JSON格式问题
-func (h *LegacyToolUseEventHandler) attemptJSONFix(input string) string {
-	// 清理常见问题
-	fixed := strings.TrimSpace(input)
-
-	// *** 关键修复：处理JSON片段错误拼接问题 ***
-	// 检查并修复常见的拼接错误模式
-
-	// 1. 修复 "}]}"与其他内容错误拼接的问题
-	if strings.Contains(fixed, "\"}]}") && strings.Contains(fixed, "\"pendin") {
-		// 这是典型的片段拼接错误："}]}"后面直接跟着"pendin"
-		logger.Debug("检测到JSON片段拼接错误，尝试修复",
-			logger.String("original", fixed[:min(100, len(fixed))]))
-
-		// 查找"}]}"的位置
-		endIdx := strings.Index(fixed, "\"}]}")
-		if endIdx > 0 {
-			// 保留到"}]}"结束的部分，尝试构建完整的JSON
-			beforeEnd := fixed[:endIdx+4] // 包含"}}]"
-
-			// 检查后面是否有有效的字段
-			remaining := fixed[endIdx+4:]
-			if strings.Contains(remaining, "\"name\":") || strings.Contains(remaining, "\"toolUseId\":") {
-				// 尝试重新构造JSON结构
-				fixed = beforeEnd + ",\"status\":\"pending\"}"
-				logger.Debug("修复JSON片段拼接", logger.String("fixed", fixed))
-			}
-		}
-	}
-
-	// 2. 修复不完整的JSON结构
-	if strings.Contains(fixed, "\"content\":") && strings.Contains(fixed, "\"status\":") {
-		// 这看起来像是TodoWrite工具的参数
-		// 尝试构建完整的todos数组结构
-		if !strings.HasPrefix(fixed, "{\"todos\":[") {
-			// 包装成完整的todos结构
-			if strings.HasPrefix(fixed, "{\"content\":") {
-				fixed = "{\"todos\":[" + fixed + "]}"
-			}
-		}
-	}
-
-	// 3. 确保有大括号
-	if !strings.HasPrefix(fixed, "{") {
-		fixed = "{" + fixed
-	}
-	if !strings.HasSuffix(fixed, "}") {
-		fixed = fixed + "}"
-	}
-
-	// 4. 修复UTF-8替换字符和控制字符
-	fixed = strings.ReplaceAll(fixed, "\\x00", "")
-	fixed = strings.ReplaceAll(fixed, "\\ufffd", "")
-	fixed = strings.ReplaceAll(fixed, "\ufffd", "") // Unicode替换字符
-
-	// 6. 验证修复后的JSON基本结构
-	if !utils.Valid([]byte(fixed)) {
-		logger.Debug("修复后JSON仍然无效，尝试构建基础结构")
-		// 如果修复后还是无效，构建最基本的结构（移除硬编码的中文内容）
-		return "{\"todos\":[{\"content\":\"data_recovery\",\"status\":\"pending\",\"activeForm\":\"data_recovery\"}]}"
-	}
-
-	logger.Debug("JSON修复完成", logger.String("result", fixed[:min(100, len(fixed))]))
-	return fixed
 }
