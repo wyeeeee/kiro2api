@@ -333,7 +333,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 
 		// 如果有工具，添加简化的工具使用系统提示
 		if len(anthropicReq.Tools) > 0 {
-			toolSystemPrompt := generateToolSystemPrompt(anthropicReq.ToolChoice, anthropicReq.Tools)
+			// 使用系统提示生成器创建工具系统提示
+			spg := NewSystemPromptGenerator()
+			toolSystemPrompt := spg.GenerateToolSystemPrompt(anthropicReq.ToolChoice, anthropicReq.Tools)
 
 			// 只有在有其他系统内容时才添加分隔符
 			if systemContentBuilder.Len() > 0 && toolSystemPrompt != "" {
@@ -438,74 +440,6 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 	return cwReq, nil
 }
 
-// generateToolSystemPrompt 生成工具使用的系统提示（强化工具优先策略）
-func generateToolSystemPrompt(toolChoice any, tools []types.AnthropicTool) string {
-	var b strings.Builder
-
-	b.WriteString("你是一个严格遵循工具优先策略的AI助手。\n")
-	b.WriteString("- 当输入中明确要求使用某个工具，或当提供的工具可以完成用户请求时，必须调用工具，而不是给出自然语言回答。\n")
-
-	// 根据tool_choice给出更强约束 (支持多种类型)
-	if toolChoice != nil {
-		// 尝试转换为ToolChoice结构体
-		if tc, ok := toolChoice.(*types.ToolChoice); ok && tc != nil {
-			switch tc.Type {
-			case "any", "tool":
-				b.WriteString("- 当前会话工具策略: 必须使用工具完成任务。\n")
-			case "auto":
-				b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。即使信息不完整，也应先发起工具调用。\n")
-			default:
-				b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
-			}
-		} else if tcMap, ok := toolChoice.(map[string]any); ok {
-			// 处理map类型的tool_choice
-			if tcType, exists := tcMap["type"].(string); exists {
-				switch tcType {
-				case "any", "tool":
-					b.WriteString("- 当前会话工具策略: 必须使用工具完成任务。\n")
-				case "auto":
-					b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。即使信息不完整，也应先发起工具调用。\n")
-				default:
-					b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
-				}
-			} else {
-				b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
-			}
-		} else {
-			b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
-		}
-	} else {
-		b.WriteString("- 当前会话工具策略: 优先使用工具完成任务。\n")
-	}
-
-	b.WriteString("- 参数缺失时：仍然先发起工具调用，缺失字段可暂时留空或使用合理占位值（例如空字符串或false），随后再向用户补充询问信息。\n")
-	b.WriteString("- 触发工具时：避免额外解释性文本，直接给出工具调用。\n")
-
-	// 列出可用工具及关键必填项，帮助模型映射参数
-	if len(tools) > 0 {
-		b.WriteString("- 可用工具与必填参数：\n")
-		for _, t := range tools {
-			b.WriteString("  • ")
-			b.WriteString(t.Name)
-			if t.Description != "" {
-				b.WriteString("：")
-				b.WriteString(t.Description)
-			}
-			// 提取必填字段
-			required := extractRequiredFields(t.InputSchema)
-			if len(required) > 0 {
-				b.WriteString("（必填: ")
-				b.WriteString(strings.Join(required, ", "))
-				b.WriteString(")")
-			}
-			b.WriteString("\n")
-		}
-	}
-
-	return b.String()
-}
-
-// extractRequiredFields 从输入schema中提取必填字段名称
 // extractToolUsesFromMessage 从助手消息内容中提取工具调用
 func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 	var toolUses []types.ToolUseEntry
@@ -531,13 +465,8 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 						// 提取 input
 						if input, ok := block["input"].(map[string]interface{}); ok {
 							toolUse.Input = input
-						} else if input != nil {
-							// 如果 input 不是 map，尝试转换
-							toolUse.Input = map[string]interface{}{
-								"value": input,
-							}
 						} else {
-							// 如果没有 input，设置为空对象
+							// 如果 input 不是 map 或不存在，设置为空对象
 							toolUse.Input = map[string]interface{}{}
 						}
 
@@ -585,22 +514,4 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 	}
 
 	return toolUses
-}
-
-func extractRequiredFields(schema map[string]any) []string {
-	if schema == nil {
-		return nil
-	}
-	if reqAny, ok := schema["required"]; ok && reqAny != nil {
-		if arr, ok := reqAny.([]any); ok {
-			fields := make([]string, 0, len(arr))
-			for _, v := range arr {
-				if s, ok := v.(string); ok && s != "" {
-					fields = append(fields, s)
-				}
-			}
-			return fields
-		}
-	}
-	return nil
 }

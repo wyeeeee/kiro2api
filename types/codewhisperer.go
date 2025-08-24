@@ -99,44 +99,13 @@ type ToolResult struct {
 
 // ========== AWS CodeWhisperer assistantResponseEvent 完整结构定义 ==========
 
-// MessageStatus 消息状态枚举
-type MessageStatus string
-
-const (
-	MessageStatusCompleted  MessageStatus = "COMPLETED"
-	MessageStatusInProgress MessageStatus = "IN_PROGRESS"
-	MessageStatusError      MessageStatus = "ERROR"
-)
-
-// UserIntent 用户意图类型枚举
-type UserIntent string
-
-const (
-	UserIntentExplainCodeSelection     UserIntent = "EXPLAIN_CODE_SELECTION"
-	UserIntentSuggestAlternateImpl     UserIntent = "SUGGEST_ALTERNATE_IMPLEMENTATION"
-	UserIntentApplyCommonBestPractices UserIntent = "APPLY_COMMON_BEST_PRACTICES"
-	UserIntentImproveCode              UserIntent = "IMPROVE_CODE"
-	UserIntentShowExamples             UserIntent = "SHOW_EXAMPLES"
-	UserIntentCiteSources              UserIntent = "CITE_SOURCES"
-	UserIntentExplainLineByLine        UserIntent = "EXPLAIN_LINE_BY_LINE"
-)
-
-// ContentType 内容类型枚举
-type ContentType string
-
-const (
-	ContentTypeMarkdown ContentType = "text/markdown"
-	ContentTypePlain    ContentType = "text/plain"
-	ContentTypeJSON     ContentType = "application/json"
-)
-
 // ContentSpan 内容范围
 type ContentSpan struct {
 	Start int `json:"start"`
 	End   int `json:"end"`
 }
 
-// SupplementaryWebLink 补充网页链接
+// SupplementaryWebLink 补充网络链接
 type SupplementaryWebLink struct {
 	URL     string   `json:"url"`
 	Title   *string  `json:"title,omitempty"`
@@ -144,20 +113,20 @@ type SupplementaryWebLink struct {
 	Score   *float64 `json:"score,omitempty"`
 }
 
-// MostRelevantMissedAlternative 最相关的遗漏替代方案
+// MostRelevantMissedAlternative 最相关的错过替代方案
 type MostRelevantMissedAlternative struct {
 	URL         string  `json:"url"`
 	LicenseName *string `json:"licenseName,omitempty"`
 	Repository  *string `json:"repository,omitempty"`
 }
 
-// Reference 参考资料
+// Reference 引用
 type Reference struct {
 	LicenseName                   *string                        `json:"licenseName,omitempty"`
 	Repository                    *string                        `json:"repository,omitempty"`
 	URL                           *string                        `json:"url,omitempty"`
-	RecommendationContentSpan     *ContentSpan                   `json:"recommendationContentSpan,omitempty"`
 	Information                   *string                        `json:"information,omitempty"`
+	RecommendationContentSpan     *ContentSpan                   `json:"recommendationContentSpan,omitempty"`
 	MostRelevantMissedAlternative *MostRelevantMissedAlternative `json:"mostRelevantMissedAlternative,omitempty"`
 }
 

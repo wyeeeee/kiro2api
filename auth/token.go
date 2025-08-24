@@ -367,7 +367,6 @@ func getRotatedToken(pool *types.TokenPool, cache *utils.AtomicTokenCache) (type
 	cache.SetHot(accessIdx, &tokenInfo)
 	pool.MarkTokenSuccess(accessIdx)
 
-	logger.Info("Token刷新成功", logger.Int("token_index", accessIdx))
 	return tokenInfo, nil
 }
 
@@ -391,9 +390,6 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 		}
 		return *tokenInfo, nil
 	}
-
-	// 这是新的刷新任务，执行实际的刷新逻辑
-	logger.Debug("开始执行Token刷新", logger.Int("token_index", idx))
 
 	// 获取对应索引的refresh token
 	authMethod := config.GetAuthMethod()
@@ -438,7 +434,7 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 }
 
 // fallbackToAvailableToken 回退到其他可用token
-func fallbackToAvailableToken(pool *types.TokenPool, cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
+func fallbackToAvailableToken(_ *types.TokenPool, cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
 	// 尝试使用refreshTokenAndReturn获取任何可用的token
 	tokenInfo, err := refreshTokenAndReturn()
 	if err != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/server"
 
@@ -24,7 +25,7 @@ func main() {
 		logger.String("log_file", os.Getenv("LOG_FILE")))
 
 	// 检查必需的环境变量
-	if os.Getenv("AWS_REFRESHTOKEN") == "" {
+	if config.GetAuthMethod() == config.AuthMethodSocial && os.Getenv("AWS_REFRESHTOKEN") == "" {
 		logger.Error("AWS_REFRESHTOKEN环境变量未设置")
 		logger.Error("请设置AWS_REFRESHTOKEN环境变量后重新启动程序")
 		logger.Error("示例: export AWS_REFRESHTOKEN=\"your_refresh_token_here\"")

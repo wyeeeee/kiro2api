@@ -21,6 +21,7 @@ type SonicStreamingJSONAggregator struct {
 	activeStreamers map[string]*SonicJSONStreamer
 	mu              sync.RWMutex
 	updateCallback  ToolParamsUpdateCallback
+	jsonRepairer    *JSONRepairer // 添加JSON修复器实例
 }
 
 // SonicJSONStreamer 单个工具调用的Sonic流式解析器
@@ -61,6 +62,7 @@ func NewSonicStreamingJSONAggregatorWithCallback(callback ToolParamsUpdateCallba
 	return &SonicStreamingJSONAggregator{
 		activeStreamers: make(map[string]*SonicJSONStreamer),
 		updateCallback:  callback,
+		jsonRepairer:    NewJSONRepairer(), // 初始化JSON修复器
 	}
 }
 
@@ -588,8 +590,8 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 		return result
 	}
 
-	// 智能修复JSON
-	fixed := ssja.intelligentJSONFix(content, toolName)
+	// 使用独立的JSON修复器
+	fixed := ssja.jsonRepairer.IntelligentJSONFix(content, toolName)
 
 	// 使用Sonic尝试解析修复后的JSON
 	if err := utils.FastUnmarshal([]byte(fixed), &result); err == nil {
@@ -605,7 +607,7 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 	}
 
 	// 如果还是失败，尝试从内容中提取并重建
-	if extracted := ssja.extractAndRebuildJSON(content, toolName); extracted != nil {
+	if extracted := ssja.jsonRepairer.ExtractAndRebuildJSON(content, toolName); extracted != nil {
 		return extracted
 	}
 
@@ -620,195 +622,6 @@ func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, tool
 
 	// 如果仍然解析失败，返回nil让调用者使用fallback
 	return nil
-}
-
-// intelligentJSONFix 智能修复不完整的JSON
-func (ssja *SonicStreamingJSONAggregator) intelligentJSONFix(content, toolName string) string {
-	fixed := content
-
-	// 1. 修复截断的中文字符和键名
-	fixed = ssja.fixTruncatedChineseCharacters(fixed)
-
-	// 2. 修复损坏的JSON结构
-	fixed = ssja.fixBrokenJSONStructure(fixed, toolName)
-
-	// 3. 处理截断的键名
-	if strings.Contains(fixed, "\"file_pa") && !strings.Contains(fixed, "\"file_path\"") {
-		fixed = strings.Replace(fixed, "\"file_pa", "\"file_path", 1)
-	}
-	if strings.Contains(fixed, "\"relative_pa") && !strings.Contains(fixed, "\"relative_path\"") {
-		fixed = strings.Replace(fixed, "\"relative_pa", "\"relative_path", 1)
-	}
-	if strings.Contains(fixed, "\"comm") && !strings.Contains(fixed, "\"command\"") && strings.ToLower(toolName) == "bash" {
-		fixed = strings.Replace(fixed, "\"comm", "\"command", 1)
-	}
-
-	// 4. 计算括号和引号的平衡
-	braceCount := strings.Count(fixed, "{") - strings.Count(fixed, "}")
-	quoteCount := strings.Count(fixed, "\"")
-
-	// 5. 处理未闭合的字符串值
-	lastColonIdx := strings.LastIndex(fixed, ":")
-	if lastColonIdx > 0 {
-		afterColon := strings.TrimSpace(fixed[lastColonIdx+1:])
-		// 如果值以引号开始但没有结束引号
-		if strings.HasPrefix(afterColon, "\"") && !strings.HasSuffix(afterColon, "\"") && !strings.HasSuffix(afterColon, "}") {
-			fixed += "\""
-			quoteCount++
-		}
-	}
-
-	// 6. 如果引号数量为奇数，补全最后一个引号
-	if quoteCount%2 == 1 {
-		fixed += "\""
-	}
-
-	// 7. 补全缺失的右括号
-	for i := 0; i < braceCount; i++ {
-		fixed += "}"
-	}
-
-	return fixed
-}
-
-// fixTruncatedChineseCharacters 修复截断的中文字符
-func (ssja *SonicStreamingJSONAggregator) fixTruncatedChineseCharacters(content string) string {
-	// 移除硬编码的中文字符截断模式修复
-	// 现在依赖通用的UTF-8完整性检查机制
-	return content
-}
-
-// fixBrokenJSONStructure 修复损坏的JSON结构
-func (ssja *SonicStreamingJSONAggregator) fixBrokenJSONStructure(content, toolName string) string {
-	fixed := content
-
-	// 通用的JSON结构修复，移除硬编码的特定内容模式
-	// 修复缺失引号的常见模式
-	fixed = strings.ReplaceAll(fixed, "}content\":", "\"content\":")
-
-	// 针对TodoWrite工具的通用结构修复
-	if strings.ToLower(toolName) == "todowrite" {
-		// 修复todos数组结构
-		if strings.Contains(fixed, "\"todos\"") && !strings.Contains(fixed, "[{") {
-			// 确保todos后面有正确的数组开始
-			fixed = strings.Replace(fixed, "\"todos\":", "\"todos\":[", 1)
-		}
-
-		// 修复对象分隔符
-		fixed = strings.ReplaceAll(fixed, "}content\":", "},{\"content\":")
-		fixed = strings.ReplaceAll(fixed, "}\"content\":", "},{\"content\":")
-
-		// 修复数组结束
-		if strings.Contains(fixed, "\"todos\":[") && !strings.HasSuffix(strings.TrimSpace(fixed), "]}") && !strings.HasSuffix(strings.TrimSpace(fixed), "}]") {
-			// 确保数组正确结束
-			if strings.HasSuffix(strings.TrimSpace(fixed), "}") {
-				fixed = strings.TrimSpace(fixed) + "]"
-			}
-		}
-	}
-
-	return fixed
-}
-
-// extractAndRebuildJSON 从损坏的内容中提取键值对并重建JSON
-func (ssja *SonicStreamingJSONAggregator) extractAndRebuildJSON(content, toolName string) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	// 尝试提取路径
-	if path := ssja.extractPath(content); path != "" {
-		// 根据工具类型设置正确的键名
-		if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
-			result["relative_path"] = path
-			// MCP工具的额外参数
-			parts := strings.Split(toolName, "__")
-			if len(parts) >= 3 {
-				actualToolName := parts[2]
-				switch strings.ToLower(actualToolName) {
-				case "list_dir":
-					result["recursive"] = false
-				case "find_file":
-					result["file_mask"] = "*"
-				}
-			}
-		} else {
-			switch strings.ToLower(toolName) {
-			case "read":
-				result["file_path"] = path
-			case "write":
-				result["file_path"] = path
-				result["content"] = ""
-			case "ls":
-				result["path"] = path
-			default:
-				result["path"] = path
-			}
-		}
-		return result
-	}
-
-	// 尝试提取命令（针对bash工具）
-	if strings.ToLower(toolName) == "bash" {
-		if cmd := ssja.extractCommand(content); cmd != "" {
-			result["command"] = cmd
-			return result
-		}
-	}
-
-	return nil
-}
-
-// extractPath 从内容中提取路径
-func (ssja *SonicStreamingJSONAggregator) extractPath(content string) string {
-	// 查找绝对路径模式
-	if idx := strings.Index(content, "/Users/"); idx >= 0 {
-		path := content[idx:]
-		// 找到路径的结束位置
-		endIdx := strings.IndexAny(path, "\",}")
-		if endIdx > 0 {
-			path = path[:endIdx]
-		}
-		return strings.TrimSpace(path)
-	}
-
-	// 查找相对路径
-	for _, pattern := range []string{"./", "../", "."} {
-		if idx := strings.Index(content, pattern); idx >= 0 {
-			// 确保不是在字符串中间
-			if idx == 0 || content[idx-1] == '"' || content[idx-1] == ' ' || content[idx-1] == ':' {
-				path := content[idx:]
-				endIdx := strings.IndexAny(path, "\",}")
-				if endIdx > 0 {
-					path = path[:endIdx]
-				}
-				return strings.TrimSpace(path)
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractCommand 从内容中提取命令
-func (ssja *SonicStreamingJSONAggregator) extractCommand(content string) string {
-	// 常见命令关键字
-	commands := []string{"mkdir", "echo", "ls", "cd", "pwd", "cat", "grep", "find", "touch", "rm", "cp", "mv"}
-
-	for _, cmd := range commands {
-		if idx := strings.Index(content, cmd); idx >= 0 {
-			// 确保是命令的开始
-			if idx == 0 || content[idx-1] == '"' || content[idx-1] == ' ' {
-				command := content[idx:]
-				// 找到命令的结束位置
-				endIdx := strings.IndexAny(command, "\",}")
-				if endIdx > 0 {
-					command = command[:endIdx]
-				}
-				return strings.TrimSpace(command)
-			}
-		}
-	}
-
-	return ""
 }
 
 // generateFallbackJSON 生成回退JSON
