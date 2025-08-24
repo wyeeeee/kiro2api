@@ -2,7 +2,6 @@ package parser
 
 import (
 	"errors"
-	"sync"
 )
 
 var (
@@ -12,28 +11,24 @@ var (
 
 // RingBuffer 环形缓冲区实现
 type RingBuffer struct {
-	data     []byte
-	size     int
-	head     int // 读取位置
-	tail     int // 写入位置
-	count    int // 当前数据量
-	mu       sync.RWMutex
-	notEmpty *sync.Cond
-	notFull  *sync.Cond
+	data  []byte
+	size  int
+	head  int // 读取位置
+	tail  int // 写入位置  
+	count int // 当前数据量
+	// 移除所有锁 - 单goroutine独占使用时不需要并发保护
 }
 
 // NewRingBuffer 创建新的环形缓冲区
 func NewRingBuffer(size int) *RingBuffer {
-	rb := &RingBuffer{
+	return &RingBuffer{
 		data:  make([]byte, size),
 		size:  size,
 		head:  0,
 		tail:  0,
 		count: 0,
+		// 无锁设计 - 移除条件变量和互斥锁
 	}
-	rb.notEmpty = sync.NewCond(&rb.mu)
-	rb.notFull = sync.NewCond(&rb.mu)
-	return rb
 }
 
 // Write 写入数据到环形缓冲区
@@ -42,18 +37,14 @@ func (rb *RingBuffer) Write(data []byte) (int, error) {
 		return 0, nil
 	}
 
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
 	written := 0
 	for len(data) > 0 {
-		// 等待有可用空间
-		for rb.isFull() {
-			rb.notFull.Wait()
+		// 检查可用空间
+		available := rb.availableSpace()
+		if available == 0 {
+			return written, ErrBufferFull // 无锁设计：直接返回而不等待
 		}
 
-		// 计算可写入的字节数
-		available := rb.availableSpace()
 		toWrite := min(available, len(data))
 
 		// 分两段写入（如果需要环绕）
@@ -71,9 +62,6 @@ func (rb *RingBuffer) Write(data []byte) (int, error) {
 		rb.count += toWrite
 		written += toWrite
 		data = data[toWrite:]
-
-		// 通知有数据可读
-		rb.notEmpty.Signal()
 	}
 
 	return written, nil
@@ -85,16 +73,12 @@ func (rb *RingBuffer) Read(buf []byte) (int, error) {
 		return 0, nil
 	}
 
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	// 等待有数据可读
-	for rb.isEmpty() {
-		rb.notEmpty.Wait()
+	// 检查可用数据
+	available := rb.availableData()
+	if available == 0 {
+		return 0, ErrBufferEmpty // 无锁设计：直接返回而不等待
 	}
 
-	// 计算可读取的字节数
-	available := rb.availableData()
 	toRead := min(available, len(buf))
 
 	// 分两段读取（如果需要环绕）
@@ -111,16 +95,11 @@ func (rb *RingBuffer) Read(buf []byte) (int, error) {
 	rb.head = (rb.head + toRead) % rb.size
 	rb.count -= toRead
 
-	// 通知有空间可写
-	rb.notFull.Signal()
-
 	return toRead, nil
 }
 
 // TryRead 非阻塞读取
 func (rb *RingBuffer) TryRead(buf []byte) (int, error) {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
 
 	if rb.isEmpty() {
 		return 0, ErrBufferEmpty
@@ -139,15 +118,12 @@ func (rb *RingBuffer) TryRead(buf []byte) (int, error) {
 
 	rb.head = (rb.head + toRead) % rb.size
 	rb.count -= toRead
-	rb.notFull.Signal()
 
 	return toRead, nil
 }
 
 // TryWrite 非阻塞写入
 func (rb *RingBuffer) TryWrite(data []byte) (int, error) {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
 
 	if rb.isFull() {
 		return 0, ErrBufferFull
@@ -166,15 +142,12 @@ func (rb *RingBuffer) TryWrite(data []byte) (int, error) {
 
 	rb.tail = (rb.tail + toWrite) % rb.size
 	rb.count += toWrite
-	rb.notEmpty.Signal()
 
 	return toWrite, nil
 }
 
 // Peek 查看数据但不移除
 func (rb *RingBuffer) Peek(buf []byte) (int, error) {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
 
 	if rb.isEmpty() {
 		return 0, ErrBufferEmpty
@@ -196,37 +169,29 @@ func (rb *RingBuffer) Peek(buf []byte) (int, error) {
 
 // Skip 跳过指定字节数
 func (rb *RingBuffer) Skip(n int) int {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
 
 	available := rb.availableData()
 	toSkip := min(available, n)
 
 	rb.head = (rb.head + toSkip) % rb.size
 	rb.count -= toSkip
-	rb.notFull.Signal()
 
 	return toSkip
 }
 
 // Available 返回可读取的字节数
 func (rb *RingBuffer) Available() int {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
 	return rb.count
 }
 
 // Free 返回可写入的字节数
 func (rb *RingBuffer) Free() int {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
 	return rb.size - rb.count
 }
 
 // Reset 重置缓冲区
 func (rb *RingBuffer) Reset() {
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
+	// 无锁设计：直接重置状态
 	rb.head = 0
 	rb.tail = 0
 	rb.count = 0
@@ -234,15 +199,11 @@ func (rb *RingBuffer) Reset() {
 
 // IsFull 检查缓冲区是否已满
 func (rb *RingBuffer) IsFull() bool {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
 	return rb.isFull()
 }
 
 // IsEmpty 检查缓冲区是否为空
 func (rb *RingBuffer) IsEmpty() bool {
-	rb.mu.RLock()
-	defer rb.mu.RUnlock()
 	return rb.isEmpty()
 }
 

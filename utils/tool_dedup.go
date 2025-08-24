@@ -1,17 +1,17 @@
 package utils
 
 import (
-	"sync"
 	"time"
 )
 
 // ToolDedupManager 管理工具调用去重的结构
 // 使用 tool_use_id 进行去重，符合 Anthropic 标准
 type ToolDedupManager struct {
+	// 请求级别独立实例 - 无需并发保护
 	processedIds map[string]bool
-	executing    map[string]bool      // 正在执行的工具
-	lastAccess   map[string]time.Time // 最后访问时间
-	mu           sync.RWMutex         // 保护并发访问
+	executing    map[string]bool      
+	lastAccess   map[string]time.Time 
+	// 移除所有锁 - 每个HTTP请求有独立实例
 }
 
 // NewToolDedupManager 创建新的工具去重管理器
@@ -20,6 +20,7 @@ func NewToolDedupManager() *ToolDedupManager {
 		processedIds: make(map[string]bool),
 		executing:    make(map[string]bool),
 		lastAccess:   make(map[string]time.Time),
+		// 无锁设计 - 请求级别独立实例
 	}
 }
 
@@ -28,8 +29,7 @@ func (m *ToolDedupManager) IsToolProcessed(toolUseId string) bool {
 	if toolUseId == "" {
 		return false
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// 无锁访问 - 请求级别独立实例
 	return m.processedIds[toolUseId]
 }
 
@@ -38,8 +38,7 @@ func (m *ToolDedupManager) IsToolExecuting(toolUseId string) bool {
 	if toolUseId == "" {
 		return false
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// 无锁访问 - 请求级别独立实例
 	return m.executing[toolUseId]
 }
 
@@ -48,12 +47,10 @@ func (m *ToolDedupManager) StartToolExecution(toolUseId string) bool {
 	if toolUseId == "" {
 		return false
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	// 如果已经在执行，返回false
+	// 无锁检查和设置 - 请求级别独立实例
 	if m.executing[toolUseId] {
-		return false
+		return false // 已经在执行
 	}
 
 	// 标记为正在执行
@@ -65,8 +62,7 @@ func (m *ToolDedupManager) StartToolExecution(toolUseId string) bool {
 // MarkToolProcessed 标记工具为已处理（基于 tool_use_id）
 func (m *ToolDedupManager) MarkToolProcessed(toolUseId string) {
 	if toolUseId != "" {
-		m.mu.Lock()
-		defer m.mu.Unlock()
+		// 无锁操作 - 请求级别独立实例
 		m.processedIds[toolUseId] = true
 		// 清除执行状态
 		delete(m.executing, toolUseId)
@@ -76,8 +72,7 @@ func (m *ToolDedupManager) MarkToolProcessed(toolUseId string) {
 
 // Reset 重置去重管理器状态
 func (m *ToolDedupManager) Reset() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// 无锁重置 - 请求级别独立实例  
 	m.processedIds = make(map[string]bool)
 	m.executing = make(map[string]bool)
 	m.lastAccess = make(map[string]time.Time)
@@ -85,9 +80,7 @@ func (m *ToolDedupManager) Reset() {
 
 // CleanupExpiredTools 清理过期的工具状态（超过指定时间的工具）
 func (m *ToolDedupManager) CleanupExpiredTools(expireDuration time.Duration) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+	// 无锁清理 - 请求级别独立实例，无需保护
 	now := time.Now()
 	for toolId, lastTime := range m.lastAccess {
 		if now.Sub(lastTime) > expireDuration {

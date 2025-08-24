@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -172,6 +173,26 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.Too
 func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
 	sender := &AnthropicStreamSender{}
 	handleGenericStreamRequest(c, anthropicReq, tokenInfo, sender, createAnthropicStreamEvents)
+}
+
+// isDebugMode 检查是否启用调试模式
+func isDebugMode() bool {
+	// 检查DEBUG环境变量
+	if debug := os.Getenv("DEBUG"); debug == "true" || debug == "1" {
+		return true
+	}
+
+	// 检查LOG_LEVEL是否为debug
+	if logLevel := os.Getenv("LOG_LEVEL"); strings.ToLower(logLevel) == "debug" {
+		return true
+	}
+
+	// 检查GIN_MODE是否为debug
+	if ginMode := os.Getenv("GIN_MODE"); ginMode == "debug" {
+		return true
+	}
+
+	return false
 }
 
 // handleGenericStreamRequest 通用流式请求处理
@@ -648,9 +669,11 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		EventsCount:    totalProcessedEvents,
 	}
 
-	// 保存原始数据以供回放和测试
-	if err := utils.SaveRawDataForReplay(rawDataBytes, requestID, messageId, anthropicReq.Model, true, metadata); err != nil {
-		logger.Warn("保存原始数据失败", logger.Err(err))
+	// 仅在debug模式下保存原始数据以供回放和测试
+	if isDebugMode() {
+		if err := utils.SaveRawDataForReplay(rawDataBytes, requestID, messageId, anthropicReq.Model, true, metadata); err != nil {
+			logger.Warn("保存原始数据失败", logger.Err(err))
+		}
 	}
 
 	// 保留原有的调试日志
