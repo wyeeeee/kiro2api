@@ -1,7 +1,6 @@
 package logger
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -9,7 +8,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -44,21 +42,12 @@ type Field struct {
 
 // Logger 优化的日志器
 type Logger struct {
-	level        int64 // 使用原子操作的日志级别
-	logger       *log.Logger
-	mutex        sync.Mutex // 改为写锁，减少读锁竞争
+	level        int64       // 使用原子操作的日志级别
+	logger       *log.Logger // log.Logger本身线程安全，移除mutex
 	logFile      *os.File
 	writers      []io.Writer
 	enableCaller bool // 控制是否获取调用栈信息
 	callerSkip   int  // 调用栈深度
-	enablePool   bool // 控制是否启用对象池
-}
-
-// 字节缓冲区对象池
-var bytesBufferPool = sync.Pool{
-	New: func() any {
-		return &bytes.Buffer{}
-	},
 }
 
 var (
@@ -77,7 +66,6 @@ func createLogger() *Logger {
 		writers:      []io.Writer{os.Stdout}, // 默认输出到控制台
 		enableCaller: false,                  // 默认禁用调用栈获取
 		callerSkip:   3,                      // 默认调用栈深度
-		enablePool:   true,                   // 默认启用对象池
 	}
 
 	// 从环境变量设置级别
@@ -98,9 +86,6 @@ func createLogger() *Logger {
 		if skip, err := strconv.Atoi(callerSkip); err == nil && skip > 0 {
 			logger.callerSkip = skip
 		}
-	}
-	if disablePool := os.Getenv("LOG_DISABLE_POOL"); disablePool == "true" || disablePool == "1" {
-		logger.enablePool = false
 	}
 
 	// 设置文件输出
@@ -178,18 +163,11 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 
 	// 优化的JSON序列化（使用sonic高性能库）
 	var jsonData []byte
-	if l.enablePool {
-		// 使用sonic的高性能序列化
-		jsonData, _ = sonic.Marshal(entry)
-	} else {
-		// 退化到安全实现
-		jsonData, _ = sonic.ConfigStd.Marshal(entry)
-	}
+	// 使用sonic的高性能序列化
+	jsonData, _ = sonic.Marshal(entry)
 
-	// 输出日志（优化：减少锁竞争）
-	l.mutex.Lock()
+	// 直接输出日志 - log.Logger本身已经线程安全！
 	l.logger.Println(string(jsonData))
-	l.mutex.Unlock()
 
 	// Fatal级别退出程序
 	if level == FATAL {

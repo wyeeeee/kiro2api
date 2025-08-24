@@ -9,8 +9,8 @@ import (
 type ToolDedupManager struct {
 	// 请求级别独立实例 - 无需并发保护
 	processedIds map[string]bool
-	executing    map[string]bool      
-	lastAccess   map[string]time.Time 
+	executing    map[string]bool
+	lastAccess   map[string]time.Time
 	// 移除所有锁 - 每个HTTP请求有独立实例
 }
 
@@ -72,7 +72,7 @@ func (m *ToolDedupManager) MarkToolProcessed(toolUseId string) {
 
 // Reset 重置去重管理器状态
 func (m *ToolDedupManager) Reset() {
-	// 无锁重置 - 请求级别独立实例  
+	// 无锁重置 - 请求级别独立实例
 	m.processedIds = make(map[string]bool)
 	m.executing = make(map[string]bool)
 	m.lastAccess = make(map[string]time.Time)

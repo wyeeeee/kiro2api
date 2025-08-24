@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"kiro2api/logger"
@@ -44,11 +45,9 @@ type TokenRefreshManager struct {
 	// key: token索引, value: 刷新状态信息
 	refreshing sync.Map // map[int]*RefreshingToken
 
-	// 全局统计
-	totalRefreshes     int64
-	duplicatePrevented int64
-
-	mu sync.RWMutex // 保护统计数据
+	// 全局统计 - 使用atomic操作，无需额外锁
+	totalRefreshes     int64 // atomic counter
+	duplicatePrevented int64 // atomic counter
 }
 
 // NewTokenRefreshManager 创建新的token刷新管理器
@@ -74,9 +73,7 @@ func (trm *TokenRefreshManager) StartRefresh(tokenIdx int) (*RefreshingToken, bo
 
 	if loaded {
 		// 该token已经在刷新中
-		trm.mu.Lock()
-		trm.duplicatePrevented++
-		trm.mu.Unlock()
+		atomic.AddInt64(&trm.duplicatePrevented, 1) // 原子操作
 
 		logger.Debug("Token正在被其他请求刷新，等待结果",
 			logger.Int("token_index", tokenIdx),
@@ -86,9 +83,7 @@ func (trm *TokenRefreshManager) StartRefresh(tokenIdx int) (*RefreshingToken, bo
 	}
 
 	// 这是新的刷新任务
-	trm.mu.Lock()
-	trm.totalRefreshes++
-	trm.mu.Unlock()
+	atomic.AddInt64(&trm.totalRefreshes, 1) // 原子操作
 
 	logger.Debug("开始新的Token刷新任务",
 		logger.Int("token_index", tokenIdx),
@@ -203,9 +198,6 @@ func (trm *TokenRefreshManager) GetRefreshStatus(tokenIdx int) (TokenRefreshStat
 
 // GetStats 获取刷新管理器统计信息
 func (trm *TokenRefreshManager) GetStats() map[string]any {
-	trm.mu.RLock()
-	defer trm.mu.RUnlock()
-
 	activeRefreshes := 0
 	trm.refreshing.Range(func(key, value any) bool {
 		refreshingToken := value.(*RefreshingToken)
@@ -215,14 +207,17 @@ func (trm *TokenRefreshManager) GetStats() map[string]any {
 		return true
 	})
 
+	totalRefreshes := atomic.LoadInt64(&trm.totalRefreshes)
+	duplicatePrevented := atomic.LoadInt64(&trm.duplicatePrevented)
+
 	efficiencyRate := float64(0)
-	if trm.totalRefreshes > 0 {
-		efficiencyRate = float64(trm.duplicatePrevented) / float64(trm.totalRefreshes) * 100
+	if totalRefreshes > 0 {
+		efficiencyRate = float64(duplicatePrevented) / float64(totalRefreshes) * 100
 	}
 
 	return map[string]any{
-		"total_refreshes":     trm.totalRefreshes,
-		"duplicate_prevented": trm.duplicatePrevented,
+		"total_refreshes":     totalRefreshes,
+		"duplicate_prevented": duplicatePrevented,
 		"active_refreshes":    activeRefreshes,
 		"efficiency_rate":     fmt.Sprintf("%.2f%%", efficiencyRate),
 	}

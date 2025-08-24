@@ -237,9 +237,8 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		sender.SendEvent(c, event)
 	}
 
-	// 从对象池获取符合AWS规范的流式解析器，处理完后放回池中
-	compliantParser := parser.GlobalCompliantParserPool.Get()
-	defer parser.GlobalCompliantParserPool.Put(compliantParser)
+	// 创建符合AWS规范的流式解析器
+	compliantParser := parser.NewCompliantEventStreamParser(false) // 默认非严格模式
 
 	// 统计输出token（以字符数近似）
 	totalOutputChars := 0

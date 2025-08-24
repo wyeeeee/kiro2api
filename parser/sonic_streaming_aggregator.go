@@ -21,7 +21,6 @@ type SonicStreamingJSONAggregator struct {
 	activeStreamers map[string]*SonicJSONStreamer
 	mu              sync.RWMutex
 	updateCallback  ToolParamsUpdateCallback
-	jsonRepairer    *JSONRepairer // 添加JSON修复器实例
 }
 
 // SonicJSONStreamer 单个工具调用的Sonic流式解析器
@@ -62,7 +61,6 @@ func NewSonicStreamingJSONAggregatorWithCallback(callback ToolParamsUpdateCallba
 	return &SonicStreamingJSONAggregator{
 		activeStreamers: make(map[string]*SonicJSONStreamer),
 		updateCallback:  callback,
-		jsonRepairer:    NewJSONRepairer(), // 初始化JSON修复器
 	}
 }
 
@@ -134,16 +132,25 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 	if stop {
 		streamer.isComplete = true
 
+		// *** 关键修复：区分无参数工具和真正的JSON不完整 ***
+		// 检查是否真的有数据但JSON不完整
+		hasActualData := streamer.fragmentCount > 0 || streamer.totalBytes > 0
+
 		// 最终尝试解析或生成基础JSON
 		if !streamer.state.hasValidJSON {
-			logger.Debug("停止时JSON未完整，尝试Sonic智能补全",
-				logger.String("toolUseId", toolUseId),
-				logger.Int("bufferSize", streamer.buffer.Len()))
+			if hasActualData {
+				// 只有真正收到数据但解析失败时才记录"未完整"日志
+				logger.Debug("停止时JSON未完整",
+					logger.String("toolUseId", toolUseId),
+					logger.Int("bufferSize", streamer.buffer.Len()),
+					logger.Int("fragmentCount", streamer.fragmentCount),
+					logger.Int("totalBytes", streamer.totalBytes))
 
-			result := ssja.sonicIntelligentComplete(streamer)
-			if result != nil {
-				streamer.result = result
-				streamer.state.hasValidJSON = true
+			} else {
+				// 无参数工具的正常情况，直接生成默认JSON，不记录误导性日志
+				logger.Debug("工具无参数，使用默认参数格式",
+					logger.String("toolUseId", toolUseId),
+					logger.String("toolName", name))
 			}
 		}
 
@@ -371,257 +378,6 @@ func (sjs *SonicJSONStreamer) looksLikeValueFragment(content string) bool {
 	}
 
 	return false
-}
-
-// sonicIntelligentComplete 使用Sonic智能补全JSON
-func (ssja *SonicStreamingJSONAggregator) sonicIntelligentComplete(streamer *SonicJSONStreamer) map[string]interface{} {
-	content := strings.TrimSpace(streamer.buffer.String())
-
-	logger.Debug("Sonic智能补全JSON",
-		logger.String("toolName", streamer.toolName),
-		logger.String("content", func() string {
-			if len(content) > 50 {
-				return content[:50] + "..."
-			}
-			return content
-		}()),
-		logger.Bool("isValueFragment", streamer.state.isValueFragment),
-		logger.Bool("isPartialJSON", streamer.state.isPartialJSON))
-
-	// *** 关键修复：按1.md建议简化逻辑，移除过早解析 ***
-
-	// 1. 检查是否为值片段（优先级最高）
-	if streamer.state.isValueFragment || streamer.looksLikeValueFragment(content) {
-		logger.Debug("处理值片段", logger.String("content", content))
-		return ssja.buildJSONFromValue(streamer.toolName, content)
-	}
-
-	// 2. 如果是不完整的JSON，尝试补全（移除复杂的损坏检测逻辑）
-	if strings.HasPrefix(content, "{") || strings.HasPrefix(content, "[") || streamer.state.isPartialJSON {
-		result := ssja.sonicCompletePartialJSON(content, streamer.toolName)
-		if result != nil {
-			return result
-		}
-	}
-
-	// 3. 简化的fallback逻辑
-	logger.Debug("无法智能补全JSON，返回nil")
-	return nil
-}
-
-// buildJSONFromValue 从值构建JSON（使用Sonic优化）
-func (ssja *SonicStreamingJSONAggregator) buildJSONFromValue(toolName, value string) map[string]interface{} {
-	// 清理值 - 更智能的处理
-	value = ssja.cleanValue(value)
-
-	var result map[string]interface{}
-
-	// 处理MCP工具名称（如 mcp__serena__list_dir）
-	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
-		result = ssja.buildMCPToolJSON(toolName, value)
-	} else {
-		// 标准工具处理
-		switch strings.ToLower(toolName) {
-		case "ls":
-			result = map[string]interface{}{"path": value}
-		case "read":
-			result = map[string]interface{}{"file_path": value}
-		case "write":
-			// *** 关键修复：Write工具的智能参数分配 ***
-			// 1. 如果value看起来像完整的JSON参数，直接解析
-			if strings.HasPrefix(strings.TrimSpace(value), "{") && strings.Contains(value, "file_path") {
-				var tempMap map[string]interface{}
-				if err := utils.FastUnmarshal([]byte(value), &tempMap); err == nil {
-					result = tempMap
-					break
-				}
-			}
-
-			// 2. 如果包含路径分隔符，很可能是file_path
-			if strings.Contains(value, "/") && !strings.Contains(value, "\n") && len(value) < 500 {
-				result = map[string]interface{}{"file_path": value, "content": ""}
-			} else {
-				// 3. 大型内容或包含换行符的，作为content处理，但需要合理的file_path
-				// 从累积的上下文中尝试推断file_path（如果有的话）
-				filePath := ""
-				if strings.Contains(value, ".html") {
-					// 从HTML内容中尝试提取可能的文件路径信息
-					if strings.Contains(value, "weather") {
-						filePath = "weather.html"
-					} else {
-						filePath = "index.html"
-					}
-				} else if strings.Contains(value, ".js") || strings.Contains(value, "javascript") {
-					filePath = "script.js"
-				} else if strings.Contains(value, ".css") || strings.Contains(value, "style") {
-					filePath = "style.css"
-				}
-
-				result = map[string]interface{}{"file_path": filePath, "content": value}
-			}
-		case "bash":
-			result = map[string]interface{}{"command": value}
-		case "edit":
-			if strings.Contains(value, "/") {
-				result = map[string]interface{}{"file_path": value, "old_string": "", "new_string": ""}
-			} else {
-				result = map[string]interface{}{"file_path": "", "old_string": value, "new_string": ""}
-			}
-		case "glob":
-			result = map[string]interface{}{"pattern": value}
-		case "grep":
-			result = map[string]interface{}{"pattern": value}
-		default:
-			if strings.Contains(value, "/") {
-				result = map[string]interface{}{"path": value}
-			} else {
-				result = map[string]interface{}{"input": value}
-			}
-		}
-	}
-
-	logger.Debug("Sonic构建JSON成功",
-		logger.String("toolName", toolName),
-		logger.String("value", func() string {
-			if len(value) > 100 {
-				return value[:100] + "..."
-			}
-			return value
-		}()),
-		logger.Int("resultKeys", len(result)))
-
-	return result
-}
-
-// cleanValue 清理值，处理各种转义和格式问题
-func (ssja *SonicStreamingJSONAggregator) cleanValue(value string) string {
-	// 移除前后引号
-	value = strings.Trim(value, "\"")
-
-	// 处理可能的键值对格式（如 "path": "/Users/..."）
-	if strings.Contains(value, "\":") {
-		parts := strings.SplitN(value, "\":", 2)
-		if len(parts) == 2 {
-			value = strings.TrimSpace(parts[1])
-			value = strings.Trim(value, " \"")
-		}
-	}
-
-	// 处理转义字符
-	value = strings.ReplaceAll(value, "\\\"", "\"")
-	value = strings.ReplaceAll(value, "\\\\", "\\")
-
-	// 处理可能的JSON片段（如 {"path": "/Users/..."} ）
-	if strings.HasPrefix(value, "{") && strings.Contains(value, "\":") {
-		// 尝试提取值
-		var tempMap map[string]interface{}
-		if err := utils.FastUnmarshal([]byte(value), &tempMap); err == nil {
-			// 成功解析，提取第一个值
-			for _, v := range tempMap {
-				if strVal, ok := v.(string); ok {
-					return strVal
-				}
-			}
-		}
-	}
-
-	return value
-}
-
-// buildMCPToolJSON 构建MCP工具的JSON
-func (ssja *SonicStreamingJSONAggregator) buildMCPToolJSON(toolName, value string) map[string]interface{} {
-	// 提取实际的MCP工具名称
-	parts := strings.Split(toolName, "__")
-	if len(parts) >= 3 {
-		actualToolName := parts[2]
-
-		logger.Debug("构建MCP工具JSON",
-			logger.String("fullName", toolName),
-			logger.String("actualToolName", actualToolName),
-			logger.String("value", value))
-
-		switch strings.ToLower(actualToolName) {
-		case "list_dir":
-			return map[string]interface{}{
-				"relative_path": value,
-				"recursive":     false,
-			}
-		case "find_file":
-			return map[string]interface{}{
-				"file_mask":     "*",
-				"relative_path": value,
-			}
-		case "find_symbol", "get_symbols_overview":
-			return map[string]interface{}{
-				"relative_path": value,
-			}
-		case "search_for_pattern":
-			return map[string]interface{}{
-				"substring_pattern": value,
-				"relative_path":     ".",
-			}
-		default:
-			// 通用MCP工具处理
-			if strings.Contains(value, "/") {
-				return map[string]interface{}{"relative_path": value}
-			}
-			return map[string]interface{}{"input": value}
-		}
-	}
-
-	// 如果无法解析MCP工具名，返回通用格式
-	return map[string]interface{}{"input": value}
-}
-
-// sonicCompletePartialJSON 使用Sonic补全不完整的JSON
-func (ssja *SonicStreamingJSONAggregator) sonicCompletePartialJSON(content, toolName string) map[string]interface{} {
-	logger.Debug("Sonic尝试补全不完整JSON",
-		logger.String("content", func() string {
-			if len(content) > 100 {
-				return content[:100] + "..."
-			}
-			return content
-		}()),
-		logger.String("toolName", toolName))
-
-	// 首先尝试直接解析
-	var result map[string]interface{}
-	if err := utils.FastUnmarshal([]byte(content), &result); err == nil {
-		return result
-	}
-
-	// 使用独立的JSON修复器
-	fixed := ssja.jsonRepairer.IntelligentJSONFix(content, toolName)
-
-	// 使用Sonic尝试解析修复后的JSON
-	if err := utils.FastUnmarshal([]byte(fixed), &result); err == nil {
-		logger.Debug("Sonic JSON补全成功",
-			logger.String("fixed", func() string {
-				if len(fixed) > 50 {
-					return fixed[:50] + "..."
-				}
-				return fixed
-			}()),
-			logger.Int("resultKeys", len(result)))
-		return result
-	}
-
-	// 如果还是失败，尝试从内容中提取并重建
-	if extracted := ssja.jsonRepairer.ExtractAndRebuildJSON(content, toolName); extracted != nil {
-		return extracted
-	}
-
-	logger.Debug("Sonic JSON补全失败，使用fallback",
-		logger.String("fixed", func() string {
-			if len(fixed) > 50 {
-				return fixed[:50] + "..."
-			}
-			return fixed
-		}()),
-		logger.String("toolName", toolName))
-
-	// 如果仍然解析失败，返回nil让调用者使用fallback
-	return nil
 }
 
 // generateFallbackJSON 生成回退JSON

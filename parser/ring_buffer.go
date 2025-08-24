@@ -14,7 +14,7 @@ type RingBuffer struct {
 	data  []byte
 	size  int
 	head  int // 读取位置
-	tail  int // 写入位置  
+	tail  int // 写入位置
 	count int // 当前数据量
 	// 移除所有锁 - 单goroutine独占使用时不需要并发保护
 }

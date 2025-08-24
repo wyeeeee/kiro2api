@@ -127,8 +127,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	sender.SendEvent(c, initialEvent)
 
 	// 创建符合AWS规范的流式解析器和去重管理器
-	compliantParser := parser.GlobalCompliantParserPool.Get()
-	defer parser.GlobalCompliantParserPool.Put(compliantParser)
+	compliantParser := parser.NewCompliantEventStreamParser(false) // 默认非严格模式
 	dedupManager := utils.NewToolDedupManager() // OpenAI流式端点的工具去重管理器
 
 	// OpenAI 工具调用增量状态

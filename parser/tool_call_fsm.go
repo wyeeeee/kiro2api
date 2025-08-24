@@ -361,10 +361,10 @@ func (fsm *ToolCallFSM) AddListener(listener StateChangeListener) {
 	fsm.listeners = append(fsm.listeners, listener)
 }
 
-// notifyListeners 通知所有监听器
+// notifyListeners 通知所有监听器 - 同步执行，避免不必要的goroutine
 func (fsm *ToolCallFSM) notifyListeners(toolID string, oldState, newState ToolCallState, state *ToolState) {
 	for _, listener := range fsm.listeners {
-		go listener(toolID, oldState, newState, state)
+		listener(toolID, oldState, newState, state) // 直接同步调用
 	}
 }
 

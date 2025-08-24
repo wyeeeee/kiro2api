@@ -2,6 +2,7 @@ package types
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -95,12 +96,11 @@ type IdcRefreshRequest struct {
 
 // TokenPool token池管理结构
 type TokenPool struct {
-	tokens      []string    // refresh token列表
-	currentIdx  int         // 当前使用的token索引
-	accessIdx   int         // 当前访问的access token索引（用于轮换）
-	failedCount map[int]int // 每个token的失败次数
-	mutex       sync.RWMutex
-	maxRetries  int // 最大重试次数
+	tokens      []string // refresh token列表
+	currentIdx  int64    // 当前使用的token索引 - 使用atomic
+	accessIdx   int64    // 当前访问的access token索引 - 使用atomic
+	failedCount sync.Map // 每个token的失败次数 - 保持sync.Map
+	maxRetries  int      // 最大重试次数
 }
 
 // NewTokenPool 创建新的token池
@@ -109,113 +109,99 @@ func NewTokenPool(tokens []string, maxRetries int) *TokenPool {
 		tokens:      tokens,
 		currentIdx:  0,
 		accessIdx:   0,
-		failedCount: make(map[int]int),
+		failedCount: sync.Map{}, // 直接初始化sync.Map
 		maxRetries:  maxRetries,
 	}
 }
 
 // GetNextAccessIndex 获取下一个访问索引（用于轮换access token）
 func (tp *TokenPool) GetNextAccessIndex() int {
-	tp.mutex.Lock()
-	defer tp.mutex.Unlock()
+	tokenCount := len(tp.tokens)
+	startIdx := int(atomic.LoadInt64(&tp.accessIdx))
 
-	// 找到下一个有效的access token索引
-	startIdx := tp.accessIdx
-	for {
-		// 检查当前索引的token是否可用
-		if tp.failedCount[tp.accessIdx] < tp.maxRetries {
-			idx := tp.accessIdx
-			tp.accessIdx = (tp.accessIdx + 1) % len(tp.tokens)
-			return idx
-		}
+	for i := 0; i < tokenCount; i++ {
+		currentIdx := (startIdx + i) % tokenCount
 
-		// 移动到下一个索引
-		tp.accessIdx = (tp.accessIdx + 1) % len(tp.tokens)
-
-		// 如果回到起始位置，返回当前索引（即使可能不可用）
-		if tp.accessIdx == startIdx {
-			return tp.accessIdx
+		// 检查当前索引的token失败次数
+		if failedCountVal, exists := tp.failedCount.Load(currentIdx); !exists || failedCountVal.(int) < tp.maxRetries {
+			// 原子更新accessIdx到下一个位置
+			atomic.StoreInt64(&tp.accessIdx, int64((currentIdx+1)%tokenCount))
+			return currentIdx
 		}
 	}
+
+	// 所有token都不可用，返回起始索引
+	return startIdx
 }
 
 // GetCurrentAccessIndex 获取当前访问索引
 func (tp *TokenPool) GetCurrentAccessIndex() int {
-	tp.mutex.RLock()
-	defer tp.mutex.RUnlock()
-	return tp.accessIdx
+	return int(atomic.LoadInt64(&tp.accessIdx))
 }
 
 // SetAccessIndex 设置访问索引
 func (tp *TokenPool) SetAccessIndex(idx int) {
-	tp.mutex.Lock()
-	defer tp.mutex.Unlock()
 	if idx >= 0 && idx < len(tp.tokens) {
-		tp.accessIdx = idx
+		atomic.StoreInt64(&tp.accessIdx, int64(idx))
 	}
 }
 
 // GetTokenCount 获取token总数
 func (tp *TokenPool) GetTokenCount() int {
-	tp.mutex.RLock()
-	defer tp.mutex.RUnlock()
-	return len(tp.tokens)
+	return len(tp.tokens) // tokens slice是只读的，无需锁
 }
 
 // GetNextToken 获取下一个可用的token
 func (tp *TokenPool) GetNextToken() (string, int, bool) {
-	tp.mutex.Lock()
-	defer tp.mutex.Unlock()
+	tokenCount := len(tp.tokens)
+	startIdx := int(atomic.LoadInt64(&tp.currentIdx))
 
-	startIdx := tp.currentIdx
-	for {
-		// 检查当前token是否超过最大重试次数
-		if tp.failedCount[tp.currentIdx] < tp.maxRetries {
-			token := tp.tokens[tp.currentIdx]
-			idx := tp.currentIdx
-			tp.currentIdx = (tp.currentIdx + 1) % len(tp.tokens)
-			return token, idx, true
-		}
+	for i := 0; i < tokenCount; i++ {
+		currentIdx := (startIdx + i) % tokenCount
 
-		// 移动到下一个token
-		tp.currentIdx = (tp.currentIdx + 1) % len(tp.tokens)
-
-		// 如果回到起始位置，说明所有token都不可用
-		if tp.currentIdx == startIdx {
-			return "", -1, false
+		// 检查当前token失败次数
+		if failedCountVal, exists := tp.failedCount.Load(currentIdx); !exists || failedCountVal.(int) < tp.maxRetries {
+			token := tp.tokens[currentIdx]
+			// 原子更新currentIdx到下一个位置
+			atomic.StoreInt64(&tp.currentIdx, int64((currentIdx+1)%tokenCount))
+			return token, currentIdx, true
 		}
 	}
+
+	// 所有token都不可用
+	return "", -1, false
 }
 
 // MarkTokenFailed 标记token失败
 func (tp *TokenPool) MarkTokenFailed(idx int) {
-	tp.mutex.Lock()
-	defer tp.mutex.Unlock()
-	tp.failedCount[idx]++
+	// 使用sync.Map原子操作，无需额外锁
+	if val, exists := tp.failedCount.Load(idx); exists {
+		tp.failedCount.Store(idx, val.(int)+1)
+	} else {
+		tp.failedCount.Store(idx, 1)
+	}
 }
 
 // MarkTokenSuccess 标记token成功，重置失败计数
 func (tp *TokenPool) MarkTokenSuccess(idx int) {
-	tp.mutex.Lock()
-	defer tp.mutex.Unlock()
-	tp.failedCount[idx] = 0
+	tp.failedCount.Store(idx, 0) // 直接使用sync.Map的原子操作
 }
 
 // GetStats 获取token池统计信息
 func (tp *TokenPool) GetStats() map[string]any {
-	tp.mutex.RLock()
-	defer tp.mutex.RUnlock()
-
 	stats := map[string]any{
 		"total_tokens":  len(tp.tokens),
-		"current_index": tp.currentIdx,
+		"current_index": atomic.LoadInt64(&tp.currentIdx),
+		"access_index":  atomic.LoadInt64(&tp.accessIdx),
 		"max_retries":   tp.maxRetries,
 		"failed_counts": make(map[int]int),
 	}
 
-	for idx, count := range tp.failedCount {
-		stats["failed_counts"].(map[int]int)[idx] = count
-	}
+	// 使用sync.Map的Range方法饁历失败计数
+	tp.failedCount.Range(func(key, value any) bool {
+		stats["failed_counts"].(map[int]int)[key.(int)] = value.(int)
+		return true
+	})
 
 	return stats
 }
