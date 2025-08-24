@@ -93,10 +93,136 @@ func containsToolIndicators(data []byte) bool {
 }
 
 // isValidUTF8 检查字符串是否为有效的UTF-8
+// 对于二进制协议数据，采用更智能的判断策略
+// isBinaryProtocolData 检查数据是否为二进制协议格式（如AWS EventStream）
+func isBinaryProtocolData(s string) bool {
+	if len(s) < 8 {
+		return false
+	}
+
+	// 检查是否以EventStream协议的典型模式开头
+	// EventStream格式: [4字节长度][4字节头长度][头部数据][载荷数据]
+	bytes := []byte(s)
+
+	// 检查前8字节是否为长度标识符模式 (大端序)
+	if bytes[0] == 0x00 && bytes[4] == 0x00 {
+		return true
+	}
+
+	// 检查是否包含EventStream事件类型标识符
+	eventStreamIndicators := []string{
+		":event-type",
+		"assistantResponseEvent",
+		"toolUseEvent",
+		"application/json",
+		":message-type",
+	}
+
+	for _, indicator := range eventStreamIndicators {
+		if strings.Contains(s, indicator) {
+			return true
+		}
+	}
+
+	// 检查空字节密度（二进制数据通常包含较多空字节）
+	nullCount := strings.Count(s, "\x00")
+	if float64(nullCount)/float64(len(s)) > 0.1 { // 超过10%的空字节
+		return true
+	}
+
+	return false
+}
+
+// extractReadableContent 从二进制协议数据中提取可读内容
+func extractReadableContent(s string) string {
+	var readableParts []string
+
+	// 查找JSON片段
+	if matches := findJSONFragments(s); len(matches) > 0 {
+		readableParts = append(readableParts, matches...)
+	}
+
+	// 查找事件类型信息
+	eventTypes := []string{
+		"assistantResponseEvent",
+		"toolUseEvent",
+		"application/json",
+		"event",
+	}
+
+	for _, eventType := range eventTypes {
+		if strings.Contains(s, eventType) {
+			readableParts = append(readableParts, eventType)
+		}
+	}
+
+	// 查找其他可读文本片段（连续的可打印ASCII字符）
+	var currentWord strings.Builder
+	for _, b := range []byte(s) {
+		if b >= 32 && b <= 126 { // 可打印ASCII范围
+			currentWord.WriteByte(b)
+		} else {
+			if word := currentWord.String(); len(word) >= 3 {
+				readableParts = append(readableParts, word)
+			}
+			currentWord.Reset()
+		}
+	}
+
+	// 添加最后一个词
+	if word := currentWord.String(); len(word) >= 3 {
+		readableParts = append(readableParts, word)
+	}
+
+	return strings.Join(readableParts, " ")
+}
+
+// findJSONFragments 查找字符串中的JSON片段
+func findJSONFragments(s string) []string {
+	var fragments []string
+
+	// 查找 {"content":"..."} 模式
+	for i := 0; i < len(s)-10; i++ {
+		if s[i:i+10] == `"content":"` {
+			start := i
+			end := i + 10
+
+			// 查找结束引号
+			for j := end; j < len(s); j++ {
+				if s[j] == '"' && (j == 0 || s[j-1] != '\\') {
+					end = j + 1
+					break
+				}
+			}
+
+			if end > start+10 {
+				fragments = append(fragments, s[start:end])
+				i = end - 1 // 跳过已处理的部分
+			}
+		}
+	}
+
+	return fragments
+}
+
+// isValidUTF8 检查字符串是否为有效的UTF-8
+// 对于二进制协议数据，采用更智能的判断策略
 func isValidUTF8(s string) bool {
-	return len(s) > 0 && len(s) < 1024*1024 && // 限制大小，避免处理过大的数据
-		!strings.Contains(s, "\x00") && // 避免空字节
-		utf8.ValidString(s)
+	if len(s) == 0 || len(s) >= 1024*1024 {
+		return false // 空数据或过大数据
+	}
+
+	// 检查是否为二进制协议数据 (如EventStream)
+	if isBinaryProtocolData(s) {
+		// 尝试提取可读部分
+		if readablePart := extractReadableContent(s); len(readablePart) > 10 {
+			return utf8.ValidString(readablePart)
+		}
+		return false
+	}
+
+	// 对于非二进制数据，保持原有逻辑
+	return !strings.Contains(s, "\x00") && utf8.ValidString(s)
 }
 
 // saveToFile 保存记录到文件
