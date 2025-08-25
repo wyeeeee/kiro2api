@@ -197,6 +197,10 @@ func isDebugMode() bool {
 
 // handleGenericStreamRequest 通用流式请求处理
 func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
+	// 创建token计算器
+	tokenCalculator := utils.NewTokenCalculator()
+	// 计算输入tokens
+	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
 	// 检测是否为包含tool_result的延续请求
 	hasToolResult := containsToolResult(anthropicReq)
 	if hasToolResult {
@@ -211,7 +215,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 	// 确认底层Writer支持Flush
 	if _, ok := c.Writer.(http.Flusher); !ok {
-		sender.SendError(c, "连接不支持SSE刷新", fmt.Errorf("no flusher"))
+		err := sender.SendError(c, "连接不支持SSE刷新", fmt.Errorf("no flusher"))
+		if err != nil {
+			return
+		}
 		return
 	}
 
@@ -219,10 +226,12 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 	resp, err := execCWRequest(c, anthropicReq, tokenInfo, true)
 	if err != nil {
-		sender.SendError(c, "构建请求失败", err)
+		_ = sender.SendError(c, "构建请求失败", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
 
 	// 立即刷新响应头
 	c.Writer.Flush()
@@ -234,7 +243,21 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	}
 	initialEvents := eventCreator(messageId, inputContent, anthropicReq.Model)
 	for _, event := range initialEvents {
-		sender.SendEvent(c, event)
+		// 更新流式事件中的input_tokens
+		// event本身就是map[string]any类型，直接使用
+		if message, exists := event["message"]; exists {
+			if msgMap, ok := message.(map[string]any); ok {
+				if usage, exists := msgMap["usage"]; exists {
+					if usageMap, ok := usage.(map[string]any); ok {
+						usageMap["input_tokens"] = inputTokens
+					}
+				}
+			}
+		}
+		err := sender.SendEvent(c, event)
+		if err != nil {
+			return
+		}
 	}
 
 	// 创建符合AWS规范的流式解析器
@@ -272,7 +295,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 						"text": pendingText,
 					},
 				}
-				sender.SendEvent(c, flush)
+				_ = sender.SendEvent(c, flush)
 				lastFlushedText = pendingText
 				totalOutputChars += len(pendingText)
 			} else {
@@ -468,7 +491,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 														"text": pendingText,
 													},
 												}
-												sender.SendEvent(c, flush)
+												_ = sender.SendEvent(c, flush)
 												lastFlushedText = pendingText
 											} else {
 												logger.Debug("跳过重复/过短文本片段",
@@ -534,7 +557,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 				}
 
 				// 发送当前事件（若上面未 continue 掉）
-				sender.SendEvent(c, event.Data)
+				_ = sender.SendEvent(c, event.Data)
 
 				if event.Event == "content_block_delta" {
 					content, _ := utils.GetMessageContent(event.Data)
@@ -570,8 +593,8 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 							"text": defaultText,
 						},
 					}
-					sender.SendEvent(c, textEvent)
-					totalOutputChars += len(defaultText)
+					_ = sender.SendEvent(c, textEvent)
+					totalOutputChars += tokenCalculator.CalculateOutputTokens(defaultText, false)
 					c.Writer.Flush() // 立即刷新响应
 				}
 
@@ -604,8 +627,8 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 								"text": defaultText,
 							},
 						}
-						sender.SendEvent(c, textEvent)
-						totalOutputChars += len(defaultText)
+						_ = sender.SendEvent(c, textEvent)
+						totalOutputChars += tokenCalculator.CalculateOutputTokens(defaultText, false)
 						c.Writer.Flush() // 立即刷新响应
 					}
 
@@ -647,9 +670,9 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 			logger.Bool("has_tool_result", hasToolResult))
 	}
 
-	finalEvents := createAnthropicFinalEvents(totalOutputChars, stopReason)
+	finalEvents := createAnthropicFinalEvents(tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:min(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0), stopReason)
 	for _, event := range finalEvents {
-		sender.SendEvent(c, event)
+		_ = sender.SendEvent(c, event)
 	}
 
 	// 输出接收到的所有原始数据，支持回放和测试
@@ -684,6 +707,11 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件
 func createAnthropicStreamEvents(messageId, inputContent, model string) []map[string]any {
+	// 创建token计算器来计算输入tokens
+	tokenCalculator := utils.NewTokenCalculator()
+	// 基于输入内容估算输入tokens
+	inputTokens := tokenCalculator.EstimateTokensFromChars(len(inputContent))
+
 	events := []map[string]any{
 		{
 			"type": "message_start",
@@ -696,7 +724,7 @@ func createAnthropicStreamEvents(messageId, inputContent, model string) []map[st
 				"stop_reason":   nil,
 				"stop_sequence": nil,
 				"usage": map[string]any{
-					"input_tokens":  len(inputContent),
+					"input_tokens":  inputTokens,
 					"output_tokens": 1,
 				},
 			},
@@ -791,6 +819,10 @@ func containsToolResult(req types.AnthropicRequest) bool {
 
 // handleNonStreamRequest 处理非流式请求
 func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
+	// 创建token计算器
+	tokenCalculator := utils.NewTokenCalculator()
+	// 计算输入tokens
+	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
 	// 检测是否为包含tool_result的延续请求
 	hasToolResult := containsToolResult(anthropicReq)
 	if hasToolResult {
@@ -808,7 +840,9 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
 
 	// 读取响应体
 	body, err := utils.ReadHTTPResponse(resp.Body)
@@ -828,8 +862,8 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 				"stop_sequence": nil,
 				"type":          "message",
 				"usage": map[string]any{
-					"input_tokens":  estimateInputTokens(anthropicReq),
-					"output_tokens": len(defaultText) / 4, // 粗略估算
+					"input_tokens":  inputTokens,
+					"output_tokens": tokenCalculator.CalculateOutputTokens(defaultText, false),
 				},
 			}
 			c.JSON(http.StatusOK, anthropicResp)
@@ -885,8 +919,8 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 				"stop_sequence": nil,
 				"type":          "message",
 				"usage": map[string]any{
-					"input_tokens":  100, // 估算值
-					"output_tokens": len(fallbackText),
+					"input_tokens":  inputTokens,
+					"output_tokens": tokenCalculator.CalculateOutputTokens(fallbackText, false),
 				},
 			}
 			c.JSON(http.StatusOK, anthropicResp)
@@ -897,7 +931,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 
 	// 转换为Anthropic格式
-	contexts := []map[string]any{}
+	var contexts = []map[string]any{}
 	textAgg := result.GetCompletionText()
 
 	// 检查文本内容是否包含XML工具标记
@@ -1110,11 +1144,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		return "end_turn"
 	}()
 
-	inputContent := ""
-	if len(anthropicReq.Messages) > 0 {
-		inputContent, _ = utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
-	}
-
 	anthropicResp := map[string]any{
 		"content":       contexts,
 		"model":         anthropicReq.Model,
@@ -1123,8 +1152,8 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		"stop_sequence": nil,
 		"type":          "message",
 		"usage": map[string]any{
-			"input_tokens":  len(inputContent),
-			"output_tokens": len(textAgg),
+			"input_tokens":  inputTokens,
+			"output_tokens": tokenCalculator.CalculateOutputTokens(textAgg, sawToolUse),
 		},
 	}
 
@@ -1234,27 +1263,3 @@ func extractToolNameFromId(toolUseId string) string {
 }
 
 // estimateInputTokens 估算输入token数量
-func estimateInputTokens(req types.AnthropicRequest) int {
-	totalChars := 0
-
-	// 系统消息
-	for _, sysMsg := range req.System {
-		totalChars += len(sysMsg.Text)
-	}
-
-	// 所有消息
-	for _, msg := range req.Messages {
-		content, _ := utils.GetMessageContent(msg.Content)
-		totalChars += len(content)
-	}
-
-	// 工具定义
-	for _, tool := range req.Tools {
-		if tool.Name != "" {
-			totalChars += len(tool.Name) + 50 // 估算工具定义开销
-		}
-	}
-
-	// 粗略按照 4 字符 = 1 token 计算
-	return totalChars / 4
-}
