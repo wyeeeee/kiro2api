@@ -8,6 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **核心架构**: 双API代理服务器，在 Anthropic API、OpenAI ChatCompletion API 和 AWS CodeWhisperer EventStream 格式之间进行转换。
 
+## 技术架构原则
+
+遵循 KISS、YAGNI、DRY 和 SOLID 原则：
+- **单一职责**: 每个包专注于特定功能域
+- **开闭原则**: 通过接口扩展而非修改核心逻辑  
+- **依赖倒置**: 依赖抽象而非具体实现
+- **保持简单**: 避免过度工程化，优先选择简洁解决方案
+
 ## 开发命令
 
 ```bash
@@ -31,6 +39,13 @@ GIN_MODE=debug LOG_LEVEL=debug ./kiro2api
 # 生产构建
 go build -ldflags="-s -w" -o kiro2api main.go
 ```
+
+## 技术栈
+
+- **框架**: gin-gonic/gin v1.10.1  
+- **JSON**: bytedance/sonic v1.14.0
+- **配置**: github.com/joho/godotenv v1.5.1 (直接依赖)
+- **Go版本**: 1.23.3
 
 ## 环境变量配置
 
@@ -68,16 +83,37 @@ AUTH_METHOD=social                        # social(默认) 或 idc
 - **工具调用去重**: 基于 `tool_use_id` 的精确去重机制
 - **流式优化**: 零延迟流式传输，对象池复用解析器实例
 
-## 包结构
+## 包结构 (按职责分层)
 
-- **`server/`**: HTTP服务器和API处理器，包含路由、中间件、认证逻辑
-- **`converter/`**: 格式转换层，处理 Anthropic ↔ OpenAI ↔ CodeWhisperer 转换
-- **`parser/`**: 流处理核心，包含EventStream解析器、工具调用去重、环形缓冲区
-- **`auth/`**: 令牌管理，支持Social和IdC双认证方式，自动刷新Token
-- **`utils/`**: 工具包，包含HTTP客户端、请求分析、图片处理、原子缓存等
-- **`types/`**: 数据结构定义，定义API请求/响应格式
-- **`logger/`**: 结构化日志系统，支持多种输出格式和级别控制
-- **`config/`**: 配置常量，包含模型映射和端点配置
+### 核心服务层
+- **`server/`**: HTTP服务器和请求处理，遵循单一职责原则
+  - `server.go` - 服务器初始化和路由配置
+  - `handlers.go` - Anthropic API处理器  
+  - `openai_handlers.go` - OpenAI API处理器
+  - `middleware.go` - 认证中间件
+  - `common.go` - 公共响应处理
+
+### 数据转换层  
+- **`converter/`**: API格式转换，实现开闭原则
+  - `openai.go` - OpenAI ↔ Anthropic 转换
+  - `codewhisperer.go` - CodeWhisperer ↔ Anthropic 转换  
+  - `content.go` - 内容格式处理
+  - `tools.go` - 工具调用转换
+  - `system_prompt.go` - 系统提示处理
+
+### 流处理核心
+- **`parser/`**: EventStream解析和工具调用处理
+  - `robust_parser.go` - 主要解析器实现
+  - `compliant_event_stream_parser.go` - 标准兼容解析器
+  - `compliant_message_processor.go` - 消息处理和去重
+  - `tool_*` - 工具调用状态机和生命周期管理
+
+### 基础设施层
+- **`auth/`**: 认证和令牌管理，支持多种认证方式
+- **`utils/`**: 工具包，遵循DRY原则避免重复
+- **`types/`**: 数据结构定义，保持类型安全
+- **`logger/`**: 结构化日志系统
+- **`config/`**: 配置常量和模型映射
 
 ## API端点
 
@@ -87,24 +123,31 @@ AUTH_METHOD=social                        # social(默认) 或 idc
 
 ## 核心开发任务
 
-### 添加新模型支持
-1. 在 `config/config.go` 的 `ModelMap` 中添加模型映射
-2. 确保 `types/model.go` 中的结构支持新模型
-3. 测试新模型的请求响应转换
+### 扩展功能 (遵循开闭原则)
+1. **添加新模型支持** 
+   - `config/config.go`: 在 `ModelMap` 中添加模型映射
+   - `types/model.go`: 验证结构支持新模型
+   - 测试新模型的请求响应转换
 
-### 修改认证逻辑
-- `server/middleware.go`: `PathBasedAuthMiddleware` 主要逻辑
-- `auth/token.go`: Token管理和刷新逻辑，支持Social/IdC双认证
-- `utils/token_refresh_manager.go`: Token刷新管理器
+2. **认证机制扩展**
+   - `server/middleware.go`: 修改 `PathBasedAuthMiddleware` 
+   - `auth/token.go`: Token管理和刷新逻辑
+   - `utils/token_refresh_manager.go`: Token刷新管理器
 
-### 调试流式响应
-- `parser/robust_parser.go`: 增强EventStream解析器和错误恢复
-- `parser/compliant_message_processor.go`: 消息处理和工具调用去重
-- 验证BigEndian格式的二进制EventStream解析
+### 性能优化 (遵循KISS原则)
+1. **流式响应调试**
+   - `parser/robust_parser.go`: EventStream解析器错误恢复
+   - `parser/compliant_message_processor.go`: 消息处理和去重
+   - 验证BigEndian格式的EventStream解析
 
-### 调试工具调用
-- `utils/tool_dedup.go`: 基于 `tool_use_id` 的去重逻辑
-- 测试流式和非流式请求的工具调用一致性
+2. **工具调用优化**  
+   - `utils/tool_dedup.go`: 基于 `tool_use_id` 去重逻辑
+   - 测试流式/非流式请求工具调用一致性
+
+### 代码质量改进 (遵循DRY和SOLID原则)
+1. **移除重复代码**: 抽取公共逻辑到 `utils/` 包
+2. **接口抽象**: 为HTTP客户端、解析器创建接口
+3. **测试覆盖**: 重点测试 `parser/` 和 `converter/` 包
 
 ## 技术栈
 

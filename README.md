@@ -18,8 +18,8 @@
 ## 技术栈
 
 - **Web框架**: gin-gonic/gin v1.10.1
-- **JSON处理**: bytedance/sonic v1.14.0
-- **环境变量**: github.com/joho/godotenv v1.5.1
+- **JSON处理**: bytedance/sonic v1.14.0  
+- **配置管理**: github.com/joho/godotenv v1.5.1
 - **Go版本**: 1.23.3
 - **容器化**: Docker & Docker Compose 支持
 
@@ -136,8 +136,8 @@ curl -N -X POST http://localhost:8080/v1/messages \
 ```bash
 # Social 认证方式（默认）
 AWS_REFRESHTOKEN=your_refresh_token_here  # 必需设置
-KIRO_CLIENT_TOKEN=123456                  # 默认: 123456
-PORT=8080                                 # 默认: 8080
+KIRO_CLIENT_TOKEN=123456                  # API认证密钥，默认: 123456
+PORT=8080                                 # 服务端口，默认: 8080
 
 # IdC 认证方式（可选）
 AUTH_METHOD=idc
@@ -150,17 +150,15 @@ IDC_REFRESH_TOKEN=your_idc_refresh_token
 
 ```bash
 # 日志配置
-LOG_LEVEL=info                            # debug,info,warn,error
-LOG_FORMAT=json                           # text,json
-LOG_FILE=/var/log/kiro2api.log            # 日志文件路径
+LOG_LEVEL=info                            # 日志级别: debug,info,warn,error
+LOG_FORMAT=json                           # 日志格式: text,json
+LOG_FILE=/var/log/kiro2api.log            # 日志文件路径（可选）
+LOG_CONSOLE=true                          # 控制台输出开关
 
-# 功能控制
-DISABLE_STREAM=false                      # 是否禁用流式响应
+# 性能调优
+REQUEST_TIMEOUT_MINUTES=15                # 复杂请求超时（分钟）
+SIMPLE_REQUEST_TIMEOUT_MINUTES=2          # 简单请求超时（分钟）
 GIN_MODE=release                          # Gin模式：debug,release,test
-
-# 超时配置
-REQUEST_TIMEOUT_MINUTES=15                # 复杂请求超时
-SIMPLE_REQUEST_TIMEOUT_MINUTES=2          # 简单请求超时
 ```
 
 ## 开发命令
@@ -184,19 +182,41 @@ go build -ldflags="-s -w" -o kiro2api main.go
 
 ## 故障排除
 
-### Token刷新失败
-- 检查 `AWS_REFRESHTOKEN` 环境变量是否正确设置
-- 验证token池配置和轮换机制
+### 常见问题
 
-### 流式响应中断
-- 检查客户端连接稳定性
-- 验证EventStream解析器状态
-- 查看工具调用去重逻辑
+#### 1. Token刷新失败
+```bash
+# 错误信息: "AWS_REFRESHTOKEN环境变量未设置"
+# 解决方案:
+export AWS_REFRESHTOKEN="your_refresh_token_here"
+# 或在.env文件中设置 AWS_REFRESHTOKEN=your_refresh_token_here
+```
 
-### 性能问题
-- 监控HTTP客户端连接池状态
-- 检查对象池使用情况
-- 分析请求复杂度评估准确性
+#### 2. 流式响应中断
+```bash
+# 检查客户端连接
+curl -N --max-time 60 -X POST http://localhost:8080/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer 123456" \
+  -d '{"model": "claude-sonnet-4-20250514", "stream": true, "messages": [...]}'
+```
+
+#### 3. 性能问题诊断
+```bash
+# 开启调试日志
+LOG_LEVEL=debug ./kiro2api
+
+# 监控HTTP连接
+# 检查日志中的 "http_client" 和 "request_analyzer" 条目
+```
+
+#### 4. API认证问题
+```bash
+# 验证认证头格式
+curl -v -H "Authorization: Bearer your_token" http://localhost:8080/v1/models
+# 或使用 x-api-key
+curl -v -H "x-api-key: your_token" http://localhost:8080/v1/models
+```
 
 ## 开发指南
 
