@@ -4,14 +4,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"kiro2api/config"
+	"kiro2api/auth/config"
+	globalConfig "kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
 	"net/http"
-	"os"
-	"strings"
-	"sync"
 	"time"
 )
 
@@ -20,98 +18,172 @@ var (
 	tokenPool      *types.TokenPool
 	atomicCache    *utils.AtomicTokenCache    // 使用原子缓存替代传统缓存
 	refreshManager *utils.TokenRefreshManager // token刷新并发控制管理器
-	poolOnce       sync.Once
-	cacheOnce      sync.Once
-	refreshOnce    sync.Once
+	configProvider config.ConfigProvider      // 配置提供者
 )
 
-// initTokenPool 初始化token池
+// InitializeTokenSystem 程序启动时主动初始化整个token系统
+func InitializeTokenSystem() error {
+	// 1. 初始化配置提供者
+	configProvider = config.NewDefaultConfigProvider()
+
+	// 2. 初始化原子缓存
+	atomicCache = utils.NewAtomicTokenCache()
+	atomicCache.StartCleanupRoutine()
+
+	// 3. 初始化刷新管理器
+	refreshManager = utils.NewTokenRefreshManager()
+
+	// 4. 初始化token池
+	initTokenPool()
+	// 5. 验证token可用性
+	return InitializeTokenPoolAndValidate()
+}
+
+// initTokenPool 初始化token池 - 使用ConfigProvider
 func initTokenPool() {
-	authMethod := config.GetAuthMethod()
+	provider := getConfigProvider()
 
-	var refreshTokens string
-	switch authMethod {
-	case config.AuthMethodIdC:
-		refreshTokens = os.Getenv("IDC_REFRESH_TOKEN")
-		if refreshTokens == "" {
-			logger.Debug("IDC_REFRESH_TOKEN环境变量未设置，token池初始化失败")
-			return
-		}
-	case config.AuthMethodSocial:
-		refreshTokens = os.Getenv("AWS_REFRESHTOKEN")
-		if refreshTokens == "" {
-			logger.Debug("AWS_REFRESHTOKEN环境变量未设置，token池初始化失败")
-			return
-		}
+	// 使用ConfigProvider加载所有配置
+	configs, err := provider.LoadConfigs()
+	if err != nil {
+		logger.Error("加载认证配置失败", logger.Err(err))
+		return
 	}
 
-	tokens := strings.Split(refreshTokens, ",")
-	for i := range tokens {
-		tokens[i] = strings.TrimSpace(tokens[i])
+	if len(configs) == 0 {
+		logger.Debug("未找到任何有效的token配置")
+		return
 	}
 
-	// 过滤空token
-	var validTokens []string
-	for _, token := range tokens {
-		if token != "" {
-			validTokens = append(validTokens, token)
+	// 提取所有refresh token
+	var allValidTokens []string
+	for _, cfg := range configs {
+		if !cfg.Disabled {
+			allValidTokens = append(allValidTokens, cfg.RefreshToken)
 		}
 	}
 
-	if len(validTokens) > 0 {
-		tokenPool = types.NewTokenPool(validTokens, 3) // 最大重试3次
-		logger.Info("Token池初始化完成", logger.Int("token_count", len(validTokens)), logger.String("auth_method", string(authMethod)))
+	// 初始化token池
+	if len(allValidTokens) > 0 {
+		tokenPool = types.NewTokenPool(allValidTokens, 3) // 最大重试3次
+
+		logger.Info("Token池初始化完成",
+			logger.Int("total_token_count", len(allValidTokens)),
+			logger.Int("total_configs", len(configs)))
+	} else {
+		logger.Debug("未找到任何可用的token配置")
 	}
 }
+
+// 注意：Token解析和去重逻辑已移至auth/config包的ConfigProvider中
+
+// InitializeTokenPoolAndValidate 启动时主动初始化token池并验证可用性
+func InitializeTokenPoolAndValidate() error {
+	// 强制初始化token池
+	pool := getTokenPool()
+	if pool == nil {
+		return fmt.Errorf("token池初始化失败：未找到任何有效的token配置")
+	}
+
+	// 记录token池状态
+	tokenCount := pool.GetTokenCount()
+	if tokenCount == 0 {
+		return fmt.Errorf("token池为空：未找到任何可用的token")
+	}
+
+	logger.Info("Token池初始化成功",
+		logger.Int("token_count", tokenCount))
+
+	// 验证至少一个token的可用性
+	logger.Info("开始验证token可用性...")
+
+	// 尝试获取一个token并检查其状态
+	token, err := GetToken()
+	if err != nil {
+		logger.Warn("Token获取失败，可能需要刷新",
+			logger.Err(err))
+
+		// 尝试刷新token
+		logger.Info("尝试刷新token...")
+		refreshedToken, refreshErr := refreshTokenAndReturn()
+		if refreshErr != nil {
+			return fmt.Errorf("token刷新失败：%v", refreshErr)
+		}
+
+		// 使用刷新后的token进行验证
+		token = refreshedToken
+	}
+
+	// 🚀 关键改进：主动检查token使用限制状态
+	logger.Info("检查token使用限制...")
+	enhancedToken := CheckAndEnhanceToken(token)
+
+	if !enhancedToken.IsUsable() {
+		logger.Warn("当前token可用额度不足",
+			logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+			logger.String("token_preview", enhancedToken.TokenPreview),
+			logger.Int("available_count", enhancedToken.AvailableCount))
+
+		// 尝试获取其他可用token
+		logger.Info("尝试寻找其他可用token...")
+		if bestToken, err := GetBestTokenGlobally(); err == nil {
+			enhancedBest := CheckAndEnhanceToken(bestToken)
+			if enhancedBest.IsUsable() {
+				logger.Info("找到可用的备选token",
+					logger.String("user_email", enhancedBest.GetUserEmailDisplay()),
+					logger.String("token_preview", enhancedBest.TokenPreview),
+					logger.Int("available_count", enhancedBest.AvailableCount))
+			} else {
+				return fmt.Errorf("所有token都已无可用额度，请检查账户状态")
+			}
+		} else {
+			return fmt.Errorf("无法找到任何可用token：%v", err)
+		}
+	}
+
+	logger.Info("Token可用性验证完成",
+		logger.String("validated_user_email", enhancedToken.GetUserEmailDisplay()),
+		logger.String("validated_token_preview", enhancedToken.TokenPreview),
+		logger.Int("available_count", enhancedToken.AvailableCount),
+		logger.Bool("is_usable", enhancedToken.IsUsable()))
+
+	return nil
+}
+
+// 注意：JSON配置解析逻辑已移至auth/config包的ConfigProvider中
 
 // getTokenPool 获取token池实例
 func getTokenPool() *types.TokenPool {
-	poolOnce.Do(initTokenPool)
+	// 系统已在启动时初始化，直接返回实例
 	return tokenPool
 }
 
-// initTokenCache 初始化原子token缓存
-func initTokenCache() {
-	atomicCache = utils.NewAtomicTokenCache()
-	// 启动后台清理协程
-	atomicCache.StartCleanupRoutine()
-	logger.Info("原子Token缓存初始化完成", logger.String("type", "atomic_cache"))
-}
-
-// initRefreshManager 初始化token刷新管理器
-func initRefreshManager() {
-	refreshManager = utils.NewTokenRefreshManager()
-	logger.Info("Token刷新管理器初始化完成", logger.String("type", "refresh_manager"))
+// getConfigProvider 获取配置提供者实例
+func getConfigProvider() config.ConfigProvider {
+	// 系统已在启动时初始化，直接返回实例
+	return configProvider
 }
 
 // getAtomicCache 获取原子缓存实例
 func getAtomicCache() *utils.AtomicTokenCache {
-	cacheOnce.Do(initTokenCache)
+	// 系统已在启动时初始化，直接返回实例
 	return atomicCache
 }
 
 // getRefreshManager 获取刷新管理器实例
 func getRefreshManager() *utils.TokenRefreshManager {
-	refreshOnce.Do(initRefreshManager)
+	// 系统已在启动时初始化，直接返回实例
 	return refreshManager
 }
 
-// refreshTokenAndReturn 刷新token并返回TokenInfo，使用token池管理
+// refreshTokenAndReturn 刷新token并返回TokenInfo，使用token池进行轮换
 func refreshTokenAndReturn() (types.TokenInfo, error) {
 	pool := getTokenPool()
 	if pool == nil {
-		authMethod := config.GetAuthMethod()
-		switch authMethod {
-		case config.AuthMethodIdC:
-			logger.Error("IDC_REFRESH_TOKEN环境变量未设置")
-			return types.TokenInfo{}, fmt.Errorf("IDC_REFRESH_TOKEN环境变量未设置，请设置后重新启动服务")
-		case config.AuthMethodSocial:
-			logger.Error("AWS_REFRESHTOKEN环境变量未设置")
-			return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置，请设置后重新启动服务")
-		}
+		return types.TokenInfo{}, fmt.Errorf("token池未初始化")
 	}
 
-	// 尝试从token池获取可用token
+	// 使用token池进行轮换
 	for {
 		refreshToken, tokenIdx, hasToken := pool.GetNextToken()
 		if !hasToken {
@@ -138,25 +210,45 @@ func refreshTokenAndReturn() (types.TokenInfo, error) {
 
 // tryRefreshTokenByAuthMethod 根据认证方式刷新token
 func tryRefreshTokenByAuthMethod(refreshToken string) (types.TokenInfo, error) {
-	authMethod := config.GetAuthMethod()
+	// 从配置中找到对应的refresh token配置
+	provider := getConfigProvider()
+	configs, err := provider.LoadConfigs()
+	if err != nil {
+		return types.TokenInfo{}, fmt.Errorf("加载配置失败: %v", err)
+	}
 
-	switch authMethod {
+	// 找到匹配的配置
+	var targetConfig *config.AuthConfig
+	for _, cfg := range configs {
+		if cfg.RefreshToken == refreshToken {
+			targetConfig = &cfg
+			break
+		}
+	}
+
+	if targetConfig == nil {
+		return types.TokenInfo{}, fmt.Errorf("未找到refresh token对应的配置")
+	}
+
+	// 根据配置中的认证类型刷新token
+	switch targetConfig.AuthType {
 	case config.AuthMethodIdC:
-		return tryRefreshIdcToken(refreshToken)
+		return tryRefreshIdcTokenWithConfig(targetConfig)
 	case config.AuthMethodSocial:
 		return tryRefreshToken(refreshToken)
 	default:
-		return types.TokenInfo{}, fmt.Errorf("不支持的认证方式: %v", authMethod)
+		return types.TokenInfo{}, fmt.Errorf("不支持的认证方式: %v", targetConfig.AuthType)
 	}
 }
 
-// tryRefreshIdcToken 使用IdC认证方式刷新token
-func tryRefreshIdcToken(refreshToken string) (types.TokenInfo, error) {
-	clientId := os.Getenv("IDC_CLIENT_ID")
-	clientSecret := os.Getenv("IDC_CLIENT_SECRET")
+// tryRefreshIdcTokenWithConfig 使用IdC认证方式和配置刷新token
+func tryRefreshIdcTokenWithConfig(authConfig *config.AuthConfig) (types.TokenInfo, error) {
+	clientId := authConfig.ClientID
+	clientSecret := authConfig.ClientSecret
+	refreshToken := authConfig.RefreshToken
 
 	if clientId == "" || clientSecret == "" {
-		return types.TokenInfo{}, fmt.Errorf("IDC_CLIENT_ID和IDC_CLIENT_SECRET环境变量必须设置")
+		return types.TokenInfo{}, fmt.Errorf("IdC认证需要ClientID和ClientSecret")
 	}
 
 	// 准备刷新请求
@@ -172,10 +264,10 @@ func tryRefreshIdcToken(refreshToken string) (types.TokenInfo, error) {
 		return types.TokenInfo{}, fmt.Errorf("序列化IdC请求失败: %v", err)
 	}
 
-	logger.Debug("发送IdC token刷新请求", logger.String("url", config.IdcRefreshTokenURL))
+	logger.Debug("发送IdC token刷新请求", logger.String("url", globalConfig.IdcRefreshTokenURL))
 
 	// 发送刷新请求
-	req, err := http.NewRequest("POST", config.IdcRefreshTokenURL, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", globalConfig.IdcRefreshTokenURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("创建IdC请求失败: %v", err)
 	}
@@ -229,6 +321,26 @@ func tryRefreshIdcToken(refreshToken string) (types.TokenInfo, error) {
 		logger.String("expires_at", token.ExpiresAt.Format("2006-01-02 15:04:05")),
 		logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
 
+	// 🚀 关键改进：token刷新后立即检查使用限制
+	logger.Debug("开始检查IdC token使用限制")
+	enhancedToken := CheckAndEnhanceToken(token)
+
+	// 记录增强后的token状态
+	logger.Info("IdC Token使用状态检查完成",
+		logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+		logger.String("token_preview", enhancedToken.TokenPreview),
+		logger.Int("available_vibe_count", enhancedToken.GetAvailableVIBECount()),
+		logger.Bool("is_usable", enhancedToken.IsUsable()))
+
+	// 如果token不可用，记录警告但仍然返回（让上层决定如何处理）
+	if !enhancedToken.IsUsable() {
+		logger.Warn("IdC Token已无可用额度",
+			logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+			logger.String("token_preview", enhancedToken.TokenPreview),
+			logger.Int("available_count", enhancedToken.AvailableCount),
+			logger.String("recommendation", "考虑切换到其他token"))
+	}
+
 	return token, nil
 }
 
@@ -244,10 +356,10 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 		return types.TokenInfo{}, fmt.Errorf("序列化请求失败: %v", err)
 	}
 
-	logger.Debug("发送token刷新请求", logger.String("url", config.RefreshTokenURL))
+	logger.Debug("发送token刷新请求", logger.String("url", globalConfig.RefreshTokenURL))
 
 	// 发送刷新请求
-	req, err := http.NewRequest("POST", config.RefreshTokenURL, bytes.NewBuffer(reqBody))
+	req, err := http.NewRequest("POST", globalConfig.RefreshTokenURL, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return types.TokenInfo{}, fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -289,46 +401,41 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 		logger.String("expires_at", token.ExpiresAt.Format("2006-01-02 15:04:05")),
 		logger.Int("expires_in_seconds", refreshResp.ExpiresIn))
 
+	// 🚀 关键改进：token刷新后立即检查使用限制
+	logger.Debug("开始检查Social token使用限制")
+	enhancedToken := CheckAndEnhanceToken(token)
+
+	// 记录增强后的token状态
+	logger.Info("Social Token使用状态检查完成",
+		logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+		logger.String("token_preview", enhancedToken.TokenPreview),
+		logger.Int("available_vibe_count", enhancedToken.GetAvailableVIBECount()),
+		logger.Bool("is_usable", enhancedToken.IsUsable()))
+
+	// 如果token不可用，记录警告但仍然返回（让上层决定如何处理）
+	if !enhancedToken.IsUsable() {
+		logger.Warn("Social Token已无可用额度",
+			logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+			logger.String("token_preview", enhancedToken.TokenPreview),
+			logger.Int("available_count", enhancedToken.AvailableCount),
+			logger.String("recommendation", "考虑切换到其他token"))
+	}
+
 	// 返回兼容的TokenInfo（由于类型别名，这是相同的类型）
 	return token, nil
 }
 
-// GetToken 获取当前token，支持多token轮换使用
+// GetToken 获取当前token，使用token池进行轮换
 func GetToken() (types.TokenInfo, error) {
 	pool := getTokenPool()
 	cache := getAtomicCache()
 
-	// 如果没有token池，回退到原有逻辑
 	if pool == nil {
-		return getSingleToken(cache)
+		return types.TokenInfo{}, fmt.Errorf("token池未初始化，请检查token配置")
 	}
 
 	// 使用轮换策略获取token
 	return getRotatedToken(pool, cache)
-}
-
-// getSingleToken 单token模式（向后兼容）
-func getSingleToken(cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
-	// 尝试从热点缓存获取token（最快路径）
-	if cachedToken, exists := cache.GetHot(); exists {
-		logger.Debug("使用热点缓存的Access Token",
-			logger.String("access_token", cachedToken.AccessToken),
-			logger.String("expires_at", cachedToken.ExpiresAt.Format("2006-01-02 15:04:05")))
-		return *cachedToken, nil
-	}
-
-	// 缓存中没有或已过期，刷新token
-	logger.Debug("缓存中没有有效token，开始刷新")
-	tokenInfo, err := refreshTokenAndReturn()
-	if err != nil {
-		return types.TokenInfo{}, err
-	}
-
-	// 缓存新的token为热点缓存
-	cache.SetHot(0, &tokenInfo)
-	logger.Debug("新token已缓存为热点", logger.String("expires_at", tokenInfo.ExpiresAt.Format("2006-01-02 15:04:05")))
-
-	return tokenInfo, nil
 }
 
 // getRotatedToken 多token轮换模式
@@ -353,14 +460,10 @@ func getRotatedToken(pool *types.TokenPool, cache *utils.AtomicTokenCache) (type
 	// 刷新指定索引的token
 	tokenInfo, err := refreshTokenByIndex(pool, accessIdx)
 	if err != nil {
-		// 如果当前索引的token刷新失败，尝试其他可用的token
-		logger.Warn("当前索引token刷新失败，尝试其他token", logger.Int("failed_index", accessIdx), logger.Err(err))
-
-		// 标记当前token失败
+		// 如果当前索引的token刷新失败，标记为失败并返回错误
+		logger.Error("当前索引token刷新失败", logger.Int("failed_index", accessIdx), logger.Err(err))
 		pool.MarkTokenFailed(accessIdx)
-
-		// 尝试获取其他可用token
-		return fallbackToAvailableToken(pool, cache)
+		return types.TokenInfo{}, fmt.Errorf("token刷新失败: %v", err)
 	}
 
 	// 刷新成功，缓存新的token（设为热点）
@@ -391,59 +494,34 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 		return *tokenInfo, nil
 	}
 
-	// 获取对应索引的refresh token
-	authMethod := config.GetAuthMethod()
-	var tokens string
-
-	switch authMethod {
-	case config.AuthMethodIdC:
-		tokens = os.Getenv("IDC_REFRESH_TOKEN")
-		if tokens == "" {
-			refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("IDC_REFRESH_TOKEN环境变量未设置"))
-			return types.TokenInfo{}, fmt.Errorf("IDC_REFRESH_TOKEN环境变量未设置")
-		}
-	case config.AuthMethodSocial:
-		tokens = os.Getenv("AWS_REFRESHTOKEN")
-		if tokens == "" {
-			refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置"))
-			return types.TokenInfo{}, fmt.Errorf("AWS_REFRESHTOKEN环境变量未设置")
-		}
+	// 获取对应索引的refresh token配置
+	provider := getConfigProvider()
+	configs, err := provider.LoadConfigs()
+	if err != nil {
+		refreshMgr.CompleteRefresh(idx, nil, fmt.Errorf("加载配置失败: %v", err))
+		return types.TokenInfo{}, fmt.Errorf("加载配置失败: %v", err)
 	}
 
-	tokenList := strings.Split(tokens, ",")
-	if idx >= len(tokenList) {
-		err := fmt.Errorf("token索引超出范围: %d", idx)
+	if idx >= len(configs) {
+		err := fmt.Errorf("token索引超出配置范围: %d", idx)
 		refreshMgr.CompleteRefresh(idx, nil, err)
 		return types.TokenInfo{}, err
 	}
 
-	refreshToken := strings.TrimSpace(tokenList[idx])
-	if refreshToken == "" {
-		err := fmt.Errorf("索引%d的refresh token为空", idx)
+	targetConfig := configs[idx]
+	if targetConfig.Disabled {
+		err := fmt.Errorf("索引%d的token配置已禁用", idx)
 		refreshMgr.CompleteRefresh(idx, nil, err)
 		return types.TokenInfo{}, err
 	}
 
 	// 尝试刷新指定的token
-	tokenInfo, err := tryRefreshTokenByAuthMethod(refreshToken)
+	tokenInfo, err := tryRefreshTokenByAuthMethod(targetConfig.RefreshToken)
 
 	// 通知刷新管理器完成状态
 	refreshMgr.CompleteRefresh(idx, &tokenInfo, err)
 
 	return tokenInfo, err
-}
-
-// fallbackToAvailableToken 回退到其他可用token
-func fallbackToAvailableToken(_ *types.TokenPool, cache *utils.AtomicTokenCache) (types.TokenInfo, error) {
-	// 尝试使用refreshTokenAndReturn获取任何可用的token
-	tokenInfo, err := refreshTokenAndReturn()
-	if err != nil {
-		return types.TokenInfo{}, fmt.Errorf("所有token都无法使用: %v", err)
-	}
-
-	// 缓存为热点token（索引为-1表示备用）
-	cache.SetHot(-1, &tokenInfo)
-	return tokenInfo, nil
 }
 
 // ClearTokenCache 清除token缓存（用于强制刷新）

@@ -22,7 +22,6 @@ import (
 
 // StartServer 启动HTTP代理服务器
 func StartServer(port string, authToken string) {
-
 	// 设置 gin 模式
 	ginMode := os.Getenv("GIN_MODE")
 	if ginMode == "" {
