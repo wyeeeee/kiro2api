@@ -83,6 +83,9 @@ func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReq
 		return nil, fmt.Errorf("CodeWhisperer API error")
 	}
 
+	// AWS请求成功，扣减VIBE使用次数
+	auth.DecrementVIBECount(tokenInfo.AccessToken)
+
 	return resp, nil
 }
 

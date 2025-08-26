@@ -170,9 +170,9 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.Too
 }
 
 // handleStreamRequest 处理流式请求
-func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
+func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
 	sender := &AnthropicStreamSender{}
-	handleGenericStreamRequest(c, anthropicReq, tokenInfo, sender, createAnthropicStreamEvents)
+	handleGenericStreamRequest(c, anthropicReq, token, sender, createAnthropicStreamEvents)
 }
 
 // isDebugMode 检查是否启用调试模式
@@ -196,7 +196,7 @@ func isDebugMode() bool {
 }
 
 // handleGenericStreamRequest 通用流式请求处理
-func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
+func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
 	// 创建token计算器
 	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
@@ -224,7 +224,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 	messageId := fmt.Sprintf("msg_%s", time.Now().Format("20060102150405"))
 
-	resp, err := execCWRequest(c, anthropicReq, tokenInfo, true)
+	resp, err := execCWRequest(c, anthropicReq, token.TokenInfo, true)
 	if err != nil {
 		_ = sender.SendError(c, "构建请求失败", err)
 		return
@@ -818,7 +818,7 @@ func containsToolResult(req types.AnthropicRequest) bool {
 }
 
 // handleNonStreamRequest 处理非流式请求
-func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
+func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
 	// 创建token计算器
 	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
@@ -836,7 +836,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	// 创建请求级别的工具去重管理器（与流式处理保持一致）
 	dedupManager := utils.NewToolDedupManager()
 
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, tokenInfo, false)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, token.TokenInfo, false)
 	if err != nil {
 		return
 	}

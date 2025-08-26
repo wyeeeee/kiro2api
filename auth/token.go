@@ -10,6 +10,7 @@ import (
 	"kiro2api/types"
 	"kiro2api/utils"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -529,4 +530,56 @@ func ClearTokenCache() {
 	cache := getAtomicCache()
 	cache.Clear()
 	logger.Info("原子Token缓存已清除")
+}
+
+var (
+	enhancedTokenCache      = make(map[string]*types.TokenWithUsage)
+	enhancedTokenCacheMutex = &sync.RWMutex{}
+)
+
+// GetEnhancedToken gets a token and enhances it with usage information.
+func GetEnhancedToken() (*types.TokenWithUsage, error) {
+	tokenInfo, err := GetToken()
+	if err != nil {
+		return nil, err
+	}
+
+	enhancedTokenCacheMutex.RLock()
+	cachedToken, ok := enhancedTokenCache[tokenInfo.AccessToken]
+	enhancedTokenCacheMutex.RUnlock()
+
+	if ok && !cachedToken.NeedsUsageRefresh() {
+		logger.Debug("Using cached enhanced token", logger.String("token_preview", cachedToken.TokenPreview))
+		return cachedToken, nil
+	}
+
+	logger.Debug("Enhanced token not in cache or needs refresh, checking usage", logger.String("token_preview", tokenInfo.AccessToken[:20]+"...") )
+	enhancedToken := CheckAndEnhanceToken(tokenInfo)
+
+	enhancedTokenCacheMutex.Lock()
+	enhancedTokenCache[enhancedToken.AccessToken] = &enhancedToken
+	enhancedTokenCacheMutex.Unlock()
+
+	return &enhancedToken, nil
+}
+
+// DecrementVIBECount decrements the VIBE count for a given token.
+func DecrementVIBECount(accessToken string) {
+	enhancedTokenCacheMutex.Lock()
+	defer enhancedTokenCacheMutex.Unlock()
+
+	if enhancedToken, ok := enhancedTokenCache[accessToken]; ok {
+		if enhancedToken.UsageLimits != nil {
+			for i, breakdown := range enhancedToken.UsageLimits.UsageBreakdownList {
+				if breakdown.ResourceType == "VIBE" {
+					// Decrement the available count by incrementing the current usage
+					enhancedToken.UsageLimits.UsageBreakdownList[i].CurrentUsage++
+					logger.Info("VIBE usage incremented",
+						logger.String("token_preview", enhancedToken.TokenPreview),
+						logger.Int("new_usage", enhancedToken.UsageLimits.UsageBreakdownList[i].CurrentUsage))
+					return
+				}
+			}
+		}
+	}
 }

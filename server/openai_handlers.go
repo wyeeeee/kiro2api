@@ -15,8 +15,8 @@ import (
 )
 
 // handleOpenAINonStreamRequest 处理OpenAI非流式请求
-func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, tokenInfo, false)
+func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, token.TokenInfo, false)
 	if err != nil {
 		return
 	}
@@ -89,7 +89,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 }
 
 // handleOpenAIStreamRequest 处理OpenAI流式请求
-func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo) {
+func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -97,7 +97,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 
 	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
 
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, tokenInfo, true)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, token.TokenInfo, true)
 	if err != nil {
 		return
 	}
