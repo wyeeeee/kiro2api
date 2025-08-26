@@ -38,6 +38,15 @@ func StartServer(port string, authToken string) {
 	// 只对 /v1 开头的端点进行认证
 	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
 
+	// 静态资源服务 - 前后端完全分离
+	r.Static("/static", "./static")
+	r.GET("/", func(c *gin.Context) {
+		c.File("./static/index.html")
+	})
+	
+	// API端点 - 纯数据服务
+	r.GET("/api/tokens", handleTokenPoolAPI)
+
 	// GET /v1/models 端点
 	r.GET("/v1/models", func(c *gin.Context) {
 		// 构建模型列表
@@ -265,6 +274,9 @@ func StartServer(port string, authToken string) {
 		logger.String("auth_token", "***"))
 	logger.Info("AuthToken 验证已启用")
 	logger.Info("可用端点:")
+	logger.Info("  GET  /                    - 重定向到静态Dashboard")
+	logger.Info("  GET  /static/*            - 静态资源服务")
+	logger.Info("  GET  /api/tokens          - Token池状态API")
 	logger.Info("  GET  /v1/models           - 模型列表")
 	logger.Info("  POST /v1/messages         - Anthropic API代理")
 	logger.Info("  POST /v1/chat/completions - OpenAI API代理")

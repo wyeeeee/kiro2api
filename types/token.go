@@ -205,3 +205,9 @@ func (tp *TokenPool) GetStats() map[string]any {
 
 	return stats
 }
+
+// TokenWithAuthType 带认证类型的Token信息 (用于Dashboard API)
+type TokenWithAuthType struct {
+	TokenInfo
+	AuthType string `json:"auth_type"`
+}

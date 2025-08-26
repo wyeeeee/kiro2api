@@ -525,6 +525,52 @@ func refreshTokenByIndex(pool *types.TokenPool, idx int) (types.TokenInfo, error
 	return tokenInfo, err
 }
 
+// GetTokenPool 获取token池实例（公开方法，用于Dashboard）
+func GetTokenPool() *types.TokenPool {
+	return getTokenPool()
+}
+
+// RefreshTokenByIndex 根据索引刷新并获取token（公开方法，用于Dashboard）
+func RefreshTokenByIndex(index int) (types.TokenInfo, error) {
+	pool := getTokenPool()
+	if pool == nil {
+		return types.TokenInfo{}, fmt.Errorf("token池未初始化")
+	}
+	
+	return refreshTokenByIndex(pool, index)
+}
+
+// RefreshTokenByIndexWithAuthType 根据索引刷新并获取带认证类型的token（用于Dashboard）
+func RefreshTokenByIndexWithAuthType(index int) (types.TokenWithAuthType, error) {
+	pool := getTokenPool()
+	if pool == nil {
+		return types.TokenWithAuthType{}, fmt.Errorf("token池未初始化")
+	}
+	
+	// 获取配置来确定认证类型
+	provider := getConfigProvider()
+	configs, err := provider.LoadConfigs()
+	if err != nil {
+		return types.TokenWithAuthType{}, fmt.Errorf("加载配置失败: %v", err)
+	}
+	
+	if index >= len(configs) {
+		return types.TokenWithAuthType{}, fmt.Errorf("token索引超出配置范围: %d", index)
+	}
+	
+	// 刷新token
+	tokenInfo, err := refreshTokenByIndex(pool, index)
+	if err != nil {
+		return types.TokenWithAuthType{}, err
+	}
+	
+	// 返回带认证类型的token
+	return types.TokenWithAuthType{
+		TokenInfo: tokenInfo,
+		AuthType:  configs[index].AuthType,
+	}, nil
+}
+
 // ClearTokenCache 清除token缓存（用于强制刷新）
 func ClearTokenCache() {
 	cache := getAtomicCache()
