@@ -7,12 +7,15 @@
 ## 功能特性
 
 - **双API代理**：同时支持 Anthropic Claude API 和 OpenAI ChatCompletion API 格式
-- **多认证支持**：支持 Social（默认）和 IdC 两种认证方式
+- **企业级Token管理**：智能选择策略、原子缓存、并发控制、使用限制监控
+- **多认证支持**：支持 Social（默认）和 IdC 两种认证方式，JSON配置 + 传统环境变量兼容
+- **智能选择策略**：最优使用和均衡使用策略，基于使用量的智能选择
+- **原子缓存系统**：热点token的无锁访问，冷热分离二级缓存
+- **实时使用监控**：VIBE资源使用量监控，预警和自动切换
 - **工具调用支持**：完整的Anthropic工具使用格式，基于 `tool_use_id` 的精确去重逻辑
 - **多模态处理**：支持图片输入，自动格式转换，支持PNG、JPEG、GIF、WebP等格式
 - **实时流式响应**：自定义 EventStream 解析器，零延迟流式传输
 - **智能请求分析**：自动分析请求复杂度，动态调整超时时间
-- **Token池管理**：多token轮换使用，故障转移和负载均衡
 - **高性能优化**：对象池模式、原子操作缓存、并发优化
 
 ## 技术栈
@@ -35,7 +38,7 @@ go build -o kiro2api main.go
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，设置 AWS_REFRESHTOKEN
+# 编辑 .env 文件，设置 KIRO_AUTH_TOKEN 或 AWS_REFRESHTOKEN
 
 # 启动服务器
 ./kiro2api
@@ -131,34 +134,67 @@ curl -N -X POST http://localhost:8080/v1/messages \
 
 ## 环境变量配置
 
-### 必需配置
+### Token配置（两种方式，选择其一）
+
+#### 方式一：JSON配置（推荐）
+
+```bash
+# 新的JSON格式配置，支持多认证方式和多token
+KIRO_AUTH_TOKEN='[
+  {
+    "Auth": "Social",
+    "RefreshToken": "your_social_refresh_token_here"
+  },
+  {
+    "Auth": "IdC",
+    "RefreshToken": "your_idc_refresh_token_here",
+    "ClientId": "your_idc_client_id",
+    "ClientSecret": "your_idc_client_secret"
+  }
+]'
+
+KIRO_CLIENT_TOKEN=123456   # API认证密钥
+PORT=8080                  # 服务端口
+```
+
+#### 方式二：传统环境变量（向后兼容）
 
 ```bash
 # Social 认证方式（默认）
-AWS_REFRESHTOKEN=your_refresh_token_here  # 必需设置
-KIRO_CLIENT_TOKEN=123456                  # API认证密钥，默认: 123456
-PORT=8080                                 # 服务端口，默认: 8080
+AWS_REFRESHTOKEN=token1,token2,token3  # 支持逗号分隔多token
+KIRO_CLIENT_TOKEN=123456               # API认证密钥
+PORT=8080                              # 服务端口
 
 # IdC 认证方式（可选）
 AUTH_METHOD=idc
+IDC_REFRESH_TOKEN=idc_token1,idc_token2  # 支持逗号分隔多token
 IDC_CLIENT_ID=your_client_id
 IDC_CLIENT_SECRET=your_client_secret
-IDC_REFRESH_TOKEN=your_idc_refresh_token
 ```
 
 ### 可选配置
 
 ```bash
+# Token管理配置
+USAGE_CHECK_INTERVAL=5m         # 使用状态检查间隔
+TOKEN_USAGE_THRESHOLD=5         # 可用次数预警阈值
+TOKEN_SELECTION_STRATEGY=balanced  # optimal(最优) 或 balanced(均衡)
+
+# 缓存性能配置
+CACHE_CLEANUP_INTERVAL=5m       # 缓存清理间隔
+TOKEN_CACHE_HOT_THRESHOLD=10    # 热点缓存阈值
+TOKEN_REFRESH_TIMEOUT=30s       # Token刷新超时时间
+
 # 日志配置
-LOG_LEVEL=info                            # 日志级别: debug,info,warn,error
-LOG_FORMAT=json                           # 日志格式: text,json
-LOG_FILE=/var/log/kiro2api.log            # 日志文件路径（可选）
-LOG_CONSOLE=true                          # 控制台输出开关
+LOG_LEVEL=info                  # 日志级别: debug,info,warn,error
+LOG_FORMAT=json                 # 日志格式: text,json
+LOG_FILE=/var/log/kiro2api.log  # 日志文件路径（可选）
+LOG_CONSOLE=true                # 控制台输出开关
 
 # 性能调优
-REQUEST_TIMEOUT_MINUTES=15                # 复杂请求超时（分钟）
-SIMPLE_REQUEST_TIMEOUT_MINUTES=2          # 简单请求超时（分钟）
-GIN_MODE=release                          # Gin模式：debug,release,test
+REQUEST_TIMEOUT_MINUTES=15      # 复杂请求超时（分钟）
+SIMPLE_REQUEST_TIMEOUT_MINUTES=2 # 简单请求超时（分钟）
+GIN_MODE=release                # Gin模式：debug,release,test
 ```
 
 ## 开发命令
@@ -184,13 +220,27 @@ go build -ldflags="-s -w" -o kiro2api main.go
 
 ### 常见问题
 
-#### 1. Token刷新失败
+#### 1. Token配置和认证问题
 ```bash
-# 错误信息: "AWS_REFRESHTOKEN环境变量未设置"
-# 解决方案:
-export AWS_REFRESHTOKEN="your_refresh_token_here"
-# 或在.env文件中设置 AWS_REFRESHTOKEN=your_refresh_token_here
+# JSON配置方式检查
+echo $KIRO_AUTH_TOKEN
+
+# 传统环境变量检查（兼容模式）
+echo $AWS_REFRESHTOKEN
+echo $IDC_REFRESH_TOKEN
+echo $IDC_CLIENT_ID
+
+# 启用调试日志查看token管理详情
+LOG_LEVEL=debug ./kiro2api
 ```
+
+**常见错误解决：**
+- `JSON配置格式错误`: 验证KIRO_AUTH_TOKEN的JSON格式是否正确
+- `认证方式不匹配`: 确认Auth字段为"Social"或"IdC"
+- `IdC认证缺少参数`: IdC方式需要ClientId和ClientSecret
+- `Token已过期`: 查看日志中的刷新尝试和失败信息
+- `使用限制达到`: 检查VIBE资源使用量和限制
+- `并发刷新冲突`: 查看刷新管理器的并发控制日志
 
 #### 2. 流式响应中断
 ```bash
