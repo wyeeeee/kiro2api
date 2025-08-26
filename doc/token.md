@@ -165,7 +165,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
 }
 ```
 #获取用户限额
-请求：curl 'https://codewhisperer.us-east-1.amazonaws.com/getUsageLimits?isEmailRequired=true&origin=AI_EDITOR&resourceType=AGENTIC_REQUEST' -H 'x-amz-user-agent: aws-sdk-js/1.0.0 KiroIDE-0.2.13-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1' -H 'user-agent: aws-sdk-js/1.0.0 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#20.16.0 api/codewhispererruntime#1.0.0 m/E KiroIDE-0.2.13-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1' -H 'host: codewhisperer.us-east-1.amazonaws.com' -H 'amz-sdk-invocation-id: 54d2396a-270b-4f11-b9e7-e19ef6d63ab5' -H 'amz-sdk-request: attempt=1; max=1' -H 'Authorization: Bearer aoaAAAAAGisIjs3nwB59rPmLBGXroHiLknGSsXp1BOe4jypG_9NfFfl9d8ZgkO7VDLUBSP-oSswANWwOcyaUwQ-r4Bkc0:MGYCMQDM4M//614CWNioCxOXK4VQYTNGZHJPBX/hVetI3MiERYkAdUIXD7LN01aqTV3kSh4CMQCTuRl3rMz4gLbHZuZnpUco54wYnm9UCVF2wQCoqtxQuVoe+zr5RpDONrykh5X/mBU' -H 'Connection: close'
+请求：curl 'https://codewhisperer.us-east-1.amazonaws.com/getUsageLimits?isEmailRequired=true&origin=AI_EDITOR&resourceType=AGENTIC_REQUEST' -H 'x-amz-user-agent: aws-sdk-js/1.0.0 KiroIDE-0.2.13-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1' -H 'user-agent: aws-sdk-js/1.0.0 ua/2.1 os/darwin#24.6.0 lang/js md/nodejs#20.16.0 api/codewhispererruntime#1.0.0 m/E KiroIDE-0.2.13-66c23a8c5d15afabec89ef9954ef52a119f10d369df04d548fc6c1eac694b0d1' -H 'host: codewhisperer.us-east-1.amazonaws.com' -H 'amz-sdk-invocation-id: 54d2396a-270b-4f11-b9e7-e19ef6d63ab5' -H 'amz-sdk-request: attempt=1; max=1' -H 'Authorization: Bearer Token' -H 'Connection: close'
 返回：
 {
   "limits": [
@@ -209,7 +209,7 @@ func tryRefreshToken(refreshToken string) (types.TokenInfo, error) {
     }
   ],
   "userInfo": {
-    "email": "caidaolihz888@sun.edu.pl",
+    "email": "xxx@mail.com",
     "userId": "d-9067642ac7.34488428-c081-7036-d4bb-52f6cfcdf729"
   },
   "daysUntilReset": 0,
