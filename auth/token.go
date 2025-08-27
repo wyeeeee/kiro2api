@@ -95,58 +95,104 @@ func InitializeTokenPoolAndValidate() error {
 	logger.Info("Token池初始化成功",
 		logger.Int("token_count", tokenCount))
 
-	// 验证至少一个token的可用性
-	logger.Info("开始验证token可用性...")
+	// 🚀 新功能：检查并缓存所有token
+	logger.Info("开始检查并缓存所有token...")
 
-	// 尝试获取一个token并检查其状态
-	token, err := GetToken()
+	// 获取配置提供者和原子缓存
+	provider := getConfigProvider()
+	atomicCache := getAtomicCache()
+
+	configs, err := provider.LoadConfigs()
 	if err != nil {
-		logger.Warn("Token获取失败，可能需要刷新",
-			logger.Err(err))
+		return fmt.Errorf("加载配置失败: %v", err)
+	}
 
-		// 尝试刷新token
-		logger.Info("尝试刷新token...")
-		refreshedToken, refreshErr := refreshTokenAndReturn()
+	var usableTokens int
+	var totalErrors []string
+
+	// 遍历所有token索引进行预热
+	for i := 0; i < tokenCount; i++ {
+		logger.Debug("检查token", logger.Int("token_index", i))
+
+		// 检查配置是否存在
+		if i >= len(configs) {
+			errorMsg := fmt.Sprintf("token索引%d超出配置范围", i)
+			totalErrors = append(totalErrors, errorMsg)
+			logger.Warn(errorMsg, logger.Int("configs_count", len(configs)))
+			continue
+		}
+
+		config := configs[i]
+
+		// 跳过禁用的token
+		if config.Disabled {
+			logger.Info("跳过已禁用的token", logger.Int("token_index", i), logger.String("auth_type", config.AuthType))
+			continue
+		}
+
+		// 尝试刷新token并检查使用情况
+		tokenInfo, refreshErr := refreshTokenByIndex(pool, i)
 		if refreshErr != nil {
-			return fmt.Errorf("token刷新失败：%v", refreshErr)
+			errorMsg := fmt.Sprintf("token索引%d刷新失败: %v", i, refreshErr)
+			totalErrors = append(totalErrors, errorMsg)
+			logger.Warn("Token刷新失败",
+				logger.Int("token_index", i),
+				logger.String("auth_type", config.AuthType),
+				logger.Err(refreshErr))
+			continue
 		}
 
-		// 使用刷新后的token进行验证
-		token = refreshedToken
-	}
+		// 将token放入原子缓存
+		atomicCache.Set(i, &tokenInfo)
+		logger.Debug("Token已加入原子缓存",
+			logger.Int("token_index", i),
+			logger.String("expires_at", tokenInfo.ExpiresAt.Format("2006-01-02 15:04:05")))
 
-	// 🚀 关键改进：主动检查token使用限制状态
-	logger.Info("检查token使用限制...")
-	enhancedToken := CheckAndEnhanceToken(token)
+		// 检查并增强token，同时放入增强token缓存
+		enhancedToken := CheckAndEnhanceToken(tokenInfo)
 
-	if !enhancedToken.IsUsable() {
-		logger.Warn("当前token可用额度不足",
-			logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
-			logger.String("token_preview", enhancedToken.TokenPreview),
-			logger.Int("available_count", enhancedToken.AvailableCount))
+		// 加入增强token缓存
+		enhancedTokenCacheMutex.Lock()
+		enhancedTokenCache[tokenInfo.AccessToken] = &enhancedToken
+		enhancedTokenCacheMutex.Unlock()
 
-		// 尝试获取其他可用token
-		logger.Info("尝试寻找其他可用token...")
-		if bestToken, err := GetBestTokenGlobally(); err == nil {
-			enhancedBest := CheckAndEnhanceToken(bestToken)
-			if enhancedBest.IsUsable() {
-				logger.Info("找到可用的备选token",
-					logger.String("user_email", enhancedBest.GetUserEmailDisplay()),
-					logger.String("token_preview", enhancedBest.TokenPreview),
-					logger.Int("available_count", enhancedBest.AvailableCount))
-			} else {
-				return fmt.Errorf("所有token都已无可用额度，请检查账户状态")
-			}
+		if enhancedToken.IsUsable() {
+			usableTokens++
+			logger.Info("Token预热完成",
+				logger.Int("token_index", i),
+				logger.String("auth_type", config.AuthType),
+				logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+				logger.String("token_preview", enhancedToken.TokenPreview),
+				logger.Int("available_count", enhancedToken.AvailableCount))
 		} else {
-			return fmt.Errorf("无法找到任何可用token：%v", err)
+			logger.Warn("Token可用额度不足",
+				logger.Int("token_index", i),
+				logger.String("auth_type", config.AuthType),
+				logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
+				logger.Int("available_count", enhancedToken.AvailableCount))
 		}
 	}
 
-	logger.Info("Token可用性验证完成",
-		logger.String("validated_user_email", enhancedToken.GetUserEmailDisplay()),
-		logger.String("validated_token_preview", enhancedToken.TokenPreview),
-		logger.Int("available_count", enhancedToken.AvailableCount),
-		logger.Bool("is_usable", enhancedToken.IsUsable()))
+	// 记录预热结果
+	logger.Info("Token池预热完成",
+		logger.Int("total_tokens", tokenCount),
+		logger.Int("usable_tokens", usableTokens),
+		logger.Int("errors", len(totalErrors)))
+
+	// 如果没有可用的token，记录详细错误信息
+	if usableTokens == 0 {
+		logger.Error("没有找到任何可用的token")
+		for _, errMsg := range totalErrors {
+			logger.Error("Token错误", logger.String("error", errMsg))
+		}
+		return fmt.Errorf("所有token都不可用，共%d个错误", len(totalErrors))
+	}
+
+	// 获取缓存统计信息
+	cacheStats := atomicCache.GetStats()
+	logger.Info("缓存统计",
+		logger.Any("atomic_cache_stats", cacheStats),
+		logger.Int("enhanced_cache_count", len(enhancedTokenCache)))
 
 	return nil
 }
@@ -536,7 +582,7 @@ func RefreshTokenByIndex(index int) (types.TokenInfo, error) {
 	if pool == nil {
 		return types.TokenInfo{}, fmt.Errorf("token池未初始化")
 	}
-	
+
 	return refreshTokenByIndex(pool, index)
 }
 
@@ -546,24 +592,24 @@ func RefreshTokenByIndexWithAuthType(index int) (types.TokenWithAuthType, error)
 	if pool == nil {
 		return types.TokenWithAuthType{}, fmt.Errorf("token池未初始化")
 	}
-	
+
 	// 获取配置来确定认证类型
 	provider := getConfigProvider()
 	configs, err := provider.LoadConfigs()
 	if err != nil {
 		return types.TokenWithAuthType{}, fmt.Errorf("加载配置失败: %v", err)
 	}
-	
+
 	if index >= len(configs) {
 		return types.TokenWithAuthType{}, fmt.Errorf("token索引超出配置范围: %d", index)
 	}
-	
+
 	// 刷新token
 	tokenInfo, err := refreshTokenByIndex(pool, index)
 	if err != nil {
 		return types.TokenWithAuthType{}, err
 	}
-	
+
 	// 返回带认证类型的token
 	return types.TokenWithAuthType{
 		TokenInfo: tokenInfo,
@@ -599,7 +645,7 @@ func GetEnhancedToken() (*types.TokenWithUsage, error) {
 		return cachedToken, nil
 	}
 
-	logger.Debug("Enhanced token not in cache or needs refresh, checking usage", logger.String("token_preview", tokenInfo.AccessToken[:20]+"...") )
+	logger.Debug("Enhanced token not in cache or needs refresh, checking usage", logger.String("token_preview", tokenInfo.AccessToken[:20]+"..."))
 	enhancedToken := CheckAndEnhanceToken(tokenInfo)
 
 	enhancedTokenCacheMutex.Lock()
@@ -628,4 +674,9 @@ func DecrementVIBECount(accessToken string) {
 			}
 		}
 	}
+}
+
+// GetAtomicCache 获取原子缓存实例（公开方法，用于Dashboard）
+func GetAtomicCache() *utils.AtomicTokenCache {
+	return getAtomicCache()
 }
