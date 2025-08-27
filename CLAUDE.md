@@ -25,7 +25,10 @@ go build -o kiro2api main.go
 
 # 测试
 go test ./...                # 运行所有测试
-go test ./parser -v          # 运行parser包测试(详细输出)
+go test ./parser -v          # 运行parser包测试(详细输出)  
+go test ./auth -v            # 运行auth包测试(token管理)
+go test ./utils -v           # 运行utils包测试(工具函数)
+go test ./converter -v       # 运行converter包测试(格式转换)
 go test ./... -bench=. -benchmem  # 基准测试
 
 # 代码质量检查
@@ -39,14 +42,19 @@ GIN_MODE=release ./kiro2api               # 生产模式
 
 # 构建
 go build -ldflags="-s -w" -o kiro2api main.go  # 生产构建(压缩)
+
+# Docker部署
+docker build -t kiro2api .   # 构建镜像
+docker-compose up -d         # 启动服务
 ```
 
 ## 技术栈
 
-- **框架**: gin-gonic/gin v1.10.1  
-- **JSON**: bytedance/sonic v1.14.0
-- **配置**: github.com/joho/godotenv v1.5.1 (直接依赖)
+- **Web框架**: gin-gonic/gin v1.10.1  
+- **JSON处理**: bytedance/sonic v1.14.0 (高性能JSON解析)
+- **配置管理**: github.com/joho/godotenv v1.5.1
 - **Go版本**: 1.23.3
+- **容器化**: Docker + Docker Compose 支持
 
 ## 环境变量配置
 
