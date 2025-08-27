@@ -63,8 +63,19 @@ docker-compose up -d         # 启动服务
 cp .env.example .env
 
 # === Token管理配置（推荐使用JSON格式） ===
-# 新的JSON格式配置方式，支持多认证方式和多token
-KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"},{"auth":"IdC","refreshToken":"xxx","clientId":"xxx","clientSecret":"xxx"}]'
+# 新的JSON格式配置方式，支持多认证方式和多token。
+#
+# 示例 1: 单个 Social 认证
+# KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"your_social_refresh_token"}]'
+#
+# 示例 2: 混合认证 (Social + IdC)
+# KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"social_token"},{"auth":"IdC","refreshToken":"idc_token","clientId":"idc_client","clientSecret":"idc_secret"}]'
+#
+# 示例 3: 多个 Social 认证 (用于负载均衡)
+# KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"token1"},{"auth":"Social","refreshToken":"token2"}]'
+#
+# 默认配置结构:
+KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"},{"auth":"IdC","refreshToken":"xxx","clientId":"xxx","clientSecret":"xxx"}]'''' 
 
 # === 兼容传统环境变量（向后兼容） ===
 # AWS_REFRESHTOKEN=token1,token2,token3    # 支持逗号分隔多token

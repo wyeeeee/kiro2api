@@ -223,38 +223,6 @@ func getRefreshManager() *utils.TokenRefreshManager {
 	return refreshManager
 }
 
-// refreshTokenAndReturn 刷新token并返回TokenInfo，使用token池进行轮换
-func refreshTokenAndReturn() (types.TokenInfo, error) {
-	pool := getTokenPool()
-	if pool == nil {
-		return types.TokenInfo{}, fmt.Errorf("token池未初始化")
-	}
-
-	// 使用token池进行轮换
-	for {
-		refreshToken, tokenIdx, hasToken := pool.GetNextToken()
-		if !hasToken {
-			logger.Error("所有refresh token都已达到最大重试次数")
-			return types.TokenInfo{}, fmt.Errorf("所有refresh token都已达到最大重试次数")
-		}
-
-		logger.Debug("尝试使用refresh token", logger.Int("token_index", tokenIdx+1))
-
-		// 根据认证方式尝试刷新token
-		tokenInfo, err := tryRefreshTokenByAuthMethod(refreshToken)
-		if err != nil {
-			logger.Error("Token刷新失败", logger.Err(err), logger.Int("token_index", tokenIdx+1))
-			pool.MarkTokenFailed(tokenIdx)
-			continue
-		}
-
-		// 刷新成功，重置失败计数
-		pool.MarkTokenSuccess(tokenIdx)
-		logger.Info("Token刷新成功", logger.Int("token_index", tokenIdx+1))
-		return tokenInfo, nil
-	}
-}
-
 // tryRefreshTokenByAuthMethod 根据认证方式刷新token
 func tryRefreshTokenByAuthMethod(refreshToken string) (types.TokenInfo, error) {
 	// 从配置中找到对应的refresh token配置

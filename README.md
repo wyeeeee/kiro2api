@@ -138,8 +138,134 @@ curl -N -X POST http://localhost:8080/v1/messages \
 
 #### 方式一：JSON配置（推荐）
 
-> 📖 **详细配置说明**: 更多配置示例和说明请参考 [`config-examples/kiro_auth_token_examples.md`](./config-examples/kiro_auth_token_examples.md)  
-> 🚀 **快速开始**: 可复制的配置模板请参考 [`config-examples/quick-start-templates.md`](./config-examples/quick-start-templates.md)
+<details>
+<summary>点击展开/折叠详细的 JSON 配置示例、模板和迁移指南</summary>
+
+### KIRO_AUTH_TOKEN 快速配置模板
+
+#### 基础配置（复制使用）
+
+**1. 单个 Social 认证**
+```bash
+KIRO_AUTH_TOKEN='[
+  {
+    "auth": "Social",
+    "refreshToken": "YOUR_SOCIAL_REFRESH_TOKEN"
+  }
+]'
+KIRO_CLIENT_TOKEN=123456
+PORT=8080
+```
+
+**2. 单个 IdC 认证**
+```bash
+KIRO_AUTH_TOKEN='[
+  {
+    "auth": "IdC",
+    "refreshToken": "YOUR_IDC_REFRESH_TOKEN",
+    "clientId": "YOUR_IDC_CLIENT_ID",
+    "clientSecret": "YOUR_IDC_CLIENT_SECRET"
+  }
+]'
+KIRO_CLIENT_TOKEN=123456
+PORT=8080
+```
+
+**3. 多个 Social 认证（负载均衡）**
+```bash
+KIRO_AUTH_TOKEN='[
+  {
+    "auth": "Social",
+    "refreshToken": "SOCIAL_TOKEN_1"
+  },
+  {
+    "auth": "Social",
+    "refreshToken": "SOCIAL_TOKEN_2"
+  },
+  {
+    "auth": "Social",
+    "refreshToken": "SOCIAL_TOKEN_3"
+  }
+]'
+KIRO_CLIENT_TOKEN=123456
+PORT=8080
+TOKEN_SELECTION_STRATEGY=balanced
+```
+
+**4. 混合认证（生产环境推荐）**
+```bash
+KIRO_AUTH_TOKEN='[
+  {
+    "auth": "Social",
+    "refreshToken": "SOCIAL_TOKEN_PRIMARY"
+  },
+  {
+    "auth": "Social",
+    "refreshToken": "SOCIAL_TOKEN_BACKUP"
+  },
+  {
+    "auth": "IdC",
+    "refreshToken": "IDC_TOKEN_ENTERPRISE",
+    "clientId": "IDC_CLIENT_ID",
+    "clientSecret": "IDC_CLIENT_SECRET"
+  }
+]'
+KIRO_CLIENT_TOKEN=your-secure-api-key
+PORT=8080
+TOKEN_SELECTION_STRATEGY=balanced
+TOKEN_USAGE_THRESHOLD=5
+LOG_LEVEL=info
+```
+
+### KIRO_AUTH_TOKEN 配置详解
+
+#### 基本结构
+
+```json
+[
+  {
+    "auth": "认证方式",
+    "refreshToken": "刷新令牌",
+    "clientId": "客户端ID（IdC方式必需）",
+    "clientSecret": "客户端密钥（IdC方式必需）"
+  }
+]
+```
+
+#### 字段说明
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `Auth` | string | 是 | 认证方式，支持 "Social" 或 "IdC" |
+| `RefreshToken` | string | 是 | AWS 刷新令牌 |
+| `ClientId` | string | IdC时必需 | IdC 认证的客户端 ID |
+| `ClientSecret` | string | IdC时必需 | IdC 认证的客户端密钥 |
+
+#### 认证方式说明
+
+- **Social 认证**: 适用于个人开发者和小型项目, 只需要 `RefreshToken`。
+- **IdC 认证**: 适用于企业环境, 需要 `RefreshToken`、`ClientId` 和 `ClientSecret`。
+
+### 从传统环境变量迁移
+
+如果您当前使用传统的环境变量配置 (`AWS_REFRESHTOKEN=token1,token2`), 可以迁移到新的 JSON 格式：
+
+```bash
+# 新配置
+KIRO_AUTH_TOKEN='[
+  {"auth": "Social", "refreshToken": "token1"},
+  {"auth": "Social", "refreshToken": "token2"}
+]'
+```
+> **注意**: 系统保持向后兼容，旧的环境变量配置仍然可以使用。
+
+### 验证与故障排除
+
+启动服务后，检查日志中是否有 `Token配置加载成功` 的信息。
+如果遇到 `解析KIRO_AUTH_TOKEN失败` 的错误, 请使用在线 JSON 验证器检查格式。
+如果遇到 `IdC认证缺少必需参数` 的错误, 请为 IdC 认证添加 `ClientId` 和 `ClientSecret`。
+
+</details>
 
 ```bash
 # 新的JSON格式配置，支持多认证方式和多token
