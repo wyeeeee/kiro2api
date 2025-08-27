@@ -1,6 +1,9 @@
 package types
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // UsageLimits 使用限制响应结构 (基于token.md中的API规范)
 type UsageLimits struct {
@@ -128,12 +131,16 @@ func (t *TokenWithUsage) NeedsUsageRefresh() bool {
 	return false
 }
 
-// GenerateTokenPreview 生成token预览字符串 (用于日志显示)
+// GenerateTokenPreview 生成token预览字符串 (***+后10位)
 func (t *TokenWithUsage) GenerateTokenPreview() string {
-	if len(t.AccessToken) < 10 {
-		return t.AccessToken + "..."
+	if len(t.AccessToken) <= 10 {
+		// 如果token太短，全部用*代替
+		return strings.Repeat("*", len(t.AccessToken))
 	}
-	return t.AccessToken[:10] + "..."
+
+	// 3个*号 + 后10位
+	suffix := t.AccessToken[len(t.AccessToken)-10:]
+	return "***" + suffix
 }
 
 // GetUserEmailDisplay 获取用户邮箱显示名称

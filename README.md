@@ -138,18 +138,21 @@ curl -N -X POST http://localhost:8080/v1/messages \
 
 #### 方式一：JSON配置（推荐）
 
+> 📖 **详细配置说明**: 更多配置示例和说明请参考 [`config-examples/kiro_auth_token_examples.md`](./config-examples/kiro_auth_token_examples.md)  
+> 🚀 **快速开始**: 可复制的配置模板请参考 [`config-examples/quick-start-templates.md`](./config-examples/quick-start-templates.md)
+
 ```bash
 # 新的JSON格式配置，支持多认证方式和多token
 KIRO_AUTH_TOKEN='[
   {
-    "Auth": "Social",
-    "RefreshToken": "your_social_refresh_token_here"
+    "auth": "Social",
+    "refreshToken": "your_social_refresh_token_here"
   },
   {
-    "Auth": "IdC",
-    "RefreshToken": "your_idc_refresh_token_here",
-    "ClientId": "your_idc_client_id",
-    "ClientSecret": "your_idc_client_secret"
+    "auth": "IdC",
+    "refreshToken": "your_idc_refresh_token_here",
+    "clientId": "your_idc_client_id",
+    "clientSecret": "your_idc_client_secret"
   }
 ]'
 

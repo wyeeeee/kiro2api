@@ -10,8 +10,8 @@ import (
 // AuthConfig 认证配置结构 (避免循环导入)
 type AuthConfig struct {
 	ID           string `json:"id,omitempty"`
-	AuthType     string `json:"Auth"`
-	RefreshToken string `json:"RefreshToken"`
+	AuthType     string `json:"auth"`
+	RefreshToken string `json:"refreshToken"`
 	ClientID     string `json:"ClientId,omitempty"`
 	ClientSecret string `json:"ClientSecret,omitempty"`
 	Disabled     bool   `json:"disabled,omitempty"`
@@ -48,25 +48,32 @@ func NewDefaultConfigProvider() ConfigProvider {
 
 // LoadConfigs 从环境变量加载配置 (遵循DIP和YAGNI)
 func (p *DefaultConfigProvider) LoadConfigs() ([]AuthConfig, error) {
-	// 1. 优先尝试新的JSON配置格式 (KIRO_AUTH_TOKEN)
+	var allConfigs []AuthConfig
+
+	// 1. 尝试从新的JSON配置格式加载 (KIRO_AUTH_TOKEN)
 	if jsonData := os.Getenv("KIRO_AUTH_TOKEN"); jsonData != "" {
-		configs, err := p.parseJSONConfig(jsonData)
+		jsonConfigs, err := p.parseJSONConfig(jsonData)
 		if err != nil {
 			return nil, fmt.Errorf("解析KIRO_AUTH_TOKEN失败: %v", err)
 		}
-		return p.processConfigs(configs), nil
+		allConfigs = append(allConfigs, jsonConfigs...)
 	}
 
-	// 2. 回退到传统环境变量方式 (向后兼容)
-	configs, err := p.loadFromLegacyEnvVars()
-	if err != nil {
-		return nil, fmt.Errorf("从环境变量加载配置失败: %v", err)
+	// 2. 继续从传统环境变量方式加载 (向后兼容)
+	legacyConfigs, err := p.loadFromLegacyEnvVars()
+	if err == nil {
+		allConfigs = append(allConfigs, legacyConfigs...)
 	}
 
-	return p.processConfigs(configs), nil
+	// 3. 检查是否有任何配置
+	if len(allConfigs) == 0 {
+		return nil, fmt.Errorf("未找到有效的认证配置，请设置KIRO_AUTH_TOKEN或传统环境变量")
+	}
+
+	return p.processConfigs(allConfigs), nil
 }
 
-// parseJSONConfig 解析JSON配置 (支持单个对象或数组)
+// parseJSONConfig 解析JSON配置 (支持单个对象或数组，以及文件路径)
 func (p *DefaultConfigProvider) parseJSONConfig(jsonData string) ([]AuthConfig, error) {
 	var configs []AuthConfig
 
@@ -75,7 +82,35 @@ func (p *DefaultConfigProvider) parseJSONConfig(jsonData string) ([]AuthConfig, 
 		// 尝试解析为单个对象
 		var single AuthConfig
 		if err := json.Unmarshal([]byte(jsonData), &single); err != nil {
-			return nil, fmt.Errorf("JSON格式无效，既不是对象也不是数组: %v", err)
+			// JSON解析失败，尝试作为文件路径读取
+			fileConfigs, fileErr := p.parseJSONConfigFromFile(jsonData)
+			if fileErr != nil {
+				return nil, fmt.Errorf("JSON格式无效，既不是对象也不是数组: %v，也不是有效的文件路径: %v", err, fileErr)
+			}
+			return fileConfigs, nil
+		}
+		configs = []AuthConfig{single}
+	}
+
+	return configs, nil
+}
+
+// parseJSONConfigFromFile 从文件读取JSON配置
+func (p *DefaultConfigProvider) parseJSONConfigFromFile(filePath string) ([]AuthConfig, error) {
+	// 读取文件内容
+	fileData, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败: %v", err)
+	}
+
+	var configs []AuthConfig
+
+	// 尝试解析文件内容为数组
+	if err := json.Unmarshal(fileData, &configs); err != nil {
+		// 尝试解析为单个对象
+		var single AuthConfig
+		if err := json.Unmarshal(fileData, &single); err != nil {
+			return nil, fmt.Errorf("文件中的JSON格式无效: %v", err)
 		}
 		configs = []AuthConfig{single}
 	}
@@ -128,10 +163,8 @@ func (p *DefaultConfigProvider) loadFromLegacyEnvVars() ([]AuthConfig, error) {
 		}
 	}
 
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("未找到有效的认证配置，请设置AWS_REFRESHTOKEN或IDC认证相关环境变量")
-	}
-
+	// 如果没有找到任何传统环境变量配置，返回空数组（不是错误）
+	// 因为可能只使用JSON配置方式
 	return configs, nil
 }
 

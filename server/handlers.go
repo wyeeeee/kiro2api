@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"kiro2api/auth"
 	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
@@ -1279,82 +1280,105 @@ func createTokenPreview(token string) string {
 	return "***" + suffix
 }
 
-// maskSensitiveToken 对敏感token进行脱敏处理 (前后5位，中间用*代替)
-func maskSensitiveToken(token string) string {
-	if len(token) <= 10 {
-		// 如果token太短，全部用*代替
-		return strings.Repeat("*", len(token))
-	}
-
-	// 前5位 + 中间用*号 + 后5位
-	prefix := token[:5]
-	suffix := token[len(token)-5:]
-	middle := "*"
-
-	return prefix + middle + suffix
-}
-
-// buildTokenInfoSecure 构建安全的Token信息数据结构（脱敏处理）
-func buildTokenInfoSecure(enhancedToken *types.TokenWithUsage, id int, authType string) map[string]interface{} {
-	tokenInfo := map[string]interface{}{
-		"id":              id,
-		"user_email":      enhancedToken.GetUserEmailDisplay(),
-		"token_preview":   enhancedToken.TokenPreview,
-		"auth_type":       authType,                                       // 使用传入的真实认证类型
-		"access_token":    maskSensitiveToken(enhancedToken.AccessToken),  // 🔒 脱敏处理
-		"refresh_token":   maskSensitiveToken(enhancedToken.RefreshToken), // 🔒 脱敏处理
-		"remaining_usage": enhancedToken.AvailableCount,
-		"expires_at":      enhancedToken.ExpiresAt.Format(time.RFC3339),
-		"last_used":       enhancedToken.LastUsageCheck.Format(time.RFC3339),
-		"status":          "active", // 简化状态判断
-	}
-
-	return tokenInfo
-}
-
-// handleTokenPoolAPI 处理Token池API请求 - 完全从内存读取，绝不调用上游
+// handleTokenPoolAPI 处理Token池API请求 - 从真实token池获取数据
 func handleTokenPoolAPI(c *gin.Context) {
-	// 创建基于用户真实配置的静态响应（避免任何上游调用）
-	// 这些数据应该从程序启动时的初始化缓存中获取
-	
+	// 获取token池实例
+	tokenPool := auth.GetTokenPool()
+	if tokenPool == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Token池未初始化",
+		})
+		return
+	}
+
 	var tokenList []interface{}
 	var activeCount int
 
-	// 基于.env配置构建token列表
-	// 这模拟了从内存缓存中读取已初始化的token数据
-	
-	// Token 1: Social认证 (基于AWS_REFRESHTOKEN)
-	sampleToken1 := "aoaAAAAAGitO1kyCU0WXusQebg1VaeN_d5_H-rVOsnm0OAyD6gEop8IKh3Slaz3ulP0Ir3_W63xW4ruVaoHQ2qhBYBkc0"
-	tokenData1 := map[string]interface{}{
-		"user_email":      "caidaoli88@gmail.com", // 从启动时缓存的用户信息
-		"token_preview":   createTokenPreview(sampleToken1),
-		"auth_type":       "social",
-		"remaining_usage": 150, // 从初始化时同步的使用次数
-		"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
-		"last_used":       time.Now().Add(-time.Minute*5).Format(time.RFC3339),
-	}
-	tokenList = append(tokenList, tokenData1)
-	activeCount++
+	// 获取token池统计信息
+	poolStats := tokenPool.GetStats()
+	totalTokens := poolStats["total_tokens"].(int)
 
-	// Token 2: IdC认证 (基于IDC_REFRESH_TOKEN)  
-	sampleToken2 := "aorAAAAAGj7YXcTwW8oDpoUyJsL-BQoeMOpx2mgCiLm4GdxMlruvv5JA2tKZ-UIGiyCsEHv4AcoEtB8fqBnNUdXlwBkc0"
-	tokenData2 := map[string]interface{}{
-		"user_email":      "caidaoli@linux.do", // 从启动时缓存的用户信息
-		"token_preview":   createTokenPreview(sampleToken2),
-		"auth_type":       "idc",
-		"remaining_usage": 0, // 从初始化时同步的使用次数（已用尽）
-		"expires_at":      time.Now().Add(time.Hour*2).Format(time.RFC3339),
-		"last_used":       time.Now().Add(-time.Minute*30).Format(time.RFC3339),
-	}
-	tokenList = append(tokenList, tokenData2)
-	// activeCount不增加，因为remaining_usage=0
+	// 遍历所有token索引
+	for i := 0; i < totalTokens; i++ {
+		// 尝试刷新并获取带认证类型的token
+		tokenWithAuth, err := auth.RefreshTokenByIndexWithAuthType(i)
+		if err != nil {
+			logger.Warn("获取token失败",
+				logger.Int("index", i),
+				logger.Err(err))
 
-	// 返回完全基于内存的数据，绝不调用上游API
+			// 即使刷新失败，也创建基本信息显示
+			tokenData := map[string]interface{}{
+				"index":           i,
+				"user_email":      "获取失败",
+				"token_preview":   "***获取失败",
+				"auth_type":       "unknown",
+				"remaining_usage": 0,
+				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
+				"last_used":       "未知",
+				"status":          "error",
+				"error":           err.Error(),
+			}
+			tokenList = append(tokenList, tokenData)
+			continue
+		}
+
+		// 使用 CheckAndEnhanceToken 获取详细的使用信息
+		enhancedToken := auth.CheckAndEnhanceToken(tokenWithAuth.TokenInfo)
+
+		// 构建token数据
+		tokenData := map[string]interface{}{
+			"index":           i,
+			"user_email":      enhancedToken.GetUserEmailDisplay(),
+			"token_preview":   enhancedToken.TokenPreview,
+			"auth_type":       strings.ToLower(tokenWithAuth.AuthType),
+			"remaining_usage": enhancedToken.AvailableCount,
+			"expires_at":      time.Now().Add(time.Hour * 24).Format(time.RFC3339), // 预估过期时间
+			"last_used":       enhancedToken.LastUsageCheck.Format(time.RFC3339),
+			"status":          "active",
+		}
+
+		// 添加使用限制详细信息
+		if enhancedToken.UsageLimits != nil {
+			// 查找VIBE资源类型的使用信息
+			var totalLimit, currentUsage int
+			for _, breakdown := range enhancedToken.UsageLimits.UsageBreakdownList {
+				if breakdown.ResourceType == "VIBE" {
+					totalLimit = breakdown.UsageLimit
+					currentUsage = breakdown.CurrentUsage
+					break
+				}
+			}
+
+			tokenData["usage_limits"] = map[string]interface{}{
+				"total_limit":   totalLimit,
+				"current_usage": currentUsage,
+				"is_exceeded":   enhancedToken.IsUsageExceeded,
+			}
+		}
+
+		// 如果token不可用，标记状态
+		if !enhancedToken.IsUsable() {
+			tokenData["status"] = "exhausted"
+		} else {
+			activeCount++
+		}
+
+		// 添加错误信息（如果有）
+		if enhancedToken.UsageCheckError != "" {
+			tokenData["usage_check_error"] = enhancedToken.UsageCheckError
+		}
+
+		tokenList = append(tokenList, tokenData)
+	}
+
+	// 返回真实的token池数据
 	c.JSON(http.StatusOK, gin.H{
 		"timestamp":     time.Now().Format(time.RFC3339),
 		"total_tokens":  len(tokenList),
 		"active_tokens": activeCount,
 		"tokens":        tokenList,
+		"pool_stats":    poolStats,
 	})
 }
 

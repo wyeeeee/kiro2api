@@ -56,7 +56,7 @@ cp .env.example .env
 
 # === Token管理配置（推荐使用JSON格式） ===
 # 新的JSON格式配置方式，支持多认证方式和多token
-KIRO_AUTH_TOKEN='[{"Auth":"Social","RefreshToken":"xxx"},{"Auth":"IdC","RefreshToken":"xxx","ClientId":"xxx","ClientSecret":"xxx"}]'
+KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"},{"auth":"IdC","refreshToken":"xxx","clientId":"xxx","clientSecret":"xxx"}]'
 
 # === 兼容传统环境变量（向后兼容） ===
 # AWS_REFRESHTOKEN=token1,token2,token3    # 支持逗号分隔多token
