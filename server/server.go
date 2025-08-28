@@ -43,7 +43,7 @@ func StartServer(port string, authToken string) {
 	r.GET("/", func(c *gin.Context) {
 		c.File("./static/index.html")
 	})
-	
+
 	// API端点 - 纯数据服务
 	r.GET("/api/tokens", handleTokenPoolAPI)
 
@@ -74,7 +74,7 @@ func StartServer(port string, authToken string) {
 
 	r.POST("/v1/messages", func(c *gin.Context) {
 
-		enhancedToken, err := auth.GetEnhancedToken()
+		tokenInfo, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
 			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
@@ -200,16 +200,16 @@ func StartServer(port string, authToken string) {
 		}
 
 		if anthropicReq.Stream {
-			handleStreamRequest(c, anthropicReq, enhancedToken)
+			handleStreamRequest(c, anthropicReq, tokenInfo)
 			return
 		}
 
-		handleNonStreamRequest(c, anthropicReq, enhancedToken)
+		handleNonStreamRequest(c, anthropicReq, tokenInfo)
 	})
 
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
 	r.POST("/v1/chat/completions", func(c *gin.Context) {
-		enhancedToken, err := auth.GetEnhancedToken()
+		tokenInfo, err := auth.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
 			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
@@ -255,11 +255,11 @@ func StartServer(port string, authToken string) {
 		}
 
 		if anthropicReq.Stream {
-			handleOpenAIStreamRequest(c, anthropicReq, enhancedToken)
+			handleOpenAIStreamRequest(c, anthropicReq, tokenInfo)
 			return
 		}
 
-		handleOpenAINonStreamRequest(c, anthropicReq, enhancedToken)
+		handleOpenAINonStreamRequest(c, anthropicReq, tokenInfo)
 	})
 
 	r.NoRoute(func(c *gin.Context) {

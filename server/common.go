@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"kiro2api/auth"
 	"kiro2api/config"
 	"kiro2api/converter"
 	"kiro2api/logger"
@@ -83,8 +82,8 @@ func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReq
 		return nil, fmt.Errorf("CodeWhisperer API error")
 	}
 
-	// AWS请求成功，扣减VIBE使用次数
-	auth.DecrementVIBECount(tokenInfo.AccessToken)
+	// AWS请求成功（在简化版本中不需要手动扣减计数）
+	logger.Debug("CodeWhisperer请求成功", logger.String("token", tokenInfo.AccessToken[:20]+"..."))
 
 	return resp, nil
 }
@@ -155,10 +154,9 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 		logger.Int("response_len", len(body)),
 		logger.String("response_body", string(body)))
 
-	// 如果是403错误，清理token缓存并提示刷新
+	// 如果是403错误，提示token失效
 	if resp.StatusCode == http.StatusForbidden {
-		logger.Warn("收到403错误，清理token缓存")
-		auth.ClearTokenCache()
+		logger.Warn("收到403错误，token可能已失效")
 		respondErrorWithCode(c, http.StatusUnauthorized, "unauthorized", "%s", "Token已失效，请重试")
 		return true
 	}

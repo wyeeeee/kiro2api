@@ -15,8 +15,8 @@ import (
 )
 
 // handleOpenAINonStreamRequest 处理OpenAI非流式请求
-func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, token.TokenInfo, false)
+func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, token, false)
 	if err != nil {
 		return
 	}
@@ -89,7 +89,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 }
 
 // handleOpenAIStreamRequest 处理OpenAI流式请求
-func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
+func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -97,7 +97,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 
 	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
 
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, token.TokenInfo, true)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, token, true)
 	if err != nil {
 		return
 	}
@@ -128,7 +128,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 
 	// 创建符合AWS规范的流式解析器和去重管理器
 	compliantParser := parser.NewCompliantEventStreamParser(false) // 默认非严格模式
-	dedupManager := utils.NewToolDedupManager() // OpenAI流式端点的工具去重管理器
+	dedupManager := utils.NewToolDedupManager()                    // OpenAI流式端点的工具去重管理器
 
 	// OpenAI 工具调用增量状态
 	toolIndexByToolUseId := make(map[string]int)  // tool_use_id -> tool_calls 数组索引

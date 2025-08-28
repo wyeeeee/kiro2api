@@ -26,7 +26,7 @@ func main() {
 
 	// 🚀 启动时主动初始化token系统
 	logger.Info("正在初始化token系统...")
-	if err := auth.InitializeTokenSystem(); err != nil {
+	if err := auth.Initialize(); err != nil {
 		logger.Error("Token系统初始化失败", logger.Err(err))
 		logger.Error("请检查token配置后重新启动服务器")
 		os.Exit(1)

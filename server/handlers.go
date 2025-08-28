@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"kiro2api/auth"
-	"kiro2api/auth/config"
 	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
@@ -172,9 +171,15 @@ func shouldSkipDuplicateToolEvent(event parser.SSEEvent, dedupManager *utils.Too
 }
 
 // handleStreamRequest 处理流式请求
-func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
+func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
+	// 转换为TokenWithUsage（简化版本）
+	tokenWithUsage := &types.TokenWithUsage{
+		TokenInfo:      token,
+		AvailableCount: 100, // 默认可用次数
+		LastUsageCheck: time.Now(),
+	}
 	sender := &AnthropicStreamSender{}
-	handleGenericStreamRequest(c, anthropicReq, token, sender, createAnthropicStreamEvents)
+	handleGenericStreamRequest(c, anthropicReq, tokenWithUsage, sender, createAnthropicStreamEvents)
 }
 
 // isDebugMode 检查是否启用调试模式
@@ -820,7 +825,7 @@ func containsToolResult(req types.AnthropicRequest) bool {
 }
 
 // handleNonStreamRequest 处理非流式请求
-func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage) {
+func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
 	// 创建token计算器
 	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
@@ -838,7 +843,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	// 创建请求级别的工具去重管理器（与流式处理保持一致）
 	dedupManager := utils.NewToolDedupManager()
 
-	resp, err := executeCodeWhispererRequest(c, anthropicReq, token.TokenInfo, false)
+	resp, err := executeCodeWhispererRequest(c, anthropicReq, token, false)
 	if err != nil {
 		return
 	}
@@ -1281,27 +1286,13 @@ func createTokenPreview(token string) string {
 	return "***" + suffix
 }
 
-// handleTokenPoolAPI 处理Token池API请求 - 从真实token池获取数据
+// handleTokenPoolAPI 处理Token池API请求 - 恢复多token显示
 func handleTokenPoolAPI(c *gin.Context) {
-	// 获取token池实例
-	tokenPool := auth.GetTokenPool()
-	if tokenPool == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Token池未初始化",
-		})
-		return
-	}
-
 	var tokenList []interface{}
 	var activeCount int
 
-	// 获取token池统计信息
-	poolStats := tokenPool.GetStats()
-	totalTokens := poolStats["total_tokens"].(int)
-
-	// 获取配置来确定认证类型
-	provider := config.NewDefaultConfigProvider()
-	configs, err := provider.LoadConfigs()
+	// 从auth包获取配置信息
+	configs, err := auth.GetConfigs()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "加载配置失败: " + err.Error(),
@@ -1309,38 +1300,29 @@ func handleTokenPoolAPI(c *gin.Context) {
 		return
 	}
 
-	// 遍历所有token索引
-	for i := 0; i < totalTokens; i++ {
-		// 检查索引是否超出配置范围
-		if i >= len(configs) {
-			logger.Warn("token索引超出配置范围",
-				logger.Int("index", i),
-				logger.Int("configs_count", len(configs)))
+	if len(configs) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"timestamp":     time.Now().Format(time.RFC3339),
+			"total_tokens":  0,
+			"active_tokens": 0,
+			"tokens":        []interface{}{},
+			"pool_stats": map[string]interface{}{
+				"total_tokens":  0,
+				"active_tokens": 0,
+			},
+		})
+		return
+	}
 
-			tokenData := map[string]interface{}{
-				"index":           i,
-				"user_email":      "配置缺失",
-				"token_preview":   "***配置缺失",
-				"auth_type":       "unknown",
-				"remaining_usage": 0,
-				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
-				"last_used":       "未知",
-				"status":          "error",
-				"error":           "配置索引超出范围",
-			}
-			tokenList = append(tokenList, tokenData)
-			continue
-		}
-
-		configItem := configs[i]
-
+	// 遍历所有配置
+	for i, config := range configs {
 		// 检查配置是否被禁用
-		if configItem.Disabled {
+		if config.Disabled {
 			tokenData := map[string]interface{}{
 				"index":           i,
 				"user_email":      "已禁用",
 				"token_preview":   "***已禁用",
-				"auth_type":       strings.ToLower(configItem.AuthType),
+				"auth_type":       strings.ToLower(config.AuthType),
 				"remaining_usage": 0,
 				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 				"last_used":       "未知",
@@ -1351,94 +1333,117 @@ func handleTokenPoolAPI(c *gin.Context) {
 			continue
 		}
 
-		// 尝试从缓存获取已存在的 token 信息
-		cache := auth.GetAtomicCache()
-		if cachedToken, exists := cache.Get(i); exists {
-			// 如果缓存中有 token，使用 CheckAndEnhanceToken 获取详细信息
-			enhancedToken := auth.CheckAndEnhanceToken(*cachedToken)
-
-			// 构建token数据
+		// 尝试获取token信息
+		tokenInfo, err := refreshSingleTokenByConfig(config)
+		if err != nil {
 			tokenData := map[string]interface{}{
 				"index":           i,
-				"user_email":      enhancedToken.GetUserEmailDisplay(),
-				"token_preview":   enhancedToken.TokenPreview,
-				"auth_type":       strings.ToLower(configItem.AuthType),
-				"remaining_usage": enhancedToken.AvailableCount,
-				"expires_at":      cachedToken.ExpiresAt.Format(time.RFC3339),
-				"last_used":       enhancedToken.LastUsageCheck.Format(time.RFC3339),
-				"status":          "active",
-			}
-
-			// 添加使用限制详细信息
-			if enhancedToken.UsageLimits != nil {
-				// 查找VIBE资源类型的使用信息
-				var totalLimit, currentUsage int
-				for _, breakdown := range enhancedToken.UsageLimits.UsageBreakdownList {
-					if breakdown.ResourceType == "VIBE" {
-						totalLimit = breakdown.UsageLimit
-						currentUsage = breakdown.CurrentUsage
-						break
-					}
-				}
-
-				tokenData["usage_limits"] = map[string]interface{}{
-					"total_limit":   totalLimit,
-					"current_usage": currentUsage,
-					"is_exceeded":   enhancedToken.IsUsageExceeded,
-				}
-			}
-
-			// 如果token不可用，标记状态
-			if !enhancedToken.IsUsable() {
-				tokenData["status"] = "exhausted"
-			} else {
-				activeCount++
-			}
-
-			// 添加错误信息（如果有）
-			if enhancedToken.UsageCheckError != "" {
-				tokenData["usage_check_error"] = enhancedToken.UsageCheckError
-			}
-
-			tokenList = append(tokenList, tokenData)
-		} else {
-			// 如果缓存中没有 token，显示基本配置信息
-			tokenData := map[string]interface{}{
-				"index":           i,
-				"user_email":      "未缓存",
-				"token_preview":   createTokenPreview(configItem.RefreshToken),
-				"auth_type":       strings.ToLower(configItem.AuthType),
-				"remaining_usage": "未知",
-				"expires_at":      time.Now().Add(time.Hour * 24).Format(time.RFC3339), // 预估过期时间
+				"user_email":      "获取失败",
+				"token_preview":   createTokenPreview(config.RefreshToken),
+				"auth_type":       strings.ToLower(config.AuthType),
+				"remaining_usage": 0,
+				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 				"last_used":       "未知",
-				"status":          "未缓存",
+				"status":          "error",
+				"error":           err.Error(),
 			}
-
-			// 添加配置详细信息
-			tokenData["config_id"] = configItem.ID
-
-			// 如果是 IdC 认证，显示额外信息
-			if configItem.AuthType == "IdC" {
-				tokenData["client_id"] = func() string {
-					if len(configItem.ClientID) > 10 {
-						return configItem.ClientID[:5] + "***" + configItem.ClientID[len(configItem.ClientID)-3:]
-					}
-					return configItem.ClientID
-				}()
-			}
-
 			tokenList = append(tokenList, tokenData)
+			continue
 		}
+
+		// 检查使用限制
+		var usageInfo *types.UsageLimits
+		var available int = 100 // 默认值
+		var userEmail = "未知用户"
+
+		checker := auth.NewUsageLimitsChecker()
+		if usage, checkErr := checker.CheckUsageLimits(tokenInfo); checkErr == nil {
+			usageInfo = usage
+			available = auth.CalculateAvailableCount(usage)
+
+			// 提取用户邮箱
+			if usage.UserInfo.Email != "" {
+				userEmail = usage.UserInfo.Email
+			}
+		}
+
+		// 构建token数据
+		tokenData := map[string]interface{}{
+			"index":           i,
+			"user_email":      userEmail,
+			"token_preview":   createTokenPreview(tokenInfo.AccessToken),
+			"auth_type":       strings.ToLower(config.AuthType),
+			"remaining_usage": available,
+			"expires_at":      tokenInfo.ExpiresAt.Format(time.RFC3339),
+			"last_used":       time.Now().Format(time.RFC3339),
+			"status":          "active",
+		}
+
+		// 添加使用限制详细信息
+		if usageInfo != nil {
+			for _, breakdown := range usageInfo.UsageBreakdownList {
+				if breakdown.ResourceType == "VIBE" {
+					totalLimit := breakdown.UsageLimit
+					currentUsage := breakdown.CurrentUsage
+
+					if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
+						totalLimit += breakdown.FreeTrialInfo.UsageLimit
+						currentUsage += breakdown.FreeTrialInfo.CurrentUsage
+					}
+
+					tokenData["usage_limits"] = map[string]interface{}{
+						"total_limit":   totalLimit,
+						"current_usage": currentUsage,
+						"is_exceeded":   available <= 0,
+					}
+					break
+				}
+			}
+		}
+
+		// 如果token不可用，标记状态
+		if available <= 0 {
+			tokenData["status"] = "exhausted"
+		} else {
+			activeCount++
+		}
+
+		// 如果是 IdC 认证，显示额外信息
+		if config.AuthType == auth.AuthMethodIdC && config.ClientID != "" {
+			tokenData["client_id"] = func() string {
+				if len(config.ClientID) > 10 {
+					return config.ClientID[:5] + "***" + config.ClientID[len(config.ClientID)-3:]
+				}
+				return config.ClientID
+			}()
+		}
+
+		tokenList = append(tokenList, tokenData)
 	}
 
-	// 返回真实的token池数据
+	// 返回多token数据
 	c.JSON(http.StatusOK, gin.H{
 		"timestamp":     time.Now().Format(time.RFC3339),
 		"total_tokens":  len(tokenList),
 		"active_tokens": activeCount,
 		"tokens":        tokenList,
-		"pool_stats":    poolStats,
+		"pool_stats": map[string]interface{}{
+			"total_tokens":  len(configs),
+			"active_tokens": activeCount,
+		},
 	})
+}
+
+// refreshSingleTokenByConfig 根据配置刷新单个token
+func refreshSingleTokenByConfig(config auth.AuthConfig) (types.TokenInfo, error) {
+	switch config.AuthType {
+	case auth.AuthMethodSocial:
+		return auth.RefreshSocialToken(config.RefreshToken)
+	case auth.AuthMethodIdC:
+		return auth.RefreshIdCToken(config)
+	default:
+		return types.TokenInfo{}, fmt.Errorf("不支持的认证类型: %s", config.AuthType)
+	}
 }
 
 // 已移除复杂的token数据收集函数，现在使用简单的内存数据读取
