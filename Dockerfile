@@ -37,8 +37,9 @@ RUN addgroup -g 1001 -S appgroup && \
 # 设置工作目录
 WORKDIR /app
 
-# 从构建阶段复制二进制文件
+# 从构建阶段复制二进制文件和静态资源
 COPY --from=builder /app/kiro2api .
+COPY --from=builder /app/static ./static
 
 # 创建必要的目录并设置权限
 RUN mkdir -p /home/appuser/.aws/sso/cache && \
@@ -51,4 +52,4 @@ USER appuser
 EXPOSE 8080
 
 # 设置默认命令
-CMD ["./kiro2api", "server"]
+CMD ["./kiro2api"]
