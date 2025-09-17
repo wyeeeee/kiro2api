@@ -159,12 +159,18 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 			if jsonBytes, err := utils.FastMarshal(streamer.result); err == nil {
 				fullInput = string(jsonBytes)
 			} else {
-				logger.Warn("Sonic序列化失败，使用fallback",
-					logger.Err(err))
-				fullInput = ssja.generateFallbackJSON(streamer.toolName)
+				logger.Error("Sonic序列化失败，无法生成工具输入",
+					logger.Err(err),
+					logger.String("toolName", streamer.toolName))
+				// 使用空JSON对象，让工具调用失败
+				fullInput = "{}"
 			}
 		} else {
-			fullInput = ssja.generateFallbackJSON(streamer.toolName)
+			logger.Error("流式解析失败，无有效JSON结果",
+				logger.String("toolName", streamer.toolName),
+				logger.Bool("hasValidJSON", streamer.state.hasValidJSON))
+			// 使用空JSON对象，让工具调用失败
+			fullInput = "{}"
 		}
 
 		// 清理完成的流式解析器
@@ -380,49 +386,6 @@ func (sjs *SonicJSONStreamer) looksLikeValueFragment(content string) bool {
 	return false
 }
 
-// generateFallbackJSON 生成回退JSON
-func (ssja *SonicStreamingJSONAggregator) generateFallbackJSON(toolName string) string {
-	// 处理MCP工具
-	if strings.HasPrefix(strings.ToLower(toolName), "mcp__") {
-		parts := strings.Split(toolName, "__")
-		if len(parts) >= 3 {
-			actualToolName := parts[2]
-			switch strings.ToLower(actualToolName) {
-			case "list_dir":
-				return `{"relative_path": ".", "recursive": false}`
-			case "find_file":
-				return `{"file_mask": "*", "relative_path": "."}`
-			case "find_symbol", "get_symbols_overview":
-				return `{"relative_path": ""}`
-			case "search_for_pattern":
-				return `{"substring_pattern": "", "relative_path": "."}`
-			default:
-				return `{"input": ""}`
-			}
-		}
-		return `{}`
-	}
-
-	// 标准工具处理
-	switch strings.ToLower(toolName) {
-	case "ls":
-		return `{"path": "."}`
-	case "read":
-		return `{"file_path": ""}`
-	case "write":
-		return `{"file_path": "", "content": ""}`
-	case "bash":
-		return `{"command": ""}`
-	case "edit":
-		return `{"file_path": "", "old_string": "", "new_string": ""}`
-	case "glob":
-		return `{"pattern": ""}`
-	case "grep":
-		return `{"pattern": ""}`
-	default:
-		return `{}`
-	}
-}
 
 // onAggregationComplete 聚合完成回调
 func (ssja *SonicStreamingJSONAggregator) onAggregationComplete(toolUseId string, fullInput string) {

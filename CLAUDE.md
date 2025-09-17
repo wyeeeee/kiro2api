@@ -127,7 +127,6 @@ LOG_FORMAT=json                           # text,json
 - **双认证方式**: Social和IdC认证，完全向后兼容传统配置
 - **高性能缓存**: 原子操作的热点token缓存，冷热分离二级缓存
 - **智能选择策略**: 最优使用和均衡使用策略，基于使用量的智能选择
-- **工具调用去重**: 基于 `tool_use_id` 的精确去重机制
 - **流式优化**: 零延迟流式传输，对象池复用解析器实例
 
 ## 包结构 (按职责分层)
@@ -152,7 +151,7 @@ LOG_FORMAT=json                           # text,json
 - **`parser/`**: EventStream解析和工具调用处理
   - `robust_parser.go` - 主要解析器实现
   - `compliant_event_stream_parser.go` - 标准兼容解析器
-  - `compliant_message_processor.go` - 消息处理和去重
+  - `compliant_message_processor.go` - 消息处理
   - `tool_*` - 工具调用状态机和生命周期管理
 
 ### 基础设施层
@@ -201,7 +200,7 @@ LOG_FORMAT=json                           # text,json
 
 3. **流式响应调试**
    - `parser/robust_parser.go`: EventStream解析器错误恢复
-   - `parser/compliant_message_processor.go`: 消息处理和去重
+   - `parser/compliant_message_processor.go`: 消息处理
    - 验证BigEndian格式的EventStream解析
 
 ### 代码质量改进 (遵循DRY和SOLID原则)
@@ -265,7 +264,6 @@ curl -N --max-time 60 -X POST http://localhost:8080/v1/messages \
 ```
 - 检查客户端连接稳定性
 - 验证EventStream解析器状态
-- 查看工具调用去重逻辑
 
 ### 性能问题
 ```bash

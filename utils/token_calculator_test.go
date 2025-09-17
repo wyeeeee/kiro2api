@@ -352,7 +352,7 @@ func abs(x int) int {
 func BenchmarkTokenCalculator_EstimateTextTokens(b *testing.B) {
 	calc := NewTokenCalculator()
 	text := "这是一个用于测试token计算性能的中英文混合文本 This is a mixed Chinese-English text for testing token calculation performance."
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		calc.estimateTextTokens(text)
@@ -384,7 +384,7 @@ func BenchmarkTokenCalculator_CalculateInputTokens(b *testing.B) {
 			},
 		},
 	}
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		calc.CalculateInputTokens(req)

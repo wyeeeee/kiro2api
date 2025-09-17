@@ -194,9 +194,9 @@ func (hp *HeaderParser) processNameLengthPhase(data []byte, offset *int, state *
 	state.PartialName = make([]byte, 0, nameLength)
 	state.Phase = PhaseReadName
 
-	logger.Debug("读取名称长度",
-		logger.Int("name_length", nameLength),
-		logger.Int("header_index", state.CurrentHeader))
+	// logger.Debug("读取名称长度",
+	// 	logger.Int("name_length", nameLength),
+	// 	logger.Int("header_index", state.CurrentHeader))
 
 	return false, nil
 }
@@ -221,9 +221,9 @@ func (hp *HeaderParser) processNamePhase(data []byte, offset *int, state *Header
 	*offset += remainingNameBytes
 	state.Phase = PhaseReadValueType
 
-	logger.Debug("名称读取完成",
-		logger.String("name", string(state.PartialName)),
-		logger.Int("header_index", state.CurrentHeader))
+	// logger.Debug("名称读取完成",
+	// 	logger.String("name", string(state.PartialName)),
+	// 	logger.Int("header_index", state.CurrentHeader))
 
 	return false, nil
 }
@@ -238,9 +238,9 @@ func (hp *HeaderParser) processValueTypePhase(data []byte, offset *int, state *H
 	*offset++
 	state.Phase = PhaseReadValueLength
 
-	logger.Debug("读取值类型",
-		logger.Int("value_type", int(state.ValueType)),
-		logger.String("name", string(state.PartialName)))
+	// logger.Debug("读取值类型",
+	// 	logger.Int("value_type", int(state.ValueType)),
+	// 	logger.String("name", string(state.PartialName)))
 
 	return false, nil
 }
@@ -284,9 +284,9 @@ func (hp *HeaderParser) processValueLengthPhase(data []byte, offset *int, state 
 	state.PartialLength = nil // 清除长度缓冲区
 	state.Phase = PhaseReadValue
 
-	logger.Debug("读取值长度",
-		logger.Int("value_length", valueLength),
-		logger.String("name", string(state.PartialName)))
+	// logger.Debug("读取值长度",
+	// 	logger.Int("value_length", valueLength),
+	// 	logger.String("name", string(state.PartialName)))
 
 	return false, nil
 }
@@ -327,10 +327,10 @@ func (hp *HeaderParser) processValuePhase(data []byte, offset *int, state *Heade
 			Value: value,
 		}
 
-		logger.Debug("头部解析完成",
-			logger.String("name", headerName),
-			logger.Int("type", int(state.ValueType)),
-			logger.Int("length", state.ValueLength))
+		// logger.Debug("头部解析完成",
+		// 	logger.String("name", headerName),
+		// 	logger.Int("type", int(state.ValueType)),
+		// 	logger.Int("length", state.ValueLength))
 	}
 
 	// 重置状态，准备解析下一个头部

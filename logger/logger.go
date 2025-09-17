@@ -46,7 +46,7 @@ type Logger struct {
 	logger       *log.Logger // log.Logger本身线程安全，移除mutex
 	logFile      *os.File
 	writers      []io.Writer
-	enableCaller bool // 控制是否获取调用栈信息
+	enableCaller bool // 控制是否获取调用栈信息（包含文件与函数名）
 	callerSkip   int  // 调用栈深度
 }
 
@@ -64,7 +64,7 @@ func createLogger() *Logger {
 	logger := &Logger{
 		level:        int64(INFO),
 		writers:      []io.Writer{os.Stdout}, // 默认输出到控制台
-		enableCaller: false,                  // 默认禁用调用栈获取
+		enableCaller: false,                  // 默认禁用调用栈获取（可通过LOG_ENABLE_CALLER开启）
 		callerSkip:   3,                      // 默认调用栈深度
 	}
 
@@ -81,6 +81,14 @@ func createLogger() *Logger {
 	// 从环境变量控制优化特性
 	if enableCaller := os.Getenv("LOG_ENABLE_CALLER"); enableCaller == "true" || enableCaller == "1" {
 		logger.enableCaller = true
+	} else {
+		// 在调试级别时，默认开启调用者信息，便于定位（KISS）
+		if lvl := os.Getenv("LOG_LEVEL"); strings.ToLower(lvl) == "debug" {
+			logger.enableCaller = true
+		}
+		if debug := os.Getenv("DEBUG"); debug == "true" || debug == "1" {
+			logger.enableCaller = true
+		}
 	}
 	if callerSkip := os.Getenv("LOG_CALLER_SKIP"); callerSkip != "" {
 		if skip, err := strconv.Atoi(callerSkip); err == nil && skip > 0 {
@@ -148,11 +156,20 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 
 	// 按需获取调用者信息（优化：可配置）
 	if l.enableCaller {
-		if _, file, line, ok := runtime.Caller(l.callerSkip); ok {
+		if pc, file, line, ok := runtime.Caller(l.callerSkip); ok {
 			if idx := strings.LastIndex(file, "/"); idx >= 0 {
 				file = file[idx+1:]
 			}
 			entry["file"] = fmt.Sprintf("%s:%d", file, line)
+			// 提取函数名，便于快速定位日志来源
+			if fn := runtime.FuncForPC(pc); fn != nil {
+				name := fn.Name()
+				// 裁剪包路径，仅保留最后的符号名
+				if dot := strings.LastIndex(name, "."); dot >= 0 && dot < len(name)-1 {
+					name = name[dot+1:]
+				}
+				entry["func"] = name
+			}
 		}
 	}
 

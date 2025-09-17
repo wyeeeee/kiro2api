@@ -49,27 +49,36 @@ func respondError(c *gin.Context, statusCode int, format string, args ...interfa
 
 // 通用请求处理错误函数
 func handleRequestBuildError(c *gin.Context, err error) {
-	logger.Error("构建请求失败", logger.Err(err))
+	logger.Error("构建请求失败", addReqFields(c, logger.Err(err))...)
 	respondError(c, http.StatusInternalServerError, "构建请求失败: %v", err)
 }
 
 func handleRequestSendError(c *gin.Context, err error) {
-	logger.Error("发送请求失败", logger.Err(err))
+	logger.Error("发送请求失败", addReqFields(c, logger.Err(err))...)
 	respondError(c, http.StatusInternalServerError, "发送请求失败: %v", err)
 }
 
 func handleResponseReadError(c *gin.Context, err error) {
-	logger.Error("读取响应体失败", logger.Err(err))
+	logger.Error("读取响应体失败", addReqFields(c, logger.Err(err))...)
 	respondError(c, http.StatusInternalServerError, "读取响应体失败: %v", err)
 }
 
 // 通用请求执行函数
 func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, isStream bool) (*http.Response, error) {
-	req, err := buildCodeWhispererRequest(anthropicReq, tokenInfo, isStream)
+	req, err := buildCodeWhispererRequest(c, anthropicReq, tokenInfo, isStream)
 	if err != nil {
 		handleRequestBuildError(c, err)
 		return nil, err
 	}
+
+	// 上游请求即将发送（带方向和会话标识）
+	logger.Info("发送上游请求",
+		addReqFields(c,
+			logger.String("direction", "upstream_request"),
+			logger.String("url", req.URL.String()),
+			logger.Bool("stream", isStream),
+			logger.String("model", anthropicReq.Model),
+		)...)
 
 	resp, err := utils.DoSmartRequest(req, &anthropicReq)
 	if err != nil {
@@ -82,8 +91,12 @@ func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReq
 		return nil, fmt.Errorf("CodeWhisperer API error")
 	}
 
-	// AWS请求成功（在简化版本中不需要手动扣减计数）
-	logger.Debug("CodeWhisperer请求成功", logger.String("token", tokenInfo.AccessToken[:20]+"..."))
+	// 上游响应成功，记录方向与会话
+	logger.Debug("上游响应成功",
+		addReqFields(c,
+			logger.String("direction", "upstream_response"),
+			logger.Int("status_code", resp.StatusCode),
+		)...)
 
 	return resp, nil
 }
@@ -92,8 +105,8 @@ func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReq
 var execCWRequest = executeCodeWhispererRequest
 
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
-func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, isStream bool) (*http.Request, error) {
-	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq, tokenInfo.ProfileArn)
+func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, isStream bool) (*http.Request, error) {
+	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq, tokenInfo.ProfileArn, c)
 	if err != nil {
 		return nil, fmt.Errorf("构建CodeWhisperer请求失败: %v", err)
 	}
@@ -117,6 +130,7 @@ func buildCodeWhispererRequest(anthropicReq types.AnthropicRequest, tokenInfo ty
 	}
 
 	logger.Debug("发送给CodeWhisperer的请求",
+		logger.String("direction", "upstream_request"),
 		logger.Int("request_size", len(cwReqBody)),
 		logger.String("request_body", string(cwReqBody)),
 		logger.Int("tools_count", len(cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.Tools)),
@@ -144,15 +158,22 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Error("读取错误响应失败", logger.Err(err))
+		logger.Error("读取错误响应失败",
+			addReqFields(c,
+				logger.String("direction", "upstream_response"),
+				logger.Err(err),
+			)...)
 		respondError(c, http.StatusInternalServerError, "%s", "读取响应失败")
 		return true
 	}
 
-	logger.Error("CodeWhisperer响应错误",
-		logger.Int("status_code", resp.StatusCode),
-		logger.Int("response_len", len(body)),
-		logger.String("response_body", string(body)))
+	logger.Error("上游响应错误",
+		addReqFields(c,
+			logger.String("direction", "upstream_response"),
+			logger.Int("status_code", resp.StatusCode),
+			logger.Int("response_len", len(body)),
+			logger.String("response_body", string(body)),
+		)...)
 
 	// 如果是403错误，提示token失效
 	if resp.StatusCode == http.StatusForbidden {
@@ -327,10 +348,12 @@ func (s *AnthropicStreamSender) SendEvent(c *gin.Context, data any) error {
 
 	// 压缩日志：仅记录事件类型与负载长度
 	logger.Debug("发送SSE事件",
-		logger.String("event", eventType),
-		logger.Int("payload_len", len(json)),
-		logger.String("payload_preview", string(json)),
-	)
+		addReqFields(c,
+			logger.String("direction", "downstream_send"),
+			logger.String("event", eventType),
+			logger.Int("payload_len", len(json)),
+			logger.String("payload_preview", string(json)),
+		)...)
 
 	fmt.Fprintf(c.Writer, "event: %s\n", eventType)
 	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
@@ -379,7 +402,11 @@ func (s *OpenAIStreamSender) SendEvent(c *gin.Context, data any) error {
 	}
 
 	// 压缩日志：记录负载长度
-	logger.Debug("发送OpenAI SSE事件", logger.Int("payload_len", len(json)))
+	logger.Debug("发送OpenAI SSE事件",
+		addReqFields(c,
+			logger.String("direction", "downstream_send"),
+			logger.Int("payload_len", len(json)),
+		)...)
 
 	fmt.Fprintf(c.Writer, "data: %s\n\n", string(json))
 	c.Writer.Flush()

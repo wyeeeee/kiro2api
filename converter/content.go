@@ -107,9 +107,8 @@ func processMessageContent(content any) (string, []types.CodeWhispererImage, err
 		}
 
 	default:
-		// 尝试转换为字符串
-		fallbackStr := fmt.Sprintf("%v", content)
-		return fallbackStr, nil, nil
+		// 不支持的内容类型，返回错误而非fallback
+		return "", nil, fmt.Errorf("不支持的内容类型: %T", content)
 	}
 
 	result := strings.Join(textParts, "")

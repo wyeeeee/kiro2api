@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"kiro2api/converter"
+	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
 	"kiro2api/utils"
@@ -85,6 +86,12 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	openaiMessageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
 	openaiResp := converter.ConvertAnthropicToOpenAI(anthropicResp, anthropicReq.Model, openaiMessageId)
 
+	// 下发OpenAI兼容非流式响应
+	logger.Info("下发OpenAI非流式响应",
+		addReqFields(c,
+			logger.String("direction", "downstream_send"),
+			logger.Bool("saw_tool_use", sawToolUse),
+		)...)
 	c.JSON(http.StatusOK, openaiResp)
 }
 
@@ -96,6 +103,8 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	c.Header("X-Accel-Buffering", "no") // 禁用nginx缓冲
 
 	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
+	// 注入 message_id，便于统一日志会话标识
+	c.Set("message_id", messageId)
 
 	resp, err := executeCodeWhispererRequest(c, anthropicReq, token, true)
 	if err != nil {
@@ -126,9 +135,8 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	}
 	sender.SendEvent(c, initialEvent)
 
-	// 创建符合AWS规范的流式解析器和去重管理器
+	// 创建符合AWS规范的流式解析器
 	compliantParser := parser.NewCompliantEventStreamParser(false) // 默认非严格模式
-	dedupManager := utils.NewToolDedupManager()                    // OpenAI流式端点的工具去重管理器
 
 	// OpenAI 工具调用增量状态
 	toolIndexByToolUseId := make(map[string]int)  // tool_use_id -> tool_calls 数组索引
@@ -159,11 +167,6 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 			}
 			messageCount += len(events)
 			for _, event := range events {
-				// 在流式处理中添加工具去重逻辑
-				if shouldSkipDuplicateToolEvent(event, dedupManager) {
-					continue
-				}
-
 				if event.Data != nil {
 					if dataMap, ok := event.Data.(map[string]any); ok {
 						switch dataMap["type"] {

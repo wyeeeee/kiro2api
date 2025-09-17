@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"kiro2api/logger"
+	"kiro2api/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +30,57 @@ func PathBasedAuthMiddleware(authToken string, protectedPrefixes []string) gin.H
 
 		c.Next()
 	}
+}
+
+// RequestIDMiddleware 为每个请求注入 request_id 并通过响应头返回
+// - 优先使用客户端的 X-Request-ID
+// - 若无则生成一个UUID（utils.GenerateUUID）
+func RequestIDMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		rid := c.GetHeader("X-Request-ID")
+		if rid == "" {
+			rid = "req_" + utils.GenerateUUID()
+		}
+		c.Set("request_id", rid)
+		c.Writer.Header().Set("X-Request-ID", rid)
+		c.Next()
+	}
+}
+
+// GetRequestID 从上下文读取 request_id（若不存在返回空串）
+func GetRequestID(c *gin.Context) string {
+	if v, ok := c.Get("request_id"); ok {
+		if s, ok2 := v.(string); ok2 {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetMessageID 从上下文读取 message_id（若不存在返回空串）
+func GetMessageID(c *gin.Context) string {
+	if v, ok := c.Get("message_id"); ok {
+		if s, ok2 := v.(string); ok2 {
+			return s
+		}
+	}
+	return ""
+}
+
+// addReqFields 注入标准请求字段，统一上下游日志可追踪（DRY）
+func addReqFields(c *gin.Context, fields ...logger.Field) []logger.Field {
+	rid := GetRequestID(c)
+	mid := GetMessageID(c)
+	// 预留容量避免重复分配
+	out := make([]logger.Field, 0, len(fields)+2)
+	if rid != "" {
+		out = append(out, logger.String("request_id", rid))
+	}
+	if mid != "" {
+		out = append(out, logger.String("message_id", mid))
+	}
+	out = append(out, fields...)
+	return out
 }
 
 // requiresAuth 检查指定路径是否需要认证

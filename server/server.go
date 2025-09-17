@@ -34,6 +34,8 @@ func StartServer(port string, authToken string) {
 	// 添加中间件
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
+	// 注入请求ID，便于日志追踪
+	r.Use(RequestIDMiddleware())
 	r.Use(corsMiddleware())
 	// 只对 /v1 开头的端点进行认证
 	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
@@ -89,10 +91,13 @@ func StartServer(port string, authToken string) {
 		}
 
 		logger.Debug("收到Anthropic请求",
-			logger.String("body", string(body)),
-			logger.Int("body_size", len(body)),
-			logger.String("remote_addr", c.ClientIP()),
-			logger.String("user_agent", c.GetHeader("User-Agent")))
+			addReqFields(c,
+				logger.String("direction", "client_request"),
+				logger.String("body", string(body)),
+				logger.Int("body_size", len(body)),
+				logger.String("remote_addr", c.ClientIP()),
+				logger.String("user_agent", c.GetHeader("User-Agent")),
+			)...)
 
 		// 先解析为通用map以便处理工具格式
 		var rawReq map[string]any
@@ -224,8 +229,11 @@ func StartServer(port string, authToken string) {
 		}
 
 		logger.Debug("收到OpenAI请求",
-			logger.String("body", string(body)),
-			logger.Int("body_size", len(body)))
+			addReqFields(c,
+				logger.String("direction", "client_request"),
+				logger.String("body", string(body)),
+				logger.Int("body_size", len(body)),
+			)...)
 
 		var openaiReq types.OpenAIRequest
 		if err := utils.SafeUnmarshal(body, &openaiReq); err != nil {

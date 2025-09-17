@@ -9,8 +9,10 @@ import (
 // CodeWhispererRequest 表示 CodeWhisperer API 的请求结构
 type CodeWhispererRequest struct {
 	ConversationState struct {
-		ChatTriggerType string `json:"chatTriggerType"`
-		CurrentMessage  struct {
+		AgentContinuationId string `json:"agentContinuationId"` // 代理延续ID，用于追踪代理会话
+		AgentTaskType       string `json:"agentTaskType"`       // 代理任务类型，通常为"vibe"
+		ChatTriggerType     string `json:"chatTriggerType"`
+		CurrentMessage      struct {
 			UserInputMessage struct {
 				UserInputMessageContext struct {
 					ToolResults []ToolResult        `json:"toolResults,omitempty"`

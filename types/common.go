@@ -22,7 +22,7 @@ type HTTPRequest struct {
 	Body    io.Reader
 }
 
-// HTTPResponse HTTP响应封装  
+// HTTPResponse HTTP响应封装
 type HTTPResponse struct {
 	StatusCode int
 	Headers    map[string][]string

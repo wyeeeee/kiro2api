@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gin-gonic/gin"
 	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
@@ -201,14 +202,39 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 }
 
 // BuildCodeWhispererRequest 构建 CodeWhisperer 请求
-func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn string) (types.CodeWhispererRequest, error) {
+func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn string, ctx *gin.Context) (types.CodeWhispererRequest, error) {
 	// logger.Debug("构建CodeWhisperer请求", logger.String("profile_arn", profileArn))
 
 	cwReq := types.CodeWhispererRequest{}
 
+	// 设置代理相关字段 (基于参考文档的标准配置)
+	cwReq.ConversationState.AgentContinuationId = utils.GenerateUUID() // 每次请求生成新的延续ID
+	cwReq.ConversationState.AgentTaskType = "vibe"                     // 固定设置为"vibe"，符合参考文档
+
 	// 智能设置ChatTriggerType (KISS: 简化逻辑但保持准确性)
 	cwReq.ConversationState.ChatTriggerType = determineChatTriggerType(anthropicReq)
-	cwReq.ConversationState.ConversationId = utils.GenerateUUID()
+
+	// 使用稳定的会话ID生成器，基于客户端信息生成持久化的conversationId
+	if ctx != nil {
+		cwReq.ConversationState.ConversationId = utils.GenerateStableConversationID(ctx)
+
+		// 调试日志：记录会话ID生成信息
+		clientInfo := utils.ExtractClientInfo(ctx)
+		logger.Debug("生成稳定会话ID",
+			logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+			logger.String("agent_continuation_id", cwReq.ConversationState.AgentContinuationId),
+			logger.String("agent_task_type", cwReq.ConversationState.AgentTaskType),
+			logger.String("client_ip", clientInfo["client_ip"]),
+			logger.String("user_agent", clientInfo["user_agent"]),
+			logger.String("custom_conv_id", clientInfo["custom_conv_id"]))
+	} else {
+		// 向后兼容：如果没有提供context，仍使用UUID
+		cwReq.ConversationState.ConversationId = utils.GenerateUUID()
+		logger.Debug("使用随机UUID作为会话ID（向后兼容）",
+			logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+			logger.String("agent_continuation_id", cwReq.ConversationState.AgentContinuationId),
+			logger.String("agent_task_type", cwReq.ConversationState.AgentTaskType))
+	}
 
 	// 处理最后一条消息，包括图片
 	if len(anthropicReq.Messages) == 0 {
