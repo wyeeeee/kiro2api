@@ -10,7 +10,7 @@ import (
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
 	toolManager        *ToolLifecycleManager
-	toolAggregator     *SimpleToolAggregator       // 简化：使用简单工具聚合器替代复杂FSM
+	toolAggregator     *SimpleToolAggregator // 简化：使用简单工具聚合器替代复杂FSM
 	eventHandlers      map[string]EventHandler
 	legacyHandlers     map[string]EventHandler
 	completionBuffer   []string

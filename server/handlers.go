@@ -744,7 +744,7 @@ func createAnthropicStreamEvents(messageId, inputContent, model string) []map[st
 			"type": "ping",
 		},
 		{
-			"type": "content_block_start",
+			"type":  "content_block_start",
 			"index": 0,
 			"content_block": map[string]any{
 				"type": "text",

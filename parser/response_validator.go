@@ -103,10 +103,10 @@ func (rv *ResponseValidator) StartValidation(sessionId string) {
 	defer rv.mu.Unlock()
 
 	session := &ValidationSession{
-		sessionId:     sessionId,
-		startTime:     time.Now(),
-		lastActivity:  time.Now(),
-		status:        ValidationActive,
+		sessionId:    sessionId,
+		startTime:    time.Now(),
+		lastActivity: time.Now(),
+		status:       ValidationActive,
 		expectedEndEvents: []string{
 			"content_block_stop",
 			"message_delta",

@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
+
+	"github.com/gin-gonic/gin"
 )
 
 // ValidateAssistantResponseEvent 验证助手响应事件

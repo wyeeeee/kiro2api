@@ -20,7 +20,7 @@ type BlockState struct {
 // SSEStateManager SSE事件状态管理器，确保事件序列符合Claude规范
 type SSEStateManager struct {
 	messageStarted   bool
-	messageDeltaSent bool                // 新增：跟踪message_delta是否已发送
+	messageDeltaSent bool // 新增：跟踪message_delta是否已发送
 	activeBlocks     map[int]*BlockState
 	messageEnded     bool
 	nextBlockIndex   int

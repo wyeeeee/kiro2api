@@ -386,7 +386,6 @@ func (sjs *SonicJSONStreamer) looksLikeValueFragment(content string) bool {
 	return false
 }
 
-
 // onAggregationComplete 聚合完成回调
 func (ssja *SonicStreamingJSONAggregator) onAggregationComplete(toolUseId string, fullInput string) {
 	if ssja.updateCallback != nil {

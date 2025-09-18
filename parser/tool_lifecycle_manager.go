@@ -10,10 +10,10 @@ import (
 
 // ToolLifecycleManager 工具调用生命周期管理器
 type ToolLifecycleManager struct {
-	activeTools       map[string]*ToolExecution
-	completedTools    map[string]*ToolExecution
-	blockIndexMap     map[string]int
-	nextBlockIndex    int
+	activeTools        map[string]*ToolExecution
+	completedTools     map[string]*ToolExecution
+	blockIndexMap      map[string]int
+	nextBlockIndex     int
 	textIntroGenerated bool // 跟踪是否已生成文本介绍
 }
 
