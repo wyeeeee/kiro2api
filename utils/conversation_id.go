@@ -76,40 +76,60 @@ func GenerateStableConversationID(ctx *gin.Context) string {
 	return globalConversationIDManager.GetOrCreateConversationID(ctx)
 }
 
-// GenerateStableAgentContinuationID 生成稳定的代理延续ID
-// 复用现有的稳定ID生成机制，但使用不同的前缀以区分用途
+// GenerateStableAgentContinuationID 生成稳定的代理延续GUID
+// 基于客户端特征生成确定性的标准GUID格式，遵循SOLID-SRP原则
 func GenerateStableAgentContinuationID(ctx *gin.Context) string {
-	// 从请求头中获取客户端标识信息
-	clientIP := ctx.ClientIP()
-	userAgent := ctx.GetHeader("User-Agent")
-
 	// 检查是否有自定义的代理延续ID头（优先级最高）
 	if customAgentID := ctx.GetHeader("X-Agent-Continuation-ID"); customAgentID != "" {
 		return customAgentID
 	}
 
+	// 提取客户端特征信息
+	clientSignature := buildAgentClientSignature(ctx)
+
+	// 生成确定性GUID
+	return generateDeterministicGUID(clientSignature, "agent")
+}
+
+// buildAgentClientSignature 构建代理客户端特征签名 (SOLID-SRP: 单一职责)
+func buildAgentClientSignature(ctx *gin.Context) string {
+	clientIP := ctx.ClientIP()
+	userAgent := ctx.GetHeader("User-Agent")
+
 	// 为了区分conversationId和agentContinuationId，使用更细粒度的时间窗口
 	// 每10分钟内的同一客户端使用相同的agentContinuationId
-	timeWindow := time.Now().Format("200601021504") // 精确到10分钟 (去掉最后一位)
+	timeWindow := time.Now().Format("200601021504") // 精确到10分钟
 	timeWindow = timeWindow[:len(timeWindow)-1]     // 截断到10分钟级别
 
-	// 构建客户端特征字符串，加入agent前缀以区分用途
-	clientSignature := fmt.Sprintf("agent|%s|%s|%s", clientIP, userAgent, timeWindow)
+	return fmt.Sprintf("agent|%s|%s|%s", clientIP, userAgent, timeWindow)
+}
 
-	// 生成基于特征的MD5哈希
-	hash := md5.Sum([]byte(clientSignature))
-	agentContinuationID := fmt.Sprintf("agent-%x", hash[:8]) // 使用前8字节，保持简洁
+// generateDeterministicGUID 基于输入字符串生成确定性GUID (SOLID-SRP: 单一职责)
+// 遵循UUID v5规范，使用MD5哈希生成标准GUID格式
+func generateDeterministicGUID(input, namespace string) string {
+	// 在输入中加入命名空间以避免冲突
+	namespacedInput := fmt.Sprintf("%s|%s", namespace, input)
 
-	return agentContinuationID
+	// 生成MD5哈希
+	hash := md5.Sum([]byte(namespacedInput))
+
+	// 按照UUID格式重新排列字节
+	// 设置版本位 (Version 5 - 基于命名空间的UUID)
+	hash[6] = (hash[6] & 0x0f) | 0x50 // Version 5
+	hash[8] = (hash[8] & 0x3f) | 0x80 // Variant bits
+
+	// 格式化为标准GUID格式: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+	return fmt.Sprintf("%x-%x-%x-%x-%x",
+		hash[0:4], hash[4:6], hash[6:8], hash[8:10], hash[10:16])
 }
 
 // ExtractClientInfo 提取客户端信息用于调试和日志
 func ExtractClientInfo(ctx *gin.Context) map[string]string {
 	return map[string]string{
-		"client_ip":              ctx.ClientIP(),
-		"user_agent":             ctx.GetHeader("User-Agent"),
-		"custom_conv_id":         ctx.GetHeader("X-Conversation-ID"),
-		"custom_agent_cont_id":   ctx.GetHeader("X-Agent-Continuation-ID"),
-		"forwarded_for":          ctx.GetHeader("X-Forwarded-For"),
+		"client_ip":            ctx.ClientIP(),
+		"user_agent":           ctx.GetHeader("User-Agent"),
+		"custom_conv_id":       ctx.GetHeader("X-Conversation-ID"),
+		"custom_agent_cont_id": ctx.GetHeader("X-Agent-Continuation-ID"),
+		"forwarded_for":        ctx.GetHeader("X-Forwarded-For"),
 	}
 }
