@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"kiro2api/logger"
 
@@ -10,7 +11,7 @@ import (
 // BlockState 内容块状态
 type BlockState struct {
 	Index     int    `json:"index"`
-	Type      string `json:"type"`      // "text" | "tool_use"
+	Type      string `json:"type"` // "text" | "tool_use"
 	Started   bool   `json:"started"`
 	Stopped   bool   `json:"stopped"`
 	ToolUseID string `json:"tool_use_id,omitempty"` // 仅用于工具块
@@ -18,12 +19,12 @@ type BlockState struct {
 
 // SSEStateManager SSE事件状态管理器，确保事件序列符合Claude规范
 type SSEStateManager struct {
-	messageStarted  bool                `json:"message_started"`
-	messageDeltaSent bool               `json:"message_delta_sent"` // 新增：跟踪message_delta是否已发送
-	activeBlocks    map[int]*BlockState `json:"active_blocks"`
-	messageEnded    bool                `json:"message_ended"`
-	nextBlockIndex  int                 `json:"next_block_index"`
-	strictMode      bool                `json:"strict_mode"`
+	messageStarted   bool
+	messageDeltaSent bool                // 新增：跟踪message_delta是否已发送
+	activeBlocks     map[int]*BlockState
+	messageEnded     bool
+	nextBlockIndex   int
+	strictMode       bool
 }
 
 // NewSSEStateManager 创建SSE状态管理器
@@ -47,7 +48,7 @@ func (ssm *SSEStateManager) Reset() {
 func (ssm *SSEStateManager) SendEvent(c *gin.Context, sender StreamEventSender, eventData map[string]any) error {
 	eventType, ok := eventData["type"].(string)
 	if !ok {
-		return fmt.Errorf("无效的事件类型")
+		return errors.New("无效的事件类型")
 	}
 
 	// 记录事件发送
@@ -83,7 +84,7 @@ func (ssm *SSEStateManager) handleMessageStart(c *gin.Context, sender StreamEven
 		errMsg := "违规：message_start只能出现一次"
 		logger.Error(errMsg)
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil // 非严格模式下跳过重复的message_start
 	}
@@ -98,7 +99,7 @@ func (ssm *SSEStateManager) handleContentBlockStart(c *gin.Context, sender Strea
 		errMsg := "违规：content_block_start必须在message_start之后"
 		logger.Error(errMsg)
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 	}
 
@@ -106,7 +107,7 @@ func (ssm *SSEStateManager) handleContentBlockStart(c *gin.Context, sender Strea
 		errMsg := "违规：message已结束，不能发送content_block_start"
 		logger.Error(errMsg)
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil
 	}
@@ -126,7 +127,7 @@ func (ssm *SSEStateManager) handleContentBlockStart(c *gin.Context, sender Strea
 		errMsg := fmt.Sprintf("违规：索引%d的content_block已经started但未stopped", index)
 		logger.Error(errMsg, logger.Int("block_index", index))
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil // 跳过重复的start
 	}
@@ -179,7 +180,7 @@ func (ssm *SSEStateManager) handleContentBlockDelta(c *gin.Context, sender Strea
 			errMsg := "content_block_delta缺少有效索引"
 			logger.Error(errMsg)
 			if ssm.strictMode {
-				return fmt.Errorf(errMsg)
+				return errors.New(errMsg)
 			}
 			return nil
 		}
@@ -210,9 +211,10 @@ func (ssm *SSEStateManager) handleContentBlockDelta(c *gin.Context, sender Strea
 			},
 		}
 
-		if blockType == "text" {
+		switch blockType {
+		case "text":
 			startEvent["content_block"].(map[string]any)["text"] = ""
-		} else if blockType == "tool_use" {
+		case "tool_use":
 			// 为工具使用块添加必要字段
 			startEvent["content_block"].(map[string]any)["id"] = fmt.Sprintf("tooluse_auto_%d", index)
 			startEvent["content_block"].(map[string]any)["name"] = "auto_detected"
@@ -232,7 +234,7 @@ func (ssm *SSEStateManager) handleContentBlockDelta(c *gin.Context, sender Strea
 		errMsg := fmt.Sprintf("违规：索引%d的content_block已停止，不能发送delta", index)
 		logger.Error(errMsg, logger.Int("block_index", index))
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil
 	}
@@ -250,7 +252,7 @@ func (ssm *SSEStateManager) handleContentBlockStop(c *gin.Context, sender Stream
 			errMsg := "content_block_stop缺少有效索引"
 			logger.Error(errMsg)
 			if ssm.strictMode {
-				return fmt.Errorf(errMsg)
+				return errors.New(errMsg)
 			}
 			return nil
 		}
@@ -262,7 +264,7 @@ func (ssm *SSEStateManager) handleContentBlockStop(c *gin.Context, sender Stream
 		errMsg := fmt.Sprintf("违规：索引%d的content_block未启动就发送stop", index)
 		logger.Error(errMsg, logger.Int("block_index", index))
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil
 	}
@@ -271,7 +273,7 @@ func (ssm *SSEStateManager) handleContentBlockStop(c *gin.Context, sender Stream
 		errMsg := fmt.Sprintf("违规：索引%d的content_block重复停止", index)
 		logger.Error(errMsg, logger.Int("block_index", index))
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil
 	}
@@ -292,7 +294,7 @@ func (ssm *SSEStateManager) handleMessageDelta(c *gin.Context, sender StreamEven
 		errMsg := "违规：message_delta必须在message_start之后"
 		logger.Error(errMsg)
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 	}
 
@@ -305,7 +307,7 @@ func (ssm *SSEStateManager) handleMessageDelta(c *gin.Context, sender StreamEven
 			logger.Bool("message_delta_sent", ssm.messageDeltaSent),
 			logger.Bool("message_ended", ssm.messageEnded))
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		logger.Debug("跳过重复的message_delta事件")
 		return nil // 非严格模式下跳过重复的message_delta
@@ -350,7 +352,7 @@ func (ssm *SSEStateManager) handleMessageStop(c *gin.Context, sender StreamEvent
 		errMsg := "违规：message_stop必须在message_start之后"
 		logger.Error(errMsg)
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 	}
 
@@ -358,7 +360,7 @@ func (ssm *SSEStateManager) handleMessageStop(c *gin.Context, sender StreamEvent
 		errMsg := "违规：message_stop只能出现一次"
 		logger.Error(errMsg)
 		if ssm.strictMode {
-			return fmt.Errorf(errMsg)
+			return errors.New(errMsg)
 		}
 		return nil
 	}

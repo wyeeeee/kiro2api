@@ -211,6 +211,11 @@ func (cesp *CompliantEventStreamParser) GetToolManager() *ToolLifecycleManager {
 	return cesp.messageProcessor.GetToolManager()
 }
 
+// GetCompletionBuffer 获取聚合的完整内容
+func (cesp *CompliantEventStreamParser) GetCompletionBuffer() string {
+	return cesp.messageProcessor.GetCompletionBuffer()
+}
+
 // ParseResult 解析结果
 type ParseResult struct {
 	Messages       []*EventStreamMessage     `json:"messages"`

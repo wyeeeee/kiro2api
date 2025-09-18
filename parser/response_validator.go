@@ -25,7 +25,6 @@ type ValidationSession struct {
 	messageCount      int
 	textContentLength int
 	toolCallCount     int
-	hasToolResult     bool
 	isComplete        bool
 	errors            []ValidationError
 	status            ValidationStatus
@@ -99,7 +98,7 @@ func (rv *ResponseValidator) registerDefaultRules() {
 }
 
 // StartValidation 开始验证会话
-func (rv *ResponseValidator) StartValidation(sessionId string, hasToolResult bool) {
+func (rv *ResponseValidator) StartValidation(sessionId string) {
 	rv.mu.Lock()
 	defer rv.mu.Unlock()
 
@@ -107,7 +106,6 @@ func (rv *ResponseValidator) StartValidation(sessionId string, hasToolResult boo
 		sessionId:     sessionId,
 		startTime:     time.Now(),
 		lastActivity:  time.Now(),
-		hasToolResult: hasToolResult,
 		status:        ValidationActive,
 		expectedEndEvents: []string{
 			"content_block_stop",
@@ -119,8 +117,7 @@ func (rv *ResponseValidator) StartValidation(sessionId string, hasToolResult boo
 	rv.activeValidations[sessionId] = session
 
 	logger.Debug("开始响应验证会话",
-		logger.String("session_id", sessionId),
-		logger.Bool("has_tool_result", hasToolResult))
+		logger.String("session_id", sessionId))
 }
 
 // ValidateEvent 验证单个事件
@@ -319,7 +316,6 @@ func (rv *ResponseValidator) GetSessionStats(sessionId string) map[string]interf
 		"message_count":       session.messageCount,
 		"text_content_length": session.textContentLength,
 		"tool_call_count":     session.toolCallCount,
-		"has_tool_result":     session.hasToolResult,
 		"is_complete":         session.isComplete,
 		"total_errors":        len(session.errors),
 		"errors_by_severity":  errorsBySeverity,

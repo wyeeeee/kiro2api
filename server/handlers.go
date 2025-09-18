@@ -25,7 +25,6 @@ func min(a, b int) int {
 	return b
 }
 
-
 // extractRelevantHeaders 提取相关的请求头信息
 func extractRelevantHeaders(c *gin.Context) map[string]string {
 	relevantHeaders := map[string]string{}
@@ -56,7 +55,6 @@ func extractRelevantHeaders(c *gin.Context) map[string]string {
 
 	return relevantHeaders
 }
-
 
 // handleStreamRequest 处理流式请求
 func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
@@ -90,6 +88,93 @@ func isDebugMode() bool {
 	return false
 }
 
+// containsToolResults 检测请求是否包含工具结果
+func containsToolResults(anthropicReq types.AnthropicRequest) bool {
+	for _, message := range anthropicReq.Messages {
+		if message.Role == "user" {
+			switch content := message.Content.(type) {
+			case []interface{}:
+				for _, item := range content {
+					if block, ok := item.(map[string]interface{}); ok {
+						if blockType, exists := block["type"]; exists {
+							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
+								return true
+							}
+						}
+					}
+				}
+			case []types.ContentBlock:
+				for _, block := range content {
+					if block.Type == "tool_result" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// generateToolResultFollowUp 为工具结果提交生成后续内容
+func generateToolResultFollowUp(anthropicReq types.AnthropicRequest) string {
+	// 根据最近的工具结果生成相应的跟进内容
+	var toolResults []string
+
+	for _, message := range anthropicReq.Messages {
+		if message.Role == "user" {
+			switch content := message.Content.(type) {
+			case []interface{}:
+				for _, item := range content {
+					if block, ok := item.(map[string]interface{}); ok {
+						if blockType, exists := block["type"]; exists {
+							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
+								if toolContent, exists := block["content"]; exists {
+									if contentStr, ok := toolContent.(string); ok && contentStr != "" {
+										toolResults = append(toolResults, contentStr)
+									}
+								}
+							}
+						}
+					}
+				}
+			case []types.ContentBlock:
+				for _, block := range content {
+					if block.Type == "tool_result" && block.Content != nil {
+						if contentStr, ok := block.Content.(string); ok && contentStr != "" {
+							toolResults = append(toolResults, contentStr)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 生成基于工具结果的跟进内容
+	if len(toolResults) > 0 {
+		// 检查是否是文件操作相关的工具结果
+		for _, result := range toolResults {
+			resultLower := strings.ToLower(result)
+			if strings.Contains(resultLower, "文件") || strings.Contains(resultLower, "file") {
+				if strings.Contains(resultLower, "成功") || strings.Contains(resultLower, "success") {
+					return "文件操作已成功完成。"
+				} else if strings.Contains(resultLower, "错误") || strings.Contains(resultLower, "error") {
+					return "文件操作遇到了问题，我来帮您分析一下。"
+				}
+			}
+			// 检查是否是命令执行结果
+			if strings.Contains(resultLower, "command") || strings.Contains(resultLower, "执行") {
+				return "命令执行完成。让我为您分析结果。"
+			}
+		}
+
+		// 通用的工具执行完成消息
+		return "工具执行完成，让我为您分析结果。"
+	}
+
+	// 默认的后续内容
+	return "好的，基于您提供的信息，让我来帮您处理。"
+}
+
 // handleGenericStreamRequest 通用流式请求处理
 func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
 	// 创建SSE状态管理器，确保事件序列符合Claude规范
@@ -102,12 +187,6 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
 	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
-	// 检测是否为包含tool_result的延续请求
-	hasToolResult := containsToolResult(anthropicReq)
-	if hasToolResult {
-		logger.Info("流式处理检测到tool_result请求，这是工具执行后的延续对话",
-			logger.Int("messages_count", len(anthropicReq.Messages)))
-	}
 	// 更完整的SSE响应头，禁用反向代理缓冲
 	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache")
@@ -249,27 +328,6 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 					logger.Bool("has_parse_error", parseErr != nil),
 				)...)
 			for _, event := range events {
-				// 记录延续请求中的工具调用事件（但不跳过）
-				if hasToolResult {
-					if dataMap, ok := event.Data.(map[string]any); ok {
-						if eventType, ok := dataMap["type"].(string); ok {
-							if eventType == "content_block_start" {
-								if cb, ok := dataMap["content_block"].(map[string]any); ok {
-									if cbType, _ := cb["type"].(string); cbType == "tool_use" {
-										logger.Info("延续请求中检测到新工具调用，正常处理",
-											logger.String("tool_name", func() string {
-												if name, ok := cb["name"].(string); ok {
-													return name
-												}
-												return ""
-											}()))
-										// 不再跳过，继续正常处理
-									}
-								}
-							}
-						}
-					}
-				}
 
 				// 增强调试：记录关键事件字段
 				if dataMap, ok := event.Data.(map[string]any); ok {
@@ -484,30 +542,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		}
 		if err != nil {
 			if err == io.EOF {
-				// 对于 tool_result 延续请求，如果立即遇到 EOF 且没有读取到数据
-				// 说明上游没有返回流式数据，需要生成默认响应
-				if hasToolResult && totalReadBytes == 0 {
-					logger.Info("延续请求遇到立即EOF，强制生成工具执行确认响应")
-
-					// 生成适当的工具执行确认响应
-					defaultText := generateToolResultResponse(anthropicReq)
-					textEvent := map[string]any{
-						"type":  "content_block_delta",
-						"index": 0,
-						"delta": map[string]any{
-							"type": "text_delta",
-							"text": defaultText,
-						},
-					}
-					_ = sender.SendEvent(c, textEvent)
-					totalOutputChars += tokenCalculator.CalculateOutputTokens(defaultText, false)
-					c.Writer.Flush() // 立即刷新响应
-				}
 
 				logger.Debug("响应流结束",
 					addReqFields(c,
 						logger.Int("total_read_bytes", totalReadBytes),
-						logger.Bool("has_tool_result", hasToolResult),
 					)...)
 			} else {
 				logger.Error("读取响应流时发生错误",
@@ -528,11 +566,82 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		flushPending()
 	}
 
+	// *** 关键修复：处理空响应流的情况 ***
+	// 当CodeWhisperer返回空响应时，特别是工具结果提交场景，需要生成适当的内容
+	if totalReadBytes == 0 && totalProcessedEvents == 0 {
+		logger.Debug("检测到空响应流，分析处理策略",
+			addReqFields(c,
+				logger.Int("total_read_bytes", totalReadBytes),
+				logger.Int("processed_events", totalProcessedEvents),
+				logger.Bool("contains_tool_results", containsToolResults(anthropicReq)),
+			)...)
+
+		var compensationContent string
+
+		// 检查是否是工具结果提交场景
+		if containsToolResults(anthropicReq) {
+			logger.Info("检测到工具结果提交场景，生成补偿内容",
+				addReqFields(c,
+					logger.String("scenario", "tool_result_submission"),
+				)...)
+			compensationContent = generateToolResultFollowUp(anthropicReq)
+		} else {
+			// 尝试获取解析器的聚合内容
+			aggregatedContent := compliantParser.GetCompletionBuffer()
+			if aggregatedContent != "" {
+				logger.Info("发现解析器聚合内容，使用聚合内容",
+					addReqFields(c,
+						logger.String("content_preview", func() string {
+							if len(aggregatedContent) > 100 {
+								return aggregatedContent[:100] + "..."
+							}
+							return aggregatedContent
+						}()),
+						logger.Int("content_length", len(aggregatedContent)),
+					)...)
+				compensationContent = aggregatedContent
+			} else {
+				logger.Debug("未发现聚合内容，跳过补偿",
+					addReqFields(c,
+						logger.String("scenario", "empty_response_no_compensation"),
+					)...)
+			}
+		}
+
+		// 如果有补偿内容，生成content_block_delta事件
+		if compensationContent != "" {
+			contentBlockDelta := map[string]any{
+				"type":  "content_block_delta",
+				"index": 0,
+				"delta": map[string]any{
+					"type": "text_delta",
+					"text": compensationContent,
+				},
+			}
+
+			if err := sseStateManager.SendEvent(c, sender, contentBlockDelta); err == nil {
+				totalOutputChars += len(compensationContent)
+				logger.Info("成功发送补偿内容事件",
+					addReqFields(c,
+						logger.Int("compensation_length", len(compensationContent)),
+						logger.String("compensation_preview", func() string {
+							if len(compensationContent) > 50 {
+								return compensationContent[:50] + "..."
+							}
+							return compensationContent
+						}()),
+					)...)
+			} else {
+				logger.Error("发送补偿内容事件失败", logger.Err(err))
+			}
+		}
+	}
+
 	// *** 使用新的stop_reason管理器，确保符合Claude官方规范 ***
 	// 更新工具调用状态
 	stopReasonManager.UpdateToolCallStatus(
-		len(toolUseIdByBlockIndex) > 0 && !hasToolResult, // 有活跃工具且非延续请求
-		len(toolUseIdByBlockIndex) > 0,                   // 有已完成工具
+		len(toolUseIdByBlockIndex) > 0, // 有活跃工具
+		len(toolUseIdByBlockIndex) > 0, // 有已完成工具
 	)
 
 	// 设置实际使用的tokens
@@ -612,8 +721,8 @@ func createAnthropicStreamEvents(messageId, inputContent, model string) []map[st
 	// 基于输入内容估算输入tokens
 	inputTokens := tokenCalculator.EstimateTokensFromChars(len(inputContent))
 
-	// 只创建message_start事件，content_block_start将由状态管理器在首次内容到达时动态生成
-	// 这样可以确保符合Claude规范：只在真正需要时才启动content block
+	// 创建完整的初始事件序列，包括content_block_start
+	// 这确保符合Claude API规范的完整SSE事件序列
 	events := []map[string]any{
 		{
 			"type": "message_start",
@@ -634,7 +743,14 @@ func createAnthropicStreamEvents(messageId, inputContent, model string) []map[st
 		{
 			"type": "ping",
 		},
-		// 移除硬编码的content_block_start，改由状态管理器根据实际数据流动态生成
+		{
+			"type": "content_block_start",
+			"index": 0,
+			"content_block": map[string]any{
+				"type": "text",
+				"text": "",
+			},
+		},
 	}
 	return events
 }
@@ -665,9 +781,13 @@ func createAnthropicFinalEvents(outputTokens, inputTokens int, stopReason string
 		}
 	}
 
-	// 移除错误的content_block_stop事件 - 所有content_block_stop应该由SSE状态管理器在内容处理时发送
-	// 最终事件只应包含message_delta和message_stop
-	return []map[string]any{
+	// 根据Claude API规范，确保包含必要的content_block_stop事件
+	// 这是为了处理可能缺失的content_block_stop事件
+	events := []map[string]any{
+		{
+			"type":  "content_block_stop",
+			"index": 0,
+		},
 		{
 			"type": "message_delta",
 			"delta": map[string]any{
@@ -680,57 +800,8 @@ func createAnthropicFinalEvents(outputTokens, inputTokens int, stopReason string
 			"type": "message_stop",
 		},
 	}
-}
 
-// containsToolResult 检查请求是否包含tool_result，表示这是工具执行后的延续请求
-func containsToolResult(req types.AnthropicRequest) bool {
-	hasToolResult := false
-	messageCount := len(req.Messages)
-
-	// 只检查最后一条用户消息，避免误判历史消息中的tool_result
-	if messageCount > 0 {
-		lastMsg := req.Messages[messageCount-1]
-		if lastMsg.Role == "user" {
-			// 检查消息内容是否包含tool_result类型的content block
-			switch content := lastMsg.Content.(type) {
-			case []any:
-				for _, block := range content {
-					if blockMap, ok := block.(map[string]any); ok {
-						if blockType, exists := blockMap["type"]; exists {
-							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
-								hasToolResult = true
-								break
-							}
-						}
-					}
-				}
-			case []types.ContentBlock:
-				for _, block := range content {
-					if block.Type == "tool_result" {
-						hasToolResult = true
-						break
-					}
-				}
-			}
-		}
-	}
-
-	// 额外验证：如果检测到tool_result，确保这不是首次工具调用请求
-	if hasToolResult && messageCount <= 2 {
-		// 对于消息数量很少的请求，更加谨慎地判断
-		// 通常首次工具调用请求不会超过2条消息
-		logger.Debug("检测到可能的误判：消息数量较少但包含tool_result",
-			logger.Int("message_count", messageCount),
-			logger.Bool("detected_tool_result", hasToolResult))
-
-		// 检查是否有明显的首次工具调用特征
-		if messageCount == 1 {
-			// 只有一条消息且包含tool_result，很可能是误判
-			return false
-		}
-	}
-
-	return hasToolResult
+	return events
 }
 
 // handleNonStreamRequest 处理非流式请求
@@ -739,18 +810,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
 	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
-	// 检测是否为包含tool_result的延续请求
-	hasToolResult := containsToolResult(anthropicReq)
-	if hasToolResult {
-		logger.Info("检测到tool_result请求，这是工具执行后的延续对话",
-			addReqFields(c, logger.Int("messages_count", len(anthropicReq.Messages)))...)
-	} else {
-		logger.Debug("未检测到tool_result，这可能是首次工具调用或普通对话",
-			addReqFields(c,
-				logger.Int("messages_count", len(anthropicReq.Messages)),
-				logger.Bool("has_tools", len(anthropicReq.Tools) > 0),
-			)...)
-	}
 
 	resp, err := executeCodeWhispererRequest(c, anthropicReq, token, false)
 	if err != nil {
@@ -763,34 +822,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	// 读取响应体
 	body, err := utils.ReadHTTPResponse(resp.Body)
 	if err != nil {
-		// 特殊处理：如果是 tool_result 请求且遇到读取错误，可能是空响应
-		if hasToolResult && (err == io.EOF || len(body) == 0) {
-			logger.Info("tool_result请求遇到空响应，生成智能默认应答")
-			defaultText := generateToolResultResponse(anthropicReq)
-			// 使用stop_reason管理器确定默认响应的stop_reason
-			stopReasonManager := NewStopReasonManager(anthropicReq)
-			outputTokens := tokenCalculator.CalculateOutputTokens(defaultText, false)
-			stopReasonManager.SetActualTokensUsed(outputTokens)
-			stopReason := stopReasonManager.DetermineStopReason()
-
-			anthropicResp := map[string]any{
-				"content": []map[string]any{{
-					"type": "text",
-					"text": defaultText,
-				}},
-				"model":         anthropicReq.Model,
-				"role":          "assistant",
-				"stop_reason":   stopReason,
-				"stop_sequence": nil,
-				"type":          "message",
-				"usage": map[string]any{
-					"input_tokens":  inputTokens,
-					"output_tokens": outputTokens,
-				},
-			}
-			c.JSON(http.StatusOK, anthropicResp)
-			return
-		}
 		handleResponseReadError(c, err)
 		return
 	}
@@ -832,8 +863,8 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 
 		// 提供更详细的错误信息和建议
 		errorResp := gin.H{
-			"error": "响应解析失败",
-			"type":  "parsing_error",
+			"error":   "响应解析失败",
+			"type":    "parsing_error",
 			"message": "无法解析AWS CodeWhisperer响应格式",
 		}
 
@@ -870,103 +901,78 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 
 	// 基于实际工具数量判断是否包含工具调用
-	// 但如果是tool_result请求，不应该设置sawToolUse为true
-	sawToolUse := len(allTools) > 0 && !hasToolResult
+	sawToolUse := len(allTools) > 0
 
 	logger.Debug("非流式响应处理完成",
 		addReqFields(c,
 			logger.String("text_content", textAgg[:min(100, len(textAgg))]),
 			logger.Int("tool_calls_count", len(allTools)),
 			logger.Bool("saw_tool_use", sawToolUse),
-			logger.Bool("has_tool_result", hasToolResult),
 		)...)
 
-	// 添加文本内容（如果是tool_result请求但没有文本，添加默认响应）
+	// 添加文本内容
 	if textAgg != "" {
 		contexts = append(contexts, map[string]any{
 			"type": "text",
 			"text": textAgg,
 		})
-	} else if hasToolResult {
-		// tool_result请求必须有文本响应（除非有工具调用）
-		defaultText := generateToolResultResponse(anthropicReq)
-		contexts = append(contexts, map[string]any{
-			"type": "text",
-			"text": defaultText,
-		})
 	}
 
-	// 添加工具调用（只在非tool_result请求时添加）
-	// 当收到tool_result后，不应该再返回工具调用，而是返回最终文本响应
-	if !hasToolResult {
-		// 工具已经在前面从toolManager获取到allTools中
-		logger.Debug("从工具生命周期管理器获取工具调用",
-			logger.Int("total_tools", len(allTools)),
-			logger.Int("parse_result_tools", len(result.GetToolCalls())))
+	// 添加工具调用
+	// 工具已经在前面从toolManager获取到allTools中
+	logger.Debug("从工具生命周期管理器获取工具调用",
+		logger.Int("total_tools", len(allTools)),
+		logger.Int("parse_result_tools", len(result.GetToolCalls())))
 
-		for _, tool := range allTools {
-			logger.Debug("添加工具调用到响应",
+	for _, tool := range allTools {
+		logger.Debug("添加工具调用到响应",
+			logger.String("tool_id", tool.ID),
+			logger.String("tool_name", tool.Name),
+			logger.String("tool_status", tool.Status.String()),
+			logger.Any("tool_arguments", tool.Arguments))
+
+		// 创建标准的tool_use块，确保包含完整的状态信息
+		toolUseBlock := map[string]any{
+			"type":  "tool_use",
+			"id":    tool.ID,
+			"name":  tool.Name,
+			"input": tool.Arguments,
+		}
+
+		// 如果工具参数为空或nil，确保为空对象而不是nil
+		if tool.Arguments == nil {
+			toolUseBlock["input"] = map[string]any{}
+		}
+
+		// 添加详细的调试日志，验证tool_use块格式
+		if toolUseBlockJSON, err := utils.SafeMarshal(toolUseBlock); err == nil {
+			logger.Debug("发送给Claude CLI的tool_use块详细结构",
 				logger.String("tool_id", tool.ID),
 				logger.String("tool_name", tool.Name),
-				logger.String("tool_status", tool.Status.String()),
-				logger.Bool("is_continuation", hasToolResult),
-				logger.Any("tool_arguments", tool.Arguments))
-
-			// 创建标准的tool_use块，确保包含完整的状态信息
-			toolUseBlock := map[string]any{
-				"type":  "tool_use",
-				"id":    tool.ID,
-				"name":  tool.Name,
-				"input": tool.Arguments,
-			}
-
-			// 如果工具参数为空或nil，确保为空对象而不是nil
-			if tool.Arguments == nil {
-				toolUseBlock["input"] = map[string]any{}
-			}
-
-			// 添加详细的调试日志，验证tool_use块格式
-			if toolUseBlockJSON, err := utils.SafeMarshal(toolUseBlock); err == nil {
-				logger.Debug("发送给Claude CLI的tool_use块详细结构",
-					logger.String("tool_id", tool.ID),
-					logger.String("tool_name", tool.Name),
-					logger.String("tool_use_json", string(toolUseBlockJSON)),
-					logger.String("input_type", fmt.Sprintf("%T", tool.Arguments)),
-					logger.Any("arguments_value", tool.Arguments))
-			}
-
-			contexts = append(contexts, toolUseBlock)
-
-			// 记录工具调用完成状态，帮助客户端识别工具调用已完成
-			logger.Debug("工具调用已添加到响应",
-				logger.String("tool_id", tool.ID),
-				logger.String("tool_name", tool.Name))
+				logger.String("tool_use_json", string(toolUseBlockJSON)),
+				logger.String("input_type", fmt.Sprintf("%T", tool.Arguments)),
+				logger.Any("arguments_value", tool.Arguments))
 		}
-	} else {
-		// 这是tool_result请求，记录但不添加工具
-		logger.Info("收到tool_result请求，返回文本确认而不是工具调用",
-			logger.Bool("has_tool_result", hasToolResult),
-			logger.Int("available_tools", len(allTools)))
-	}
 
-	// 记录延续请求中的工具调用情况
-	if hasToolResult && len(result.GetToolCalls()) > 0 {
-		logger.Info("延续请求中包含新工具调用，正常处理",
-			logger.Int("new_tools", len(result.GetToolCalls())))
+		contexts = append(contexts, toolUseBlock)
+
+		// 记录工具调用完成状态，帮助客户端识别工具调用已完成
+		logger.Debug("工具调用已添加到响应",
+			logger.String("tool_id", tool.ID),
+			logger.String("tool_name", tool.Name))
 	}
 
 	// 使用新的stop_reason管理器，确保符合Claude官方规范
 	stopReasonManager := NewStopReasonManager(anthropicReq)
 	outputTokens := tokenCalculator.CalculateOutputTokens(textAgg, sawToolUse)
 	stopReasonManager.SetActualTokensUsed(outputTokens)
-	stopReasonManager.UpdateToolCallStatus(sawToolUse && !hasToolResult, sawToolUse)
+	stopReasonManager.UpdateToolCallStatus(sawToolUse, sawToolUse)
 	stopReason := stopReasonManager.DetermineStopReason()
 
 	logger.Debug("非流式响应stop_reason决策",
 		logger.String("stop_reason", stopReason),
 		logger.String("description", GetStopReasonDescription(stopReason)),
 		logger.Bool("saw_tool_use", sawToolUse),
-		logger.Bool("has_tool_result", hasToolResult),
 		logger.Int("output_tokens", outputTokens))
 
 	anthropicResp := map[string]any{
@@ -994,109 +1000,6 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		)...)
 	c.JSON(http.StatusOK, anthropicResp)
 }
-
-// generateToolResultResponse 根据工具结果生成智能回复
-func generateToolResultResponse(req types.AnthropicRequest) string {
-	// 分析最后一条消息中的工具结果内容
-	if len(req.Messages) == 0 {
-		return "已处理工具执行结果。"
-	}
-
-	lastMsg := req.Messages[len(req.Messages)-1]
-	if lastMsg.Role != "user" {
-		return "已处理工具执行结果。"
-	}
-
-	// 尝试从消息内容中提取工具相关信息
-	toolName := ""
-	toolOutput := ""
-
-	switch content := lastMsg.Content.(type) {
-	case []any:
-		for _, block := range content {
-			if blockMap, ok := block.(map[string]any); ok {
-				if blockType, exists := blockMap["type"]; exists {
-					if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
-						// 提取工具名称
-						if toolUseId, ok := blockMap["tool_use_id"].(string); ok && toolUseId != "" {
-							toolName = extractToolNameFromId(toolUseId)
-						}
-						// 提取工具输出的前几个字符
-						if content, ok := blockMap["content"].(string); ok {
-							toolOutput = content
-							if len(toolOutput) > 100 {
-								toolOutput = toolOutput[:100] + "..."
-							}
-						}
-						break
-					}
-				}
-			}
-		}
-	case []types.ContentBlock:
-		for _, block := range content {
-			if block.Type == "tool_result" {
-				if block.ToolUseId != nil {
-					toolName = extractToolNameFromId(*block.ToolUseId)
-				}
-				if contentStr, ok := block.Content.(string); ok {
-					toolOutput = contentStr
-					if len(toolOutput) > 100 {
-						toolOutput = toolOutput[:100] + "..."
-					}
-				}
-				break
-			}
-		}
-	}
-
-	// 根据工具类型生成智能回复
-	if toolName != "" {
-		switch toolName {
-		case "Read", "读取文件":
-			return "我已经查看了文件内容。"
-		case "Write", "写入文件":
-			return "文件已成功写入。"
-		case "Bash", "执行命令":
-			return "命令已执行完成。"
-		case "LS", "列出文件":
-			return "我已经查看了目录内容。"
-		case "Grep", "搜索文件":
-			return "搜索操作已完成。"
-		case "Edit", "编辑文件":
-			return "文件编辑已完成。"
-		default:
-			if toolOutput != "" {
-				return fmt.Sprintf("已执行%s操作，结果已获取。", toolName)
-			}
-			return fmt.Sprintf("已完成%s工具的执行。", toolName)
-		}
-	}
-
-	// 如果无法识别具体工具，返回通用确认
-	if toolOutput != "" {
-		return "已成功执行工具操作并获取结果。"
-	}
-	return "工具执行完成。"
-}
-
-// extractToolNameFromId 从tool_use_id中提取工具名称
-func extractToolNameFromId(toolUseId string) string {
-	// tool_use_id 通常包含工具名称信息
-	// 例如: "tooluse_Read_abc123" -> "Read"
-	if strings.HasPrefix(toolUseId, "tooluse_") {
-		parts := strings.Split(toolUseId, "_")
-		if len(parts) > 1 {
-			return parts[1]
-		}
-	}
-	return ""
-}
-
-// estimateInputTokens 估算输入token数量
-
-// 已移除模板渲染相关函数，现在使用前后端分离架构
-// handleTokenDashboard 和 loadDashboardTemplate 已废弃
 
 // createTokenPreview 创建token预览显示格式 (***+后10位)
 func createTokenPreview(token string) string {

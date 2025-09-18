@@ -3,13 +3,14 @@ package parser
 import (
 	"kiro2api/logger"
 	"kiro2api/utils"
+	"strings"
 )
 
 // CompliantMessageProcessor 符合规范的消息处理器
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
 	toolManager        *ToolLifecycleManager
-	toolFSM            *ToolCallFSM // 新增：工具调用状态机
+	toolAggregator     *SimpleToolAggregator       // 简化：使用简单工具聚合器替代复杂FSM
 	eventHandlers      map[string]EventHandler
 	legacyHandlers     map[string]EventHandler
 	completionBuffer   []string
@@ -30,21 +31,13 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 	processor := &CompliantMessageProcessor{
 		sessionManager:   NewSessionManager(),
 		toolManager:      NewToolLifecycleManager(),
-		toolFSM:          NewToolCallFSM(),
+		toolAggregator:   NewSimpleToolAggregator(), // 简化：使用简单聚合器
 		eventHandlers:    make(map[string]EventHandler),
 		legacyHandlers:   make(map[string]EventHandler),
 		completionBuffer: make([]string, 0, 16),
 		startedTools:     make(map[string]bool),
 		toolBlockIndex:   make(map[string]int),
 	}
-
-	// 添加状态机监听器
-	processor.toolFSM.AddListener(func(toolID string, oldState, newState ToolCallState, state *ToolState) {
-		logger.Debug("工具状态变化",
-			logger.String("tool_id", toolID),
-			logger.String("old_state", oldState.String()),
-			logger.String("new_state", newState.String()))
-	})
 
 	// 创建Sonic聚合器，并设置参数更新回调
 	processor.toolDataAggregator = NewSonicStreamingJSONAggregatorWithCallback(
@@ -70,7 +63,7 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 func (cmp *CompliantMessageProcessor) Reset() {
 	cmp.sessionManager.Reset()
 	cmp.toolManager.Reset()
-	cmp.toolFSM.Reset()
+	cmp.toolAggregator.Reset() // 简化：重置简单聚合器
 	cmp.completionBuffer = cmp.completionBuffer[:0]
 	// 重置旧格式工具状态
 	if cmp.legacyToolState != nil {
@@ -251,6 +244,14 @@ func (cmp *CompliantMessageProcessor) processExceptionMessage(message *EventStre
 // GetSessionManager 获取会话管理器
 func (cmp *CompliantMessageProcessor) GetSessionManager() *SessionManager {
 	return cmp.sessionManager
+}
+
+// GetCompletionBuffer 获取聚合的完整内容
+func (cmp *CompliantMessageProcessor) GetCompletionBuffer() string {
+	if len(cmp.completionBuffer) == 0 {
+		return ""
+	}
+	return strings.Join(cmp.completionBuffer, "")
 }
 
 // GetToolManager 获取工具管理器

@@ -76,12 +76,40 @@ func GenerateStableConversationID(ctx *gin.Context) string {
 	return globalConversationIDManager.GetOrCreateConversationID(ctx)
 }
 
+// GenerateStableAgentContinuationID 生成稳定的代理延续ID
+// 复用现有的稳定ID生成机制，但使用不同的前缀以区分用途
+func GenerateStableAgentContinuationID(ctx *gin.Context) string {
+	// 从请求头中获取客户端标识信息
+	clientIP := ctx.ClientIP()
+	userAgent := ctx.GetHeader("User-Agent")
+
+	// 检查是否有自定义的代理延续ID头（优先级最高）
+	if customAgentID := ctx.GetHeader("X-Agent-Continuation-ID"); customAgentID != "" {
+		return customAgentID
+	}
+
+	// 为了区分conversationId和agentContinuationId，使用更细粒度的时间窗口
+	// 每10分钟内的同一客户端使用相同的agentContinuationId
+	timeWindow := time.Now().Format("200601021504") // 精确到10分钟 (去掉最后一位)
+	timeWindow = timeWindow[:len(timeWindow)-1]     // 截断到10分钟级别
+
+	// 构建客户端特征字符串，加入agent前缀以区分用途
+	clientSignature := fmt.Sprintf("agent|%s|%s|%s", clientIP, userAgent, timeWindow)
+
+	// 生成基于特征的MD5哈希
+	hash := md5.Sum([]byte(clientSignature))
+	agentContinuationID := fmt.Sprintf("agent-%x", hash[:8]) // 使用前8字节，保持简洁
+
+	return agentContinuationID
+}
+
 // ExtractClientInfo 提取客户端信息用于调试和日志
 func ExtractClientInfo(ctx *gin.Context) map[string]string {
 	return map[string]string{
-		"client_ip":      ctx.ClientIP(),
-		"user_agent":     ctx.GetHeader("User-Agent"),
-		"custom_conv_id": ctx.GetHeader("X-Conversation-ID"),
-		"forwarded_for":  ctx.GetHeader("X-Forwarded-For"),
+		"client_ip":              ctx.ClientIP(),
+		"user_agent":             ctx.GetHeader("User-Agent"),
+		"custom_conv_id":         ctx.GetHeader("X-Conversation-ID"),
+		"custom_agent_cont_id":   ctx.GetHeader("X-Agent-Continuation-ID"),
+		"forwarded_for":          ctx.GetHeader("X-Forwarded-For"),
 	}
 }

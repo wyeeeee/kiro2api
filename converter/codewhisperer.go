@@ -208,8 +208,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 	cwReq := types.CodeWhispererRequest{}
 
 	// 设置代理相关字段 (基于参考文档的标准配置)
-	cwReq.ConversationState.AgentContinuationId = utils.GenerateUUID() // 每次请求生成新的延续ID
-	cwReq.ConversationState.AgentTaskType = "vibe"                     // 固定设置为"vibe"，符合参考文档
+	// 使用稳定的代理延续ID生成器，保持会话连续性 (KISS + DRY原则)
+	cwReq.ConversationState.AgentContinuationId = utils.GenerateStableAgentContinuationID(ctx)
+	cwReq.ConversationState.AgentTaskType = "vibe" // 固定设置为"vibe"，符合参考文档
 
 	// 智能设置ChatTriggerType (KISS: 简化逻辑但保持准确性)
 	cwReq.ConversationState.ChatTriggerType = determineChatTriggerType(anthropicReq)
@@ -226,7 +227,8 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 			logger.String("agent_task_type", cwReq.ConversationState.AgentTaskType),
 			logger.String("client_ip", clientInfo["client_ip"]),
 			logger.String("user_agent", clientInfo["user_agent"]),
-			logger.String("custom_conv_id", clientInfo["custom_conv_id"]))
+			logger.String("custom_conv_id", clientInfo["custom_conv_id"]),
+			logger.String("custom_agent_cont_id", clientInfo["custom_agent_cont_id"]))
 	} else {
 		// 向后兼容：如果没有提供context，仍使用UUID
 		cwReq.ConversationState.ConversationId = utils.GenerateUUID()

@@ -3,29 +3,28 @@ package server
 import (
 	"kiro2api/logger"
 	"kiro2api/types"
+	"slices"
 )
 
 // StopReasonManager 管理符合Claude规范的stop_reason决策
 type StopReasonManager struct {
-	maxTokens           int
-	requestedMaxTokens  int
-	stopSequences       []string
-	hasActiveToolCalls  bool
-	hasCompletedTools   bool
-	isToolResultRequest bool
-	actualTokensUsed    int
+	maxTokens          int
+	requestedMaxTokens int
+	stopSequences      []string
+	hasActiveToolCalls bool
+	hasCompletedTools  bool
+	actualTokensUsed   int
 }
 
 // NewStopReasonManager 创建stop_reason管理器
 func NewStopReasonManager(anthropicReq types.AnthropicRequest) *StopReasonManager {
 	return &StopReasonManager{
-		maxTokens:           anthropicReq.MaxTokens,
-		requestedMaxTokens:  anthropicReq.MaxTokens,
-		stopSequences:       []string{}, // AnthropicRequest 当前不包含 StopSequences 字段
-		hasActiveToolCalls:  false,
-		hasCompletedTools:   false,
-		isToolResultRequest: containsToolResult(anthropicReq),
-		actualTokensUsed:    0,
+		maxTokens:          anthropicReq.MaxTokens,
+		requestedMaxTokens: anthropicReq.MaxTokens,
+		stopSequences:      []string{}, // AnthropicRequest 当前不包含 StopSequences 字段
+		hasActiveToolCalls: false,
+		hasCompletedTools:  false,
+		actualTokensUsed:   0,
 	}
 }
 
@@ -50,8 +49,7 @@ func (srm *StopReasonManager) DetermineStopReason() string {
 		logger.Int("max_tokens", srm.maxTokens),
 		logger.Int("actual_tokens", srm.actualTokensUsed),
 		logger.Bool("has_active_tools", srm.hasActiveToolCalls),
-		logger.Bool("has_completed_tools", srm.hasCompletedTools),
-		logger.Bool("is_tool_result_request", srm.isToolResultRequest))
+		logger.Bool("has_completed_tools", srm.hasCompletedTools))
 
 	// 规则1: 检查是否达到token限制 - 根据Claude规范优先级最高
 	if srm.actualTokensUsed >= srm.maxTokens {
@@ -61,16 +59,9 @@ func (srm *StopReasonManager) DetermineStopReason() string {
 
 	// 规则2: 检查是否有活跃的工具调用等待执行
 	// 根据Claude规范：只有当Claude主动调用工具且期待工具执行时才使用tool_use
-	if srm.hasActiveToolCalls && !srm.isToolResultRequest {
+	if srm.hasActiveToolCalls {
 		logger.Debug("确定stop_reason: tool_use - 检测到活跃工具调用")
 		return "tool_use"
-	}
-
-	// 规则3: 对于tool_result延续请求，完成后应该是end_turn
-	// 根据Claude规范：工具执行完毕后的正常结束
-	if srm.isToolResultRequest {
-		logger.Debug("确定stop_reason: end_turn - tool_result请求完成")
-		return "end_turn"
 	}
 
 	// 规则4: 检查停止序列（如果实现了相关逻辑）
@@ -124,10 +115,8 @@ func ValidateStopReason(stopReason string) bool {
 		"refusal",
 	}
 
-	for _, valid := range validStopReasons {
-		if stopReason == valid {
-			return true
-		}
+	if slices.Contains(validStopReasons, stopReason) {
+		return true
 	}
 
 	logger.Warn("检测到无效的stop_reason", logger.String("stop_reason", stopReason))
