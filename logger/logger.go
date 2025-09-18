@@ -141,17 +141,28 @@ func (l *Logger) shouldLog(level Level) bool {
 	return atomic.LoadInt64(&l.level) <= int64(level)
 }
 
+// LogEntry 有序日志条目结构 - 确保字段输出顺序固定
+type LogEntry struct {
+	Timestamp string         `json:"timestamp"`
+	Level     string         `json:"level"`
+	File      string         `json:"file,omitempty"`
+	Func      string         `json:"func,omitempty"`
+	Message   string         `json:"message"`
+	Fields    map[string]any `json:"-"` // 动态字段，单独处理
+}
+
 // log 内部日志记录方法（优化版本）
 func (l *Logger) log(level Level, msg string, fields []Field) {
 	if !l.shouldLog(level) {
 		return
 	}
 
-	// 构建日志条目
-	entry := map[string]any{
-		"timestamp": time.Now().Format("2006-01-02T15:04:05.000Z07:00"),
-		"level":     levelNames[level],
-		"message":   msg,
+	// 构建标准日志条目
+	entry := &LogEntry{
+		Timestamp: time.Now().Format("2006-01-02T15:04:05.000Z07:00"),
+		Level:     levelNames[level],
+		Message:   msg,
+		Fields:    make(map[string]any),
 	}
 
 	// 按需获取调用者信息（优化：可配置）
@@ -160,7 +171,7 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 			if idx := strings.LastIndex(file, "/"); idx >= 0 {
 				file = file[idx+1:]
 			}
-			entry["file"] = fmt.Sprintf("%s:%d", file, line)
+			entry.File = fmt.Sprintf("%s:%d", file, line)
 			// 提取函数名，便于快速定位日志来源
 			if fn := runtime.FuncForPC(pc); fn != nil {
 				name := fn.Name()
@@ -168,20 +179,25 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 				if dot := strings.LastIndex(name, "."); dot >= 0 && dot < len(name)-1 {
 					name = name[dot+1:]
 				}
-				entry["func"] = name
+				entry.Func = name
 			}
 		}
 	}
 
-	// 添加字段
+	// 收集动态字段，过滤重复的系统字段
 	for _, field := range fields {
-		entry[field.Key] = field.Value
+		// 跳过重复的系统字段
+		if field.Key == "level" || field.Key == "log_level" ||
+		   field.Key == "timestamp" || field.Key == "message" ||
+		   field.Key == "file" || field.Key == "log_file" ||
+		   field.Key == "func" {
+			continue
+		}
+		entry.Fields[field.Key] = field.Value
 	}
 
-	// 优化的JSON序列化（使用sonic高性能库）
-	var jsonData []byte
-	// 使用sonic的高性能序列化
-	jsonData, _ = sonic.Marshal(entry)
+	// 使用自定义序列化确保字段顺序
+	jsonData := l.marshalLogEntry(entry)
 
 	// 直接输出日志 - log.Logger本身已经线程安全！
 	l.logger.Println(string(jsonData))
@@ -190,6 +206,71 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 	if level == FATAL {
 		os.Exit(1)
 	}
+}
+
+// marshalLogEntry 自定义日志条目序列化，确保字段顺序
+func (l *Logger) marshalLogEntry(entry *LogEntry) []byte {
+	// 手动构建JSON字符串确保字段顺序：timestamp > level > file > func > message > 其他字段
+	var b strings.Builder
+	b.WriteString(`{"timestamp":"`)
+	b.WriteString(entry.Timestamp)
+	b.WriteString(`","level":"`)
+	b.WriteString(entry.Level)
+	b.WriteString(`"`)
+
+	// 添加可选字段
+	if entry.File != "" {
+		b.WriteString(`,"file":"`)
+		b.WriteString(entry.File)
+		b.WriteString(`"`)
+	}
+	if entry.Func != "" {
+		b.WriteString(`,"func":"`)
+		b.WriteString(entry.Func)
+		b.WriteString(`"`)
+	}
+
+	b.WriteString(`,"message":"`)
+	// 转义message中的特殊字符
+	escapedMsg, _ := sonic.MarshalString(entry.Message)
+	// 移除外层引号
+	if len(escapedMsg) >= 2 {
+		b.WriteString(escapedMsg[1:len(escapedMsg)-1])
+	}
+	b.WriteString(`"`)
+
+	// 添加动态字段（按键名排序确保一致性）
+	if len(entry.Fields) > 0 {
+		// 对字段名进行排序确保输出一致性
+		var keys []string
+		for k := range entry.Fields {
+			keys = append(keys, k)
+		}
+		// 简单排序（保持性能）
+		for i := 0; i < len(keys)-1; i++ {
+			for j := i + 1; j < len(keys); j++ {
+				if keys[i] > keys[j] {
+					keys[i], keys[j] = keys[j], keys[i]
+				}
+			}
+		}
+
+		for _, k := range keys {
+			v := entry.Fields[k]
+			b.WriteString(`,"`)
+			b.WriteString(k)
+			b.WriteString(`":`)
+			// 序列化字段值
+			if fieldJSON, err := sonic.Marshal(v); err == nil {
+				b.Write(fieldJSON)
+			} else {
+				b.WriteString(`null`)
+			}
+		}
+	}
+
+	b.WriteString(`}`)
+	return []byte(b.String())
 }
 
 // SetLevel 设置日志级别（优化：原子操作）

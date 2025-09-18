@@ -20,9 +20,10 @@ func main() {
 	logger.Reinitialize()
 
 	// 显示当前日志级别设置（仅在DEBUG级别时显示详细信息）
+	// 注意：移除重复的系统字段，这些信息已包含在日志结构中
 	logger.Debug("日志系统初始化完成",
-		logger.String("log_level", os.Getenv("LOG_LEVEL")),
-		logger.String("log_file", os.Getenv("LOG_FILE")))
+		logger.String("config_level", os.Getenv("LOG_LEVEL")),
+		logger.String("config_file", os.Getenv("LOG_FILE")))
 
 	// 🚀 启动时主动初始化token系统
 	logger.Info("正在初始化token系统...")
