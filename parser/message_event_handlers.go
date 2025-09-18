@@ -10,6 +10,27 @@ import (
 
 // === 辅助函数 ===
 
+// convertInputToString 将interface{}类型的input转换为JSON字符串
+func convertInputToString(input interface{}) string {
+	if input == nil {
+		return "{}"
+	}
+
+	// 如果已经是字符串，直接返回
+	if str, ok := input.(string); ok {
+		return str
+	}
+
+	// 将对象转换为JSON字符串
+	jsonBytes, err := utils.FastMarshal(input)
+	if err != nil {
+		logger.Warn("转换input为JSON字符串失败", logger.Err(err))
+		return "{}"
+	}
+
+	return string(jsonBytes)
+}
+
 // isToolCallEvent 检查是否为工具调用事件
 func isToolCallEvent(payload []byte) bool {
 	payloadStr := string(payload)
@@ -451,7 +472,7 @@ func (h *StandardAssistantResponseEventHandler) handleToolCallEvent(message *Eve
 		Type: "function",
 		Function: ToolCallFunction{
 			Name:      evt.Name,
-			Arguments: evt.Input,
+			Arguments: convertInputToString(evt.Input),
 		},
 	}
 
@@ -604,10 +625,11 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		logger.String("toolUseId", evt.ToolUseId),
 		logger.String("name", evt.Name),
 		logger.String("input_preview", func() string {
-			if len(evt.Input) > 50 {
-				return evt.Input[:50] + "..."
+			inputStr := convertInputToString(evt.Input)
+			if len(inputStr) > 50 {
+				return inputStr[:50] + "..."
 			}
-			return evt.Input
+			return inputStr
 		}()),
 		logger.Bool("stop", evt.Stop))
 
@@ -631,13 +653,16 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			logger.String("toolUseId", evt.ToolUseId),
 			logger.String("name", evt.Name))
 
-		// 创建初始工具调用请求（使用空参数）
+		// 🔥 核心修复：直接使用上游数据中的完整input参数
+		inputStr := convertInputToString(evt.Input)
+
+		// 创建初始工具调用请求（使用完整参数）
 		toolCall := ToolCall{
 			ID:   evt.ToolUseId,
 			Type: "function",
 			Function: ToolCallFunction{
 				Name:      evt.Name,
-				Arguments: "{}", // 初始为空，后续通过聚合器更新
+				Arguments: inputStr, // 修复：使用完整的input参数
 			},
 		}
 
@@ -656,22 +681,23 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 	}
 
 	// 第二步：使用聚合器处理工具调用数据
-	complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, evt.Input, evt.Stop, -1)
+	inputStr := convertInputToString(evt.Input)
+	complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, inputStr, evt.Stop, -1)
 
 	// 🔥 核心修复：处理未完整数据时发送增量事件而不是空事件
 	if !complete {
 		logger.Debug("工具调用数据未完整，发送增量事件",
 			logger.String("toolUseId", evt.ToolUseId),
 			logger.String("name", evt.Name),
-			logger.String("inputFragment", evt.Input),
+			logger.String("inputFragment", inputStr),
 			logger.Bool("stop", evt.Stop))
 
 		// 如果有新的输入片段，检查配置后发送参数增量事件
-		if evt.Input != "" {
+		if inputStr != "" && inputStr != "{}" {
 			// 边界情况检查：确保工具ID有效
 			if evt.ToolUseId == "" {
 				logger.Warn("工具调用片段缺少有效的toolUseId，跳过增量事件发送",
-					logger.String("inputFragment", evt.Input))
+					logger.String("inputFragment", inputStr))
 				return []SSEEvent{}, nil
 			}
 
@@ -679,10 +705,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			toolIndex := h.toolManager.GetBlockIndex(evt.ToolUseId)
 			if toolIndex >= 0 {
 				// 验证输入片段的基本格式（智能处理大片段）
-				if len(evt.Input) > 50000 { // 提高阈值到50KB，避免正常大型内容被截断
+				if len(inputStr) > 50000 { // 提高阈值到50KB，避免正常大型内容被截断
 					logger.Warn("工具调用输入片段非常大，跳过增量事件发送（但保留完整数据用于聚合）",
 						logger.String("toolUseId", evt.ToolUseId),
-						logger.Int("originalLength", len(evt.Input)))
+						logger.Int("originalLength", len(inputStr)))
 					// 不截断数据，只是跳过增量事件发送，让聚合器处理完整数据
 					return []SSEEvent{}, nil
 				}
@@ -691,10 +717,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 					logger.String("toolUseId", evt.ToolUseId),
 					logger.Int("blockIndex", toolIndex),
 					logger.String("inputFragment", func() string {
-						if len(evt.Input) > 100 {
-							return evt.Input[:100] + "..."
+						if len(inputStr) > 100 {
+							return inputStr[:100] + "..."
 						}
-						return evt.Input
+						return inputStr
 					}()),
 					logger.Bool("incremental_enabled", true))
 
@@ -705,7 +731,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 						"index": toolIndex,
 						"delta": map[string]interface{}{
 							"type":         "input_json_delta",
-							"partial_json": evt.Input,
+							"partial_json": inputStr,
 						},
 					},
 				}}, nil
@@ -714,7 +740,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 				logger.Warn("尝试发送增量事件但工具未注册，可能存在时序问题",
 					logger.String("toolUseId", evt.ToolUseId),
 					logger.String("name", evt.Name),
-					logger.String("inputFragment", evt.Input))
+					logger.String("inputFragment", inputStr))
 
 				// 尝试紧急注册工具（容错机制）
 				if evt.Name != "" {

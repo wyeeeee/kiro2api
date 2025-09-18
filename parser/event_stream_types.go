@@ -301,10 +301,10 @@ func (f *FullAssistantResponseEvent) Validate() error {
 
 // toolUseEvent 工具使用事件（legacy格式）
 type toolUseEvent struct {
-	Name      string `json:"name"`
-	ToolUseId string `json:"toolUseId"`
-	Input     string `json:"input"`
-	Stop      bool   `json:"stop"`
+	Name      string      `json:"name"`
+	ToolUseId string      `json:"toolUseId"`
+	Input     interface{} `json:"input"` // 修复：支持对象和字符串格式
+	Stop      bool        `json:"stop"`
 }
 
 // parseFullAssistantResponseEvent 解析完整的助手响应事件

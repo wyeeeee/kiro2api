@@ -275,8 +275,8 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 				logger.String("conversation_id", cwReq.ConversationState.ConversationId))
 
 			// 对于包含 tool_result 的请求，content 应该为空字符串（符合 req2.json 的格式）
-			cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = ""
-			logger.Debug("工具结果请求，设置 content 为空字符串")
+			// cwReq.ConversationState.CurrentMessage.UserInputMessage.Content = ""
+			// logger.Debug("工具结果请求，设置 content 为空字符串")
 		}
 	}
 
