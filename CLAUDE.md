@@ -62,6 +62,12 @@ docker-compose up -d         # 启动服务
 # 复制配置文件
 cp .env.example .env
 
+# === Token选择策略配置 ===
+# 控制多个token时的使用顺序，支持三种策略：
+TOKEN_SELECTION_STRATEGY=sequential     # 顺序使用（默认）：按配置顺序依次使用token，用完再用下一个
+# TOKEN_SELECTION_STRATEGY=optimal     # 最优使用：选择可用次数最多的token
+# TOKEN_SELECTION_STRATEGY=balanced    # 均衡使用：轮询所有可用token
+
 # === Token管理配置（推荐使用JSON格式） ===
 # 新的JSON格式配置方式，支持多认证方式和多token。
 #

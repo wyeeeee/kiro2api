@@ -4,16 +4,20 @@ import (
 	"fmt"
 	"kiro2api/logger"
 	"kiro2api/types"
+	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
 // TokenManager 简化的token管理器
 type TokenManager struct {
-	cache       *SimpleTokenCache
-	configs     []AuthConfig
-	mutex       sync.RWMutex
-	lastRefresh time.Time
+	cache            *SimpleTokenCache
+	configs          []AuthConfig
+	mutex            sync.RWMutex
+	lastRefresh      time.Time
+	selectionStrategy TokenSelectionStrategy // 新增：token选择策略
+	configOrder      []string                // 新增：配置顺序
 }
 
 // SimpleTokenCache 简化的token缓存
@@ -42,9 +46,31 @@ func NewSimpleTokenCache(ttl time.Duration) *SimpleTokenCache {
 
 // NewTokenManager 创建新的token管理器
 func NewTokenManager(configs []AuthConfig) *TokenManager {
+	// 确定选择策略类型
+	strategyType := getTokenSelectionStrategy()
+
+	// 生成配置顺序
+	configOrder := generateConfigOrder(configs)
+
+	// 创建选择策略
+	strategy, err := CreateTokenSelectionStrategy(strategyType, configOrder)
+	if err != nil {
+		logger.Warn("创建token选择策略失败，使用默认策略",
+			logger.Err(err),
+			logger.String("requested_strategy", string(strategyType)))
+		strategy = NewOptimalSelectionStrategy()
+	}
+
+	logger.Info("TokenManager初始化",
+		logger.String("selection_strategy", strategy.Name()),
+		logger.Int("config_count", len(configs)),
+		logger.Int("config_order_count", len(configOrder)))
+
 	return &TokenManager{
-		cache:   NewSimpleTokenCache(5 * time.Minute),
-		configs: configs,
+		cache:            NewSimpleTokenCache(5 * time.Minute),
+		configs:          configs,
+		selectionStrategy: strategy,
+		configOrder:      configOrder,
 	}
 }
 
@@ -78,31 +104,48 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 	return bestToken.Token, nil
 }
 
-// selectBestToken 选择最优token（简化策略）
+// selectBestToken 使用选择策略选择最优token
 func (tm *TokenManager) selectBestToken() *CachedToken {
 	tm.cache.mutex.RLock()
-	defer tm.cache.mutex.RUnlock()
+	tokens := tm.cache.tokens // 获取token映射的引用
+	tm.cache.mutex.RUnlock()
 
-	var bestToken *CachedToken
-
-	for _, cached := range tm.cache.tokens {
+	// 过滤出可用的token
+	availableTokens := make(map[string]*CachedToken)
+	for key, cached := range tokens {
 		// 检查token是否过期
 		if time.Since(cached.CachedAt) > tm.cache.ttl {
 			continue
 		}
 
 		// 检查token是否可用
-		if !cached.IsUsable() {
-			continue
-		}
-
-		// 选择可用次数最多的token
-		if bestToken == nil || cached.Available > bestToken.Available {
-			bestToken = cached
+		if cached.IsUsable() {
+			availableTokens[key] = cached
 		}
 	}
 
-	return bestToken
+	if len(availableTokens) == 0 {
+		logger.Debug("没有可用的token")
+		return nil
+	}
+
+	// 使用策略选择token
+	selectedKey := tm.selectionStrategy.SelectToken(availableTokens)
+	if selectedKey == "" {
+		logger.Warn("选择策略未能选择任何token",
+			logger.String("strategy", tm.selectionStrategy.Name()),
+			logger.Int("available_count", len(availableTokens)))
+		return nil
+	}
+
+	selectedToken := availableTokens[selectedKey]
+
+	logger.Debug("token选择完成",
+		logger.String("strategy", tm.selectionStrategy.Name()),
+		logger.String("selected_key", selectedKey),
+		logger.Int("available_count", selectedToken.Available))
+
+	return selectedToken
 }
 
 // refreshCache 刷新token缓存
@@ -211,4 +254,76 @@ func calculateAvailableCount(usage *types.UsageLimits) int {
 // CalculateAvailableCount 公开的可用次数计算函数
 func CalculateAvailableCount(usage *types.UsageLimits) int {
 	return calculateAvailableCount(usage)
+}
+
+// getTokenSelectionStrategy 从环境变量获取token选择策略
+func getTokenSelectionStrategy() TokenSelectionStrategyType {
+	strategyEnv := strings.ToLower(strings.TrimSpace(os.Getenv("TOKEN_SELECTION_STRATEGY")))
+
+	switch strategyEnv {
+	case "sequential", "sequence", "顺序":
+		return StrategySequential
+	case "optimal", "best", "最优":
+		return StrategyOptimal
+	case "balanced", "均衡":
+		return StrategyBalanced
+	default:
+		// 默认使用顺序策略（满足用户需求）
+		return StrategySequential
+	}
+}
+
+// generateConfigOrder 生成token配置的顺序
+func generateConfigOrder(configs []AuthConfig) []string {
+	var order []string
+
+	for i := range configs {
+		// 使用索引生成cache key，与refreshCache中的逻辑保持一致
+		cacheKey := fmt.Sprintf("token_%d", i)
+		order = append(order, cacheKey)
+	}
+
+	logger.Debug("生成配置顺序",
+		logger.Int("config_count", len(configs)),
+		logger.Any("order", order))
+
+	return order
+}
+
+// SetSelectionStrategy 动态设置选择策略（用于测试和动态配置）
+func (tm *TokenManager) SetSelectionStrategy(strategyType TokenSelectionStrategyType) error {
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+
+	strategy, err := CreateTokenSelectionStrategy(strategyType, tm.configOrder)
+	if err != nil {
+		return fmt.Errorf("创建选择策略失败: %w", err)
+	}
+
+	oldStrategy := tm.selectionStrategy.Name()
+	tm.selectionStrategy = strategy
+
+	logger.Info("token选择策略已更新",
+		logger.String("old_strategy", oldStrategy),
+		logger.String("new_strategy", strategy.Name()))
+
+	return nil
+}
+
+// GetSelectionStrategyStatus 获取选择策略状态（用于监控和调试）
+func (tm *TokenManager) GetSelectionStrategyStatus() map[string]interface{} {
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+
+	status := map[string]interface{}{
+		"strategy_name": tm.selectionStrategy.Name(),
+		"config_order":  tm.configOrder,
+	}
+
+	// 如果是顺序策略，获取详细状态
+	if seqStrategy, ok := tm.selectionStrategy.(*SequentialSelectionStrategy); ok {
+		status["sequential_status"] = seqStrategy.GetCurrentStatus()
+	}
+
+	return status
 }
