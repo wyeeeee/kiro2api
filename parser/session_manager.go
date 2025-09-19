@@ -40,7 +40,7 @@ func (sm *SessionManager) StartSession() []SSEEvent {
 	return []SSEEvent{
 		{
 			Event: EventTypes.SESSION_START,
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":       EventTypes.SESSION_START,
 				"session_id": sm.sessionID,
 				"timestamp":  sm.startTime.Format(time.RFC3339),
@@ -58,7 +58,7 @@ func (sm *SessionManager) EndSession() []SSEEvent {
 	return []SSEEvent{
 		{
 			Event: EventTypes.SESSION_END,
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":       EventTypes.SESSION_END,
 				"session_id": sm.sessionID,
 				"timestamp":  now.Format(time.RFC3339),

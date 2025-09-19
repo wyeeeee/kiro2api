@@ -182,9 +182,9 @@ func (cesp *CompliantEventStreamParser) generateSummary(messages []*EventStreamM
 		if eventType == "content_block_start" || eventType == "content_block_stop" ||
 			eventType == "content_block_delta" {
 			// 检查是否是工具相关的内容块
-			if data, ok := event.Data.(map[string]interface{}); ok {
+			if data, ok := event.Data.(map[string]any); ok {
 				if contentBlock, exists := data["content_block"]; exists {
-					if block, ok := contentBlock.(map[string]interface{}); ok {
+					if block, ok := contentBlock.(map[string]any); ok {
 						if blockType, ok := block["type"].(string); ok && blockType == "tool_use" {
 							summary.HasToolCalls = true
 						}
@@ -229,15 +229,15 @@ type ParseResult struct {
 
 // ParseSummary 解析摘要
 type ParseSummary struct {
-	TotalMessages    int                    `json:"total_messages"`
-	TotalEvents      int                    `json:"total_events"`
-	MessageTypes     map[string]int         `json:"message_types"`
-	EventTypes       map[string]int         `json:"event_types"`
-	HasToolCalls     bool                   `json:"has_tool_calls"`
-	HasCompletions   bool                   `json:"has_completions"`
-	HasErrors        bool                   `json:"has_errors"`
-	HasSessionEvents bool                   `json:"has_session_events"`
-	ToolSummary      map[string]interface{} `json:"tool_summary"`
+	TotalMessages    int            `json:"total_messages"`
+	TotalEvents      int            `json:"total_events"`
+	MessageTypes     map[string]int `json:"message_types"`
+	EventTypes       map[string]int `json:"event_types"`
+	HasToolCalls     bool           `json:"has_tool_calls"`
+	HasCompletions   bool           `json:"has_completions"`
+	HasErrors        bool           `json:"has_errors"`
+	HasSessionEvents bool           `json:"has_session_events"`
+	ToolSummary      map[string]any `json:"tool_summary"`
 }
 
 // IsComplete 检查解析是否完整
@@ -251,8 +251,8 @@ func (pr *ParseResult) GetCompletionText() string {
 
 	for _, event := range pr.Events {
 		if event.Event == "content_block_delta" {
-			if data, ok := event.Data.(map[string]interface{}); ok {
-				if delta, ok := data["delta"].(map[string]interface{}); ok {
+			if data, ok := event.Data.(map[string]any); ok {
+				if delta, ok := data["delta"].(map[string]any); ok {
 					if deltaText, ok := delta["text"].(string); ok {
 						text += deltaText
 					}

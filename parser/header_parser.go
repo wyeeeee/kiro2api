@@ -361,7 +361,7 @@ func (hp *HeaderParser) GetState() *HeaderParseState {
 }
 
 // parseHeaderValue 根据类型解析头部值
-func (hp *HeaderParser) parseHeaderValue(valueType ValueType, data []byte) (interface{}, error) {
+func (hp *HeaderParser) parseHeaderValue(valueType ValueType, data []byte) (any, error) {
 	switch valueType {
 	case ValueType_BOOL_TRUE:
 		return true, nil

@@ -27,7 +27,7 @@ const (
 // HeaderValue 头部值结构
 type HeaderValue struct {
 	Type  ValueType
-	Value interface{}
+	Value any
 }
 
 // EventStreamMessage 符合规范的事件流消息
@@ -119,15 +119,15 @@ var EventTypes = struct {
 
 // ToolExecution 工具执行状态
 type ToolExecution struct {
-	ID         string                 `json:"id"`
-	Name       string                 `json:"name"`
-	StartTime  time.Time              `json:"start_time"`
-	EndTime    *time.Time             `json:"end_time,omitempty"`
-	Status     ToolExecutionStatus    `json:"status"`
-	Arguments  map[string]interface{} `json:"arguments"`
-	Result     interface{}            `json:"result,omitempty"`
-	Error      string                 `json:"error,omitempty"`
-	BlockIndex int                    `json:"block_index"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	StartTime  time.Time           `json:"start_time"`
+	EndTime    *time.Time          `json:"end_time,omitempty"`
+	Status     ToolExecutionStatus `json:"status"`
+	Arguments  map[string]any      `json:"arguments"`
+	Result     any                 `json:"result,omitempty"`
+	Error      string              `json:"error,omitempty"`
+	BlockIndex int                 `json:"block_index"`
 }
 
 // ToolExecutionStatus 工具执行状态枚举
@@ -175,9 +175,9 @@ type ToolCallFunction struct {
 
 // ToolCallResult 工具调用结果
 type ToolCallResult struct {
-	ToolCallID    string      `json:"tool_call_id"`
-	Result        interface{} `json:"result"`
-	ExecutionTime int64       `json:"execution_time,omitempty"` // 毫秒
+	ToolCallID    string `json:"tool_call_id"`
+	Result        any    `json:"result"`
+	ExecutionTime int64  `json:"execution_time,omitempty"` // 毫秒
 }
 
 // ToolCallError 工具调用错误
@@ -216,8 +216,8 @@ func NewParseError(message string, cause error) *ParseError {
 
 // SSEEvent Server-Sent Event结构
 type SSEEvent struct {
-	Event string      `json:"event"`
-	Data  interface{} `json:"data"`
+	Event string `json:"event"`
+	Data  any    `json:"data"`
 }
 
 // toolIndexState 工具索引状态（用于legacy格式处理）
@@ -271,7 +271,7 @@ func NewFullAssistantResponseEventFromLegacy(legacy assistantResponseEvent) *Ful
 }
 
 // NewFullAssistantResponseEventFromDict 从字典创建完整事件
-func NewFullAssistantResponseEventFromDict(data map[string]interface{}) (*FullAssistantResponseEvent, error) {
+func NewFullAssistantResponseEventFromDict(data map[string]any) (*FullAssistantResponseEvent, error) {
 	full := &FullAssistantResponseEvent{}
 
 	if err := full.FromDict(data); err != nil {
@@ -301,21 +301,21 @@ func (f *FullAssistantResponseEvent) Validate() error {
 
 // toolUseEvent 工具使用事件（legacy格式）
 type toolUseEvent struct {
-	Name      string      `json:"name"`
-	ToolUseId string      `json:"toolUseId"`
-	Input     interface{} `json:"input"` // 修复：支持对象和字符串格式
-	Stop      bool        `json:"stop"`
+	Name      string `json:"name"`
+	ToolUseId string `json:"toolUseId"`
+	Input     any    `json:"input"` // 修复：支持对象和字符串格式
+	Stop      bool   `json:"stop"`
 }
 
 // parseFullAssistantResponseEvent 解析完整的助手响应事件
 func parseFullAssistantResponseEvent(payload []byte) (*FullAssistantResponseEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(payload, &data); err != nil {
 		return nil, fmt.Errorf("解析JSON失败: %w", err)
 	}
 
 	// 检查是否是嵌套在assistantResponseEvent中
-	if eventData, ok := data["assistantResponseEvent"].(map[string]interface{}); ok {
+	if eventData, ok := data["assistantResponseEvent"].(map[string]any); ok {
 		data = eventData
 	}
 

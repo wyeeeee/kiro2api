@@ -105,29 +105,29 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 
 						// 提取 content - 转换为数组格式
 						if content, exists := block["content"]; exists {
-							// 将 content 转换为 []map[string]interface{} 格式
-							var contentArray []map[string]interface{}
+							// 将 content 转换为 []map[string]any 格式
+							var contentArray []map[string]any
 
 							// 处理不同的 content 格式
 							switch c := content.(type) {
 							case string:
 								// 如果是字符串，包装成标准格式
-								contentArray = []map[string]interface{}{
+								contentArray = []map[string]any{
 									{"text": c},
 								}
-							case []interface{}:
+							case []any:
 								// 如果已经是数组，保持原样
 								for _, item := range c {
-									if m, ok := item.(map[string]interface{}); ok {
+									if m, ok := item.(map[string]any); ok {
 										contentArray = append(contentArray, m)
 									}
 								}
-							case map[string]interface{}:
+							case map[string]any:
 								// 如果是单个对象，包装成数组
-								contentArray = []map[string]interface{}{c}
+								contentArray = []map[string]any{c}
 							default:
 								// 其他格式，尝试转换为字符串
-								contentArray = []map[string]interface{}{
+								contentArray = []map[string]any{
 									{"text": fmt.Sprintf("%v", c)},
 								}
 							}
@@ -163,23 +163,23 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 
 				// 处理 content
 				if block.Content != nil {
-					var contentArray []map[string]interface{}
+					var contentArray []map[string]any
 
 					switch c := block.Content.(type) {
 					case string:
-						contentArray = []map[string]interface{}{
+						contentArray = []map[string]any{
 							{"text": c},
 						}
-					case []interface{}:
+					case []any:
 						for _, item := range c {
-							if m, ok := item.(map[string]interface{}); ok {
+							if m, ok := item.(map[string]any); ok {
 								contentArray = append(contentArray, m)
 							}
 						}
-					case map[string]interface{}:
-						contentArray = []map[string]interface{}{c}
+					case map[string]any:
+						contentArray = []map[string]any{c}
 					default:
-						contentArray = []map[string]interface{}{
+						contentArray = []map[string]any{
 							{"text": fmt.Sprintf("%v", c)},
 						}
 					}
@@ -360,21 +360,6 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 			}
 		}
 
-		// 如果有工具，添加简化的工具使用系统提示
-		if len(anthropicReq.Tools) > 0 {
-			// 使用系统提示生成器创建工具系统提示
-			spg := NewSystemPromptGenerator()
-			toolSystemPrompt := spg.GenerateToolSystemPrompt(anthropicReq.ToolChoice, anthropicReq.Tools)
-
-			// 只有在有其他系统内容时才添加分隔符
-			if systemContentBuilder.Len() > 0 && toolSystemPrompt != "" {
-				systemContentBuilder.WriteString("\n\n")
-			}
-			if toolSystemPrompt != "" {
-				systemContentBuilder.WriteString(toolSystemPrompt)
-			}
-		}
-
 		// 如果有系统内容，添加到历史记录 (恢复v0.4结构化类型)
 		if systemContentBuilder.Len() > 0 {
 			userMsg := types.HistoryUserMessage{}
@@ -492,11 +477,11 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 						}
 
 						// 提取 input
-						if input, ok := block["input"].(map[string]interface{}); ok {
+						if input, ok := block["input"].(map[string]any); ok {
 							toolUse.Input = input
 						} else {
 							// 如果 input 不是 map 或不存在，设置为空对象
-							toolUse.Input = map[string]interface{}{}
+							toolUse.Input = map[string]any{}
 						}
 
 						toolUses = append(toolUses, toolUse)
@@ -523,15 +508,15 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 
 				if block.Input != nil {
 					switch inp := (*block.Input).(type) {
-					case map[string]interface{}:
+					case map[string]any:
 						toolUse.Input = inp
 					default:
-						toolUse.Input = map[string]interface{}{
+						toolUse.Input = map[string]any{
 							"value": inp,
 						}
 					}
 				} else {
-					toolUse.Input = map[string]interface{}{}
+					toolUse.Input = map[string]any{}
 				}
 
 				toolUses = append(toolUses, toolUse)

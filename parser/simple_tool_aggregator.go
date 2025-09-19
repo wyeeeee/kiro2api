@@ -30,7 +30,7 @@ type ToolData struct {
 	ID         string
 	Name       string
 	State      SimpleToolState
-	Arguments  map[string]interface{}
+	Arguments  map[string]any
 	StartTime  time.Time
 	BlockIndex int
 	Buffer     *bytes.Buffer // 用于增量数据聚合
@@ -61,7 +61,7 @@ func (sta *SimpleToolAggregator) StartTool(id, name string) *ToolData {
 		ID:         id,
 		Name:       name,
 		State:      ToolStarted,
-		Arguments:  make(map[string]interface{}),
+		Arguments:  make(map[string]any),
 		StartTime:  time.Now(),
 		BlockIndex: sta.nextIndex,
 		Buffer:     &bytes.Buffer{},
@@ -167,7 +167,7 @@ func (sta *SimpleToolAggregator) GetToolsByState(state SimpleToolState) []*ToolD
 }
 
 // UpdateArguments 更新工具参数
-func (sta *SimpleToolAggregator) UpdateArguments(id string, args map[string]interface{}) {
+func (sta *SimpleToolAggregator) UpdateArguments(id string, args map[string]any) {
 	sta.mu.Lock()
 	defer sta.mu.Unlock()
 
@@ -223,11 +223,11 @@ func (sta *SimpleToolAggregator) GetAggregatedData(id string) ([]byte, error) {
 }
 
 // GetStats 获取简单统计信息 - 无复杂指标系统
-func (sta *SimpleToolAggregator) GetStats() map[string]interface{} {
+func (sta *SimpleToolAggregator) GetStats() map[string]any {
 	sta.mu.RLock()
 	defer sta.mu.RUnlock()
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"total_tools": len(sta.tools),
 		"started":     0,
 		"collecting":  0,

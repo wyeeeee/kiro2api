@@ -18,7 +18,7 @@ import (
 
 // respondErrorWithCode 标准化的错误响应结构
 // 统一返回: {"error": {"message": string, "code": string}}
-func respondErrorWithCode(c *gin.Context, statusCode int, code string, format string, args ...interface{}) {
+func respondErrorWithCode(c *gin.Context, statusCode int, code string, format string, args ...any) {
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
 			"message": fmt.Sprintf(format, args...),
@@ -28,7 +28,7 @@ func respondErrorWithCode(c *gin.Context, statusCode int, code string, format st
 }
 
 // respondError 简化封装，依据statusCode映射默认code
-func respondError(c *gin.Context, statusCode int, format string, args ...interface{}) {
+func respondError(c *gin.Context, statusCode int, format string, args ...any) {
 	var code string
 	switch statusCode {
 	case http.StatusBadRequest:

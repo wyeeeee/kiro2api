@@ -81,9 +81,9 @@ type HistoryAssistantMessage struct {
 
 // ToolUseEntry 表示工具使用条目
 type ToolUseEntry struct {
-	ToolUseId string                 `json:"toolUseId"`
-	Name      string                 `json:"name"`
-	Input     map[string]interface{} `json:"input"`
+	ToolUseId string         `json:"toolUseId"`
+	Name      string         `json:"name"`
+	Input     map[string]any `json:"input"`
 }
 
 // InputSchema 表示工具输入模式的结构
@@ -93,10 +93,10 @@ type InputSchema struct {
 
 // ToolResult 表示工具执行结果的结构
 type ToolResult struct {
-	ToolUseId string                   `json:"toolUseId"`
-	Content   []map[string]interface{} `json:"content"` // 根据req.json，content是数组格式
-	Status    string                   `json:"status"`  // "success" 或 "error"
-	IsError   bool                     `json:"isError,omitempty"`
+	ToolUseId string           `json:"toolUseId"`
+	Content   []map[string]any `json:"content"` // 根据req.json，content是数组格式
+	Status    string           `json:"status"`  // "success" 或 "error"
+	IsError   bool             `json:"isError,omitempty"`
 }
 
 // ========== AWS CodeWhisperer assistantResponseEvent 完整结构定义 ==========
@@ -180,8 +180,8 @@ type AssistantResponseEvent struct {
 	CodeQuery           *CodeQuery           `json:"codeQuery,omitempty"`
 }
 
-// FromDict 从map[string]interface{}创建AssistantResponseEvent
-func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
+// FromDict 从map[string]any创建AssistantResponseEvent
+func (are *AssistantResponseEvent) FromDict(data map[string]any) error {
 	// 对于流式响应，这些字段可能为空，只需要有content
 	if convID, ok := data["conversationId"].(string); ok {
 		are.ConversationID = convID
@@ -209,9 +209,9 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 	}
 
 	// 处理补充网页链接
-	if linksData, ok := data["supplementaryWebLinks"].([]interface{}); ok {
+	if linksData, ok := data["supplementaryWebLinks"].([]any); ok {
 		for _, linkData := range linksData {
-			if linkMap, ok := linkData.(map[string]interface{}); ok {
+			if linkMap, ok := linkData.(map[string]any); ok {
 				link := SupplementaryWebLink{}
 				if url, ok := linkMap["url"].(string); ok {
 					link.URL = url
@@ -231,16 +231,16 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 	}
 
 	// 处理引用
-	if refsData, ok := data["references"].([]interface{}); ok {
+	if refsData, ok := data["references"].([]any); ok {
 		are.References = parseReferences(refsData)
 	}
 
-	if codeRefsData, ok := data["codeReference"].([]interface{}); ok {
+	if codeRefsData, ok := data["codeReference"].([]any); ok {
 		are.CodeReference = parseReferences(codeRefsData)
 	}
 
 	// 处理后续提示
-	if promptData, ok := data["followupPrompt"].(map[string]interface{}); ok {
+	if promptData, ok := data["followupPrompt"].(map[string]any); ok {
 		prompt := &FollowupPrompt{}
 		if content, ok := promptData["content"].(string); ok {
 			prompt.Content = content
@@ -253,7 +253,7 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 	}
 
 	// 处理编程语言
-	if langData, ok := data["programmingLanguage"].(map[string]interface{}); ok {
+	if langData, ok := data["programmingLanguage"].(map[string]any); ok {
 		if langName, ok := langData["languageName"].(string); ok {
 			are.ProgrammingLanguage = &ProgrammingLanguage{
 				LanguageName: langName,
@@ -262,9 +262,9 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 	}
 
 	// 处理自定义模型
-	if customsData, ok := data["customizations"].([]interface{}); ok {
+	if customsData, ok := data["customizations"].([]any); ok {
 		for _, customData := range customsData {
-			if customMap, ok := customData.(map[string]interface{}); ok {
+			if customMap, ok := customData.(map[string]any); ok {
 				custom := Customization{}
 				if arn, ok := customMap["arn"].(string); ok {
 					custom.ARN = arn
@@ -284,7 +284,7 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 	}
 
 	// 处理代码查询
-	if queryData, ok := data["codeQuery"].(map[string]interface{}); ok {
+	if queryData, ok := data["codeQuery"].(map[string]any); ok {
 		query := &CodeQuery{}
 		if queryID, ok := queryData["codeQueryId"].(string); ok {
 			query.CodeQueryID = queryID
@@ -292,7 +292,7 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 		if msgID, ok := queryData["userInputMessageId"].(string); ok {
 			query.UserInputMessageID = &msgID
 		}
-		if langData, ok := queryData["programmingLanguage"].(map[string]interface{}); ok {
+		if langData, ok := queryData["programmingLanguage"].(map[string]any); ok {
 			if langName, ok := langData["languageName"].(string); ok {
 				query.ProgrammingLanguage = &ProgrammingLanguage{
 					LanguageName: langName,
@@ -305,9 +305,9 @@ func (are *AssistantResponseEvent) FromDict(data map[string]interface{}) error {
 	return nil
 }
 
-// ToDict 转换为map[string]interface{}
-func (are *AssistantResponseEvent) ToDict() map[string]interface{} {
-	result := make(map[string]interface{})
+// ToDict 转换为map[string]any
+func (are *AssistantResponseEvent) ToDict() map[string]any {
+	result := make(map[string]any)
 
 	// 核心字段
 	result["conversationId"] = are.ConversationID
@@ -324,9 +324,9 @@ func (are *AssistantResponseEvent) ToDict() map[string]interface{} {
 
 	// 引用和链接
 	if len(are.SupplementaryWebLinks) > 0 {
-		links := make([]map[string]interface{}, 0, len(are.SupplementaryWebLinks))
+		links := make([]map[string]any, 0, len(are.SupplementaryWebLinks))
 		for _, link := range are.SupplementaryWebLinks {
-			linkMap := map[string]interface{}{
+			linkMap := map[string]any{
 				"url": link.URL,
 			}
 			if link.Title != nil {
@@ -353,7 +353,7 @@ func (are *AssistantResponseEvent) ToDict() map[string]interface{} {
 
 	// 交互字段
 	if are.FollowupPrompt != nil {
-		promptMap := map[string]interface{}{
+		promptMap := map[string]any{
 			"content": are.FollowupPrompt.Content,
 		}
 		if are.FollowupPrompt.UserIntent != nil {
@@ -364,15 +364,15 @@ func (are *AssistantResponseEvent) ToDict() map[string]interface{} {
 
 	// 上下文字段
 	if are.ProgrammingLanguage != nil {
-		result["programmingLanguage"] = map[string]interface{}{
+		result["programmingLanguage"] = map[string]any{
 			"languageName": are.ProgrammingLanguage.LanguageName,
 		}
 	}
 
 	if len(are.Customizations) > 0 {
-		customs := make([]map[string]interface{}, 0, len(are.Customizations))
+		customs := make([]map[string]any, 0, len(are.Customizations))
 		for _, custom := range are.Customizations {
-			customMap := map[string]interface{}{
+			customMap := map[string]any{
 				"arn": custom.ARN,
 			}
 			if custom.Name != nil {
@@ -388,14 +388,14 @@ func (are *AssistantResponseEvent) ToDict() map[string]interface{} {
 	}
 
 	if are.CodeQuery != nil {
-		queryMap := map[string]interface{}{
+		queryMap := map[string]any{
 			"codeQueryId": are.CodeQuery.CodeQueryID,
 		}
 		if are.CodeQuery.UserInputMessageID != nil {
 			queryMap["userInputMessageId"] = *are.CodeQuery.UserInputMessageID
 		}
 		if are.CodeQuery.ProgrammingLanguage != nil {
-			queryMap["programmingLanguage"] = map[string]interface{}{
+			queryMap["programmingLanguage"] = map[string]any{
 				"languageName": are.CodeQuery.ProgrammingLanguage.LanguageName,
 			}
 		}
@@ -482,10 +482,10 @@ ValidateEnums:
 }
 
 // parseReferences 解析引用列表
-func parseReferences(refsData []interface{}) []Reference {
+func parseReferences(refsData []any) []Reference {
 	var refs []Reference
 	for _, refData := range refsData {
-		if refMap, ok := refData.(map[string]interface{}); ok {
+		if refMap, ok := refData.(map[string]any); ok {
 			ref := Reference{}
 			if licenseName, ok := refMap["licenseName"].(string); ok {
 				ref.LicenseName = &licenseName
@@ -501,7 +501,7 @@ func parseReferences(refsData []interface{}) []Reference {
 			}
 
 			// 处理推荐内容范围
-			if spanData, ok := refMap["recommendationContentSpan"].(map[string]interface{}); ok {
+			if spanData, ok := refMap["recommendationContentSpan"].(map[string]any); ok {
 				span := &ContentSpan{}
 				if start, ok := spanData["start"].(float64); ok {
 					span.Start = int(start)
@@ -513,7 +513,7 @@ func parseReferences(refsData []interface{}) []Reference {
 			}
 
 			// 处理最相关遗漏替代方案
-			if altData, ok := refMap["mostRelevantMissedAlternative"].(map[string]interface{}); ok {
+			if altData, ok := refMap["mostRelevantMissedAlternative"].(map[string]any); ok {
 				alt := &MostRelevantMissedAlternative{}
 				if url, ok := altData["url"].(string); ok {
 					alt.URL = url
@@ -534,10 +534,10 @@ func parseReferences(refsData []interface{}) []Reference {
 }
 
 // referencesToDict 将引用列表转换为字典
-func referencesToDict(refs []Reference) []map[string]interface{} {
-	result := make([]map[string]interface{}, 0, len(refs))
+func referencesToDict(refs []Reference) []map[string]any {
+	result := make([]map[string]any, 0, len(refs))
 	for _, ref := range refs {
-		refMap := make(map[string]interface{})
+		refMap := make(map[string]any)
 
 		if ref.LicenseName != nil {
 			refMap["licenseName"] = *ref.LicenseName
@@ -553,14 +553,14 @@ func referencesToDict(refs []Reference) []map[string]interface{} {
 		}
 
 		if ref.RecommendationContentSpan != nil {
-			refMap["recommendationContentSpan"] = map[string]interface{}{
+			refMap["recommendationContentSpan"] = map[string]any{
 				"start": ref.RecommendationContentSpan.Start,
 				"end":   ref.RecommendationContentSpan.End,
 			}
 		}
 
 		if ref.MostRelevantMissedAlternative != nil {
-			altMap := map[string]interface{}{
+			altMap := map[string]any{
 				"url": ref.MostRelevantMissedAlternative.URL,
 			}
 			if ref.MostRelevantMissedAlternative.LicenseName != nil {
@@ -584,7 +584,7 @@ func (are *AssistantResponseEvent) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON 自定义JSON反序列化
 func (are *AssistantResponseEvent) UnmarshalJSON(data []byte) error {
-	var dict map[string]interface{}
+	var dict map[string]any
 	if err := sonic.Unmarshal(data, &dict); err != nil {
 		return fmt.Errorf("JSON反序列化失败: %w", err)
 	}

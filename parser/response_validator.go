@@ -47,7 +47,7 @@ type ValidationError struct {
 	Timestamp time.Time
 	ErrorType string
 	Message   string
-	EventData interface{}
+	EventData any
 	Severity  ErrorSeverity
 }
 
@@ -295,7 +295,7 @@ func (rv *ResponseValidator) GetActiveSessionCount() int {
 }
 
 // GetSessionStats 获取会话统计信息
-func (rv *ResponseValidator) GetSessionStats(sessionId string) map[string]interface{} {
+func (rv *ResponseValidator) GetSessionStats(sessionId string) map[string]any {
 	rv.mu.RLock()
 	defer rv.mu.RUnlock()
 
@@ -310,7 +310,7 @@ func (rv *ResponseValidator) GetSessionStats(sessionId string) map[string]interf
 		errorsBySeverity[severity]++
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"session_id":          session.sessionId,
 		"status":              rv.statusToString(session.status),
 		"message_count":       session.messageCount,

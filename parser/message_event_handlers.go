@@ -10,8 +10,8 @@ import (
 
 // === 辅助函数 ===
 
-// convertInputToString 将interface{}类型的input转换为JSON字符串
-func convertInputToString(input interface{}) string {
+// convertInputToString 将any类型的input转换为JSON字符串
+func convertInputToString(input any) string {
 	if input == nil {
 		return "{}"
 	}
@@ -61,7 +61,7 @@ type CompletionEventHandler struct {
 }
 
 func (h *CompletionEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -78,9 +78,9 @@ func (h *CompletionEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent
 
 	// 处理工具调用
 	var toolCalls []ToolCall
-	if tcData, ok := data["tool_calls"].([]interface{}); ok {
+	if tcData, ok := data["tool_calls"].([]any); ok {
 		for _, tc := range tcData {
-			if tcMap, ok := tc.(map[string]interface{}); ok {
+			if tcMap, ok := tc.(map[string]any); ok {
 				toolCall := ToolCall{}
 				if id, ok := tcMap["id"].(string); ok {
 					toolCall.ID = id
@@ -88,7 +88,7 @@ func (h *CompletionEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent
 				if tcType, ok := tcMap["type"].(string); ok {
 					toolCall.Type = tcType
 				}
-				if function, ok := tcMap["function"].(map[string]interface{}); ok {
+				if function, ok := tcMap["function"].(map[string]any); ok {
 					if name, ok := function["name"].(string); ok {
 						toolCall.Function.Name = name
 					}
@@ -104,7 +104,7 @@ func (h *CompletionEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent
 	events := []SSEEvent{
 		{
 			Event: "completion",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":          "completion",
 				"content":       content,
 				"finish_reason": finishReason,
@@ -123,7 +123,7 @@ type CompletionChunkEventHandler struct {
 }
 
 func (h *CompletionChunkEventHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -155,10 +155,10 @@ func (h *CompletionChunkEventHandler) Handle(message *EventStreamMessage) ([]SSE
 	events := []SSEEvent{
 		{
 			Event: "content_block_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_delta",
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"type": "text_delta",
 					"text": textDelta,
 				},
@@ -170,7 +170,7 @@ func (h *CompletionChunkEventHandler) Handle(message *EventStreamMessage) ([]SSE
 	if finishReason != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_stop",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":          "content_block_stop",
 				"index":         0,
 				"finish_reason": finishReason,
@@ -187,7 +187,7 @@ type ToolCallRequestHandler struct {
 }
 
 func (h *ToolCallRequestHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -197,8 +197,8 @@ func (h *ToolCallRequestHandler) Handle(message *EventStreamMessage) ([]SSEEvent
 	toolName, _ := data["toolName"].(string)
 
 	// 如果没有直接的toolCallId，尝试解析input字段
-	input := map[string]interface{}{}
-	if inputData, ok := data["input"].(map[string]interface{}); ok {
+	input := map[string]any{}
+	if inputData, ok := data["input"].(map[string]any); ok {
 		input = inputData
 	}
 
@@ -237,7 +237,7 @@ type ToolCallResultHandler struct {
 }
 
 func (h *ToolCallResultHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -299,7 +299,7 @@ type ToolExecutionStartHandler struct {
 }
 
 func (h *ToolExecutionStartHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -345,7 +345,7 @@ func (h *ToolExecutionStartHandler) Handle(message *EventStreamMessage) ([]SSEEv
 type ToolExecutionEndHandler struct{}
 
 func (h *ToolExecutionEndHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -364,7 +364,7 @@ type SessionStartHandler struct {
 }
 
 func (h *SessionStartHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -397,7 +397,7 @@ type SessionEndHandler struct {
 }
 
 func (h *SessionEndHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
 	}
@@ -492,10 +492,10 @@ func (h *StandardAssistantResponseEventHandler) handleStreamingEvent(event *Full
 	if event.Content != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_delta",
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"type": "text_delta",
 					"text": event.Content,
 				},
@@ -515,10 +515,10 @@ func (h *StandardAssistantResponseEventHandler) handleFullAssistantEvent(event *
 	if event.Content != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_start",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_start",
 				"index": 0,
-				"content_block": map[string]interface{}{
+				"content_block": map[string]any{
 					"type": "text",
 					"text": event.Content,
 				},
@@ -527,10 +527,10 @@ func (h *StandardAssistantResponseEventHandler) handleFullAssistantEvent(event *
 
 		events = append(events, SSEEvent{
 			Event: "content_block_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_delta",
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"type": "text_delta",
 					"text": event.Content,
 				},
@@ -539,7 +539,7 @@ func (h *StandardAssistantResponseEventHandler) handleFullAssistantEvent(event *
 
 		events = append(events, SSEEvent{
 			Event: "content_block_stop",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_stop",
 				"index": 0,
 			},
@@ -557,10 +557,10 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 		// 简单文本内容
 		return []SSEEvent{{
 			Event: "content_block_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_delta",
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"type": "text_delta",
 					"text": payloadStr,
 				},
@@ -569,7 +569,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 	}
 
 	// 尝试解析为JSON
-	var data map[string]interface{}
+	var data map[string]any
 	if err := utils.FastUnmarshal(payload, &data); err != nil {
 		logger.Warn("无法解析legacy格式数据", logger.Err(err))
 		return []SSEEvent{}, nil
@@ -580,10 +580,10 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 	if content, ok := data["content"].(string); ok && content != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_delta",
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"type": "text_delta",
 					"text": content,
 				},
@@ -726,10 +726,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 
 				return []SSEEvent{{
 					Event: "content_block_delta",
-					Data: map[string]interface{}{
+					Data: map[string]any{
 						"type":  "content_block_delta",
 						"index": toolIndex,
-						"delta": map[string]interface{}{
+						"delta": map[string]any{
 							"type":         "input_json_delta",
 							"partial_json": inputStr,
 						},
@@ -783,7 +783,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 	// 第三步：验证和更新工具参数
 	if fullInput != "" {
 		// 现在验证聚合后的完整JSON格式
-		var testArgs map[string]interface{}
+		var testArgs map[string]any
 		if err := utils.FastUnmarshal([]byte(fullInput), &testArgs); err != nil {
 			logger.Warn("聚合后的工具调用参数JSON格式仍然无效",
 				logger.String("toolUseId", evt.ToolUseId),

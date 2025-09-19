@@ -93,9 +93,9 @@ func containsToolResults(anthropicReq types.AnthropicRequest) bool {
 	for _, message := range anthropicReq.Messages {
 		if message.Role == "user" {
 			switch content := message.Content.(type) {
-			case []interface{}:
+			case []any:
 				for _, item := range content {
-					if block, ok := item.(map[string]interface{}); ok {
+					if block, ok := item.(map[string]any); ok {
 						if blockType, exists := block["type"]; exists {
 							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
 								return true
@@ -123,9 +123,9 @@ func generateToolResultFollowUp(anthropicReq types.AnthropicRequest) string {
 	for _, message := range anthropicReq.Messages {
 		if message.Role == "user" {
 			switch content := message.Content.(type) {
-			case []interface{}:
+			case []any:
 				for _, item := range content {
-					if block, ok := item.(map[string]interface{}); ok {
+					if block, ok := item.(map[string]any); ok {
 						if blockType, exists := block["type"]; exists {
 							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
 								if toolContent, exists := block["content"]; exists {
@@ -1015,7 +1015,7 @@ func createTokenPreview(token string) string {
 
 // handleTokenPoolAPI 处理Token池API请求 - 恢复多token显示
 func handleTokenPoolAPI(c *gin.Context) {
-	var tokenList []interface{}
+	var tokenList []any
 	var activeCount int
 
 	// 从auth包获取配置信息
@@ -1032,8 +1032,8 @@ func handleTokenPoolAPI(c *gin.Context) {
 			"timestamp":     time.Now().Format(time.RFC3339),
 			"total_tokens":  0,
 			"active_tokens": 0,
-			"tokens":        []interface{}{},
-			"pool_stats": map[string]interface{}{
+			"tokens":        []any{},
+			"pool_stats": map[string]any{
 				"total_tokens":  0,
 				"active_tokens": 0,
 			},
@@ -1045,7 +1045,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 	for i, config := range configs {
 		// 检查配置是否被禁用
 		if config.Disabled {
-			tokenData := map[string]interface{}{
+			tokenData := map[string]any{
 				"index":           i,
 				"user_email":      "已禁用",
 				"token_preview":   "***已禁用",
@@ -1063,7 +1063,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 		// 尝试获取token信息
 		tokenInfo, err := refreshSingleTokenByConfig(config)
 		if err != nil {
-			tokenData := map[string]interface{}{
+			tokenData := map[string]any{
 				"index":           i,
 				"user_email":      "获取失败",
 				"token_preview":   createTokenPreview(config.RefreshToken),
@@ -1095,7 +1095,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 		}
 
 		// 构建token数据
-		tokenData := map[string]interface{}{
+		tokenData := map[string]any{
 			"index":           i,
 			"user_email":      userEmail,
 			"token_preview":   createTokenPreview(tokenInfo.AccessToken),
@@ -1118,7 +1118,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 						currentUsage += breakdown.FreeTrialInfo.CurrentUsage
 					}
 
-					tokenData["usage_limits"] = map[string]interface{}{
+					tokenData["usage_limits"] = map[string]any{
 						"total_limit":   totalLimit,
 						"current_usage": currentUsage,
 						"is_exceeded":   available <= 0,
@@ -1154,7 +1154,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 		"total_tokens":  len(tokenList),
 		"active_tokens": activeCount,
 		"tokens":        tokenList,
-		"pool_stats": map[string]interface{}{
+		"pool_stats": map[string]any{
 			"total_tokens":  len(configs),
 			"active_tokens": activeCount,
 		},

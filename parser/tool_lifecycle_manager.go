@@ -19,7 +19,7 @@ type ToolLifecycleManager struct {
 
 // validateRequiredArguments 针对常见工具进行必填参数校验
 // 支持各种工具名称格式，避免空参数触发 CLI 报错
-func validateRequiredArguments(toolName string, args map[string]interface{}) (bool, string) {
+func validateRequiredArguments(toolName string, args map[string]any) (bool, string) {
 	toolNameLower := strings.ToLower(toolName)
 	switch toolNameLower {
 	case "bash":
@@ -73,7 +73,7 @@ func (tlm *ToolLifecycleManager) validateToolCallFormat(toolCall ToolCall) error
 
 	// 验证参数JSON格式
 	if toolCall.Function.Arguments != "" {
-		var args map[string]interface{}
+		var args map[string]any
 		if err := utils.FastUnmarshal([]byte(toolCall.Function.Arguments), &args); err != nil {
 			return fmt.Errorf("工具参数JSON格式无效: %w", err)
 		}
@@ -129,9 +129,9 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 			// 发送错误事件
 			events = append(events, SSEEvent{
 				Event: "error",
-				Data: map[string]interface{}{
+				Data: map[string]any{
 					"type": "invalid_request_error",
-					"error": map[string]interface{}{
+					"error": map[string]any{
 						"type":      "invalid_tool_parameters",
 						"message":   err.Error(),
 						"tool_id":   toolCall.ID,
@@ -150,13 +150,13 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 				logger.String("existing_status", existing.Status.String()))
 
 			// 解析工具调用参数
-			var arguments map[string]interface{}
+			var arguments map[string]any
 			if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
 				logger.Warn("解析工具调用参数失败",
 					logger.String("tool_id", toolCall.ID),
 					logger.String("tool_name", toolCall.Function.Name),
 					logger.Err(err))
-				arguments = make(map[string]interface{})
+				arguments = make(map[string]any)
 			}
 
 			// 更新现有工具的参数
@@ -167,13 +167,13 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 		}
 
 		// 解析工具调用参数
-		var arguments map[string]interface{}
+		var arguments map[string]any
 		if err := utils.SafeUnmarshal([]byte(toolCall.Function.Arguments), &arguments); err != nil {
 			logger.Warn("解析工具调用参数失败",
 				logger.String("tool_id", toolCall.ID),
 				logger.String("tool_name", toolCall.Function.Name),
 				logger.Err(err))
-			arguments = make(map[string]interface{})
+			arguments = make(map[string]any)
 		}
 
 		// 针对常见工具做必填参数校验：仅记录告警，不阻断工具起始事件，遵循 Anthropic 流式协议
@@ -204,10 +204,10 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 		// 这替代了原来的 TOOL_EXECUTION_START 非标准事件
 		events = append(events, SSEEvent{
 			Event: "content_block_start",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_start",
 				"index": execution.BlockIndex,
-				"content_block": map[string]interface{}{
+				"content_block": map[string]any{
 					"type":  "tool_use",
 					"id":    toolCall.ID,
 					"name":  toolCall.Function.Name,
@@ -221,10 +221,10 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 			argsJSON, _ := utils.SafeMarshal(arguments)
 			events = append(events, SSEEvent{
 				Event: "content_block_delta",
-				Data: map[string]interface{}{
+				Data: map[string]any{
 					"type":  "content_block_delta",
 					"index": execution.BlockIndex,
-					"delta": map[string]interface{}{
+					"delta": map[string]any{
 						"type":         "input_json_delta",
 						"partial_json": string(argsJSON),
 					},
@@ -269,7 +269,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 	// 这替代了原来的 TOOL_CALL_RESULT 和 TOOL_EXECUTION_END 非标准事件
 	events = append(events, SSEEvent{
 		Event: "content_block_stop",
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"type":  "content_block_stop",
 			"index": execution.BlockIndex,
 		},
@@ -284,13 +284,13 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 	if tlm.allToolsCompleted() {
 		events = append(events, SSEEvent{
 			Event: "message_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type": "message_delta",
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"stop_reason":   "tool_use",
 					"stop_sequence": nil,
 				},
-				"usage": map[string]interface{}{
+				"usage": map[string]any{
 					"output_tokens": 0,
 				},
 			},
@@ -331,9 +331,9 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 	// 这替代了原来的 TOOL_CALL_ERROR 非标准事件
 	events = append(events, SSEEvent{
 		Event: "error",
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"type": "error",
-			"error": map[string]interface{}{
+			"error": map[string]any{
 				"type":         "tool_error",
 				"message":      errorInfo.Error,
 				"tool_call_id": errorInfo.ToolCallID,
@@ -345,7 +345,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 	// 即使出错也要正确结束内容块
 	events = append(events, SSEEvent{
 		Event: "content_block_stop",
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"type":  "content_block_stop",
 			"index": execution.BlockIndex,
 		},
@@ -355,13 +355,13 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 	// 这替代了 TOOL_EXECUTION_END 的功能，提供错误状态信息
 	events = append(events, SSEEvent{
 		Event: "message_delta",
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"type": "message_delta",
-			"delta": map[string]interface{}{
+			"delta": map[string]any{
 				"stop_reason":   "tool_error",
 				"stop_sequence": nil,
 			},
-			"usage": map[string]interface{}{
+			"usage": map[string]any{
 				"output_tokens": 0,
 			},
 		},
@@ -438,10 +438,10 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 		// 1. content_block_start for text (index:0)
 		{
 			Event: "content_block_start",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_start",
 				"index": 0,
-				"content_block": map[string]interface{}{
+				"content_block": map[string]any{
 					"type": "text",
 					"text": "",
 				},
@@ -450,10 +450,10 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 		// 2. content_block_delta for text introduction
 		{
 			Event: "content_block_delta",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_delta",
 				"index": 0,
-				"delta": map[string]interface{}{
+				"delta": map[string]any{
 					"type": "text_delta",
 					"text": introText,
 				},
@@ -462,7 +462,7 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 		// 3. content_block_stop for text (index:0)
 		{
 			Event: "content_block_stop",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":  "content_block_stop",
 				"index": 0,
 			},
@@ -515,7 +515,7 @@ func (tlm *ToolLifecycleManager) extractCityFromArgs(arguments string) string {
 }
 
 // GenerateToolSummary 生成工具执行摘要
-func (tlm *ToolLifecycleManager) GenerateToolSummary() map[string]interface{} {
+func (tlm *ToolLifecycleManager) GenerateToolSummary() map[string]any {
 	activeCount := len(tlm.activeTools)
 	completedCount := len(tlm.completedTools)
 	errorCount := 0
@@ -530,7 +530,7 @@ func (tlm *ToolLifecycleManager) GenerateToolSummary() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"active_tools":         activeCount,
 		"completed_tools":      completedCount,
 		"error_tools":          errorCount,
@@ -621,7 +621,7 @@ func (tlm *ToolLifecycleManager) ParseToolCallFromLegacyEvent(evt assistantRespo
 }
 
 // UpdateToolArguments 更新工具调用的参数
-func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments map[string]interface{}) {
+func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments map[string]any) {
 	logger.Debug("更新工具调用参数",
 		logger.String("tool_id", toolID),
 		logger.Any("arguments", arguments))
@@ -650,7 +650,7 @@ func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments ma
 
 // UpdateToolArgumentsFromJSON 从JSON字符串更新工具调用参数
 func (tlm *ToolLifecycleManager) UpdateToolArgumentsFromJSON(toolID string, jsonArgs string) {
-	var arguments map[string]interface{}
+	var arguments map[string]any
 	if err := utils.SafeUnmarshal([]byte(jsonArgs), &arguments); err != nil {
 		logger.Warn("解析工具参数JSON失败",
 			logger.String("tool_id", toolID),

@@ -198,7 +198,7 @@ func (tda *ToolDataAggregator) reconstructJSON(parts []string) string {
 	}
 
 	// 验证JSON格式
-	var temp interface{}
+	var temp any
 	if err := utils.FastUnmarshal([]byte(cleaned), &temp); err == nil {
 		logger.Debug("JSON重组成功",
 			logger.Int("原始长度", len(rawInput)),

@@ -348,7 +348,7 @@ func (r *DuplicateEventRule) Validate(session *ValidationSession, event SSEEvent
 	return nil
 }
 
-func (r *DuplicateEventRule) generateDataHash(data interface{}) string {
+func (r *DuplicateEventRule) generateDataHash(data any) string {
 	// 简化的数据哈希生成
 	if dataMap, ok := data.(map[string]any); ok {
 		var parts []string

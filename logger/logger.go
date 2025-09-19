@@ -188,9 +188,9 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 	for _, field := range fields {
 		// 跳过重复的系统字段
 		if field.Key == "level" || field.Key == "log_level" ||
-		   field.Key == "timestamp" || field.Key == "message" ||
-		   field.Key == "file" || field.Key == "log_file" ||
-		   field.Key == "func" {
+			field.Key == "timestamp" || field.Key == "message" ||
+			field.Key == "file" || field.Key == "log_file" ||
+			field.Key == "func" {
 			continue
 		}
 		entry.Fields[field.Key] = field.Value
@@ -235,7 +235,7 @@ func (l *Logger) marshalLogEntry(entry *LogEntry) []byte {
 	escapedMsg, _ := sonic.MarshalString(entry.Message)
 	// 移除外层引号
 	if len(escapedMsg) >= 2 {
-		b.WriteString(escapedMsg[1:len(escapedMsg)-1])
+		b.WriteString(escapedMsg[1 : len(escapedMsg)-1])
 	}
 	b.WriteString(`"`)
 

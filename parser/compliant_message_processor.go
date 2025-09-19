@@ -169,11 +169,11 @@ func (cmp *CompliantMessageProcessor) processEventMessage(message *EventStreamMe
 
 // processErrorMessage 处理错误消息
 func (cmp *CompliantMessageProcessor) processErrorMessage(message *EventStreamMessage) ([]SSEEvent, error) {
-	var errorData map[string]interface{}
+	var errorData map[string]any
 	if len(message.Payload) > 0 {
 		if err := utils.FastUnmarshal(message.Payload, &errorData); err != nil {
 			logger.Warn("解析错误消息载荷失败", logger.Err(err))
-			errorData = map[string]interface{}{
+			errorData = map[string]any{
 				"message": string(message.Payload),
 			}
 		}
@@ -194,7 +194,7 @@ func (cmp *CompliantMessageProcessor) processErrorMessage(message *EventStreamMe
 	return []SSEEvent{
 		{
 			Event: "error",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":          "error",
 				"error_code":    errorCode,
 				"error_message": errorMessage,
@@ -206,11 +206,11 @@ func (cmp *CompliantMessageProcessor) processErrorMessage(message *EventStreamMe
 
 // processExceptionMessage 处理异常消息
 func (cmp *CompliantMessageProcessor) processExceptionMessage(message *EventStreamMessage) ([]SSEEvent, error) {
-	var exceptionData map[string]interface{}
+	var exceptionData map[string]any
 	if len(message.Payload) > 0 {
 		if err := utils.FastUnmarshal(message.Payload, &exceptionData); err != nil {
 			logger.Warn("解析异常消息载荷失败", logger.Err(err))
-			exceptionData = map[string]interface{}{
+			exceptionData = map[string]any{
 				"message": string(message.Payload),
 			}
 		}
@@ -231,7 +231,7 @@ func (cmp *CompliantMessageProcessor) processExceptionMessage(message *EventStre
 	return []SSEEvent{
 		{
 			Event: "exception",
-			Data: map[string]interface{}{
+			Data: map[string]any{
 				"type":              "exception",
 				"exception_type":    exceptionType,
 				"exception_message": exceptionMessage,

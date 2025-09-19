@@ -7,14 +7,14 @@ import (
 
 // UsageLimits 使用限制响应结构 (基于token.md中的API规范)
 type UsageLimits struct {
-	Limits               []interface{}    `json:"limits"`
+	Limits               []any            `json:"limits"`
 	UsageBreakdownList   []UsageBreakdown `json:"usageBreakdownList"`
 	UserInfo             UserInfo         `json:"userInfo"`
 	DaysUntilReset       int              `json:"daysUntilReset"`
 	OverageConfiguration OverageConfig    `json:"overageConfiguration"`
 	NextDateReset        float64          `json:"nextDateReset"`
 	SubscriptionInfo     SubscriptionInfo `json:"subscriptionInfo"`
-	UsageBreakdown       interface{}      `json:"usageBreakdown"`
+	UsageBreakdown       any              `json:"usageBreakdown"`
 }
 
 // UsageBreakdown 使用详细信息

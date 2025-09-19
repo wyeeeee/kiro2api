@@ -31,7 +31,7 @@ type SonicJSONStreamer struct {
 	state          SonicParseState
 	lastUpdate     time.Time
 	isComplete     bool
-	result         map[string]interface{}
+	result         map[string]any
 	fragmentCount  int
 	totalBytes     int
 	incompleteUTF8 string // 用于存储跨片段的不完整UTF-8字符
@@ -209,7 +209,7 @@ func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, too
 		state: SonicParseState{
 			expectingValue: true,
 		},
-		result: make(map[string]interface{}),
+		result: make(map[string]any),
 	}
 }
 
@@ -308,7 +308,7 @@ func (sjs *SonicJSONStreamer) tryParseWithSonic() string {
 	}
 
 	// 尝试使用Sonic完整JSON解析
-	var result map[string]interface{}
+	var result map[string]any
 	if err := utils.FastUnmarshal(content, &result); err == nil {
 		sjs.result = result
 		sjs.state.hasValidJSON = true
@@ -341,7 +341,7 @@ func (sjs *SonicJSONStreamer) isSonicValidJSONStart(content []byte) bool {
 	}
 
 	// 使用Sonic尝试解析
-	var testValue interface{}
+	var testValue any
 	err := utils.FastUnmarshal(content, &testValue)
 
 	// 如果错误是由于不完整的JSON，那么说明开始是有效的
@@ -431,7 +431,7 @@ func (ssja *SonicStreamingJSONAggregator) CleanupExpiredBuffers(timeout time.Dur
 }
 
 // GetStats 获取聚合器统计信息
-func (ssja *SonicStreamingJSONAggregator) GetStats() map[string]interface{} {
+func (ssja *SonicStreamingJSONAggregator) GetStats() map[string]any {
 	ssja.mu.RLock()
 	defer ssja.mu.RUnlock()
 
@@ -450,7 +450,7 @@ func (ssja *SonicStreamingJSONAggregator) GetStats() map[string]interface{} {
 		}
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"active_streamers":    len(ssja.activeStreamers),
 		"streaming_streamers": pendingCount,
 		"total_fragments":     totalFragments,
