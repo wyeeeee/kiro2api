@@ -28,7 +28,9 @@ func ParseToolResultContent(content any) string {
 			return "Tool executed with empty result list"
 		}
 
-		var result strings.Builder
+		// 使用对象池获取StringBuilder，优化内存分配
+		result := GetStringBuilder()
+		defer PutStringBuilder(result)
 		for _, item := range v {
 			switch itemVal := item.(type) {
 			case map[string]any:

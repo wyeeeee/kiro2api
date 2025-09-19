@@ -17,14 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// min 返回两个整数的最小值
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // extractRelevantHeaders 提取相关的请求头信息
 func extractRelevantHeaders(c *gin.Context) map[string]string {
 	relevantHeaders := map[string]string{}
@@ -251,12 +243,17 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	totalOutputChars := 0
 
 	// 维护 tool_use 区块索引到 tool_use_id 的映射，确保仅在对应的 stop 时标记完成
+	// 注意：由于这个map类型是map[int]string，而对象池提供的是map[string]any，直接使用make
 	toolUseIdByBlockIndex := make(map[int]string)
 
-	// 用于接收所有原始数据的字符串
-	var rawDataBuffer strings.Builder
+	// 用于接收所有原始数据的字符串（使用对象池优化）
+	rawDataBuffer := utils.GetStringBuilder()
+	defer utils.PutStringBuilder(rawDataBuffer)
 
-	buf := make([]byte, 1024)
+	// 使用对象池获取字节缓冲区，避免频繁分配
+	buf := utils.GetByteSlice()
+	defer utils.PutByteSlice(buf)
+	buf = buf[:1024] // 限制为1024字节
 	// 文本增量简单聚合，减少断句割裂：累计到中文标点/换行或达到阈值再下发
 	pendingText := ""
 	pendingIndex := 0
@@ -645,13 +642,13 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	)
 
 	// 设置实际使用的tokens
-	stopReasonManager.SetActualTokensUsed(tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:min(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0))
+	stopReasonManager.SetActualTokensUsed(tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:utils.IntMin(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0))
 
 	// 根据Claude官方规范确定stop_reason
 	stopReason := stopReasonManager.DetermineStopReason()
 
 	// 使用符合规范的stop_reason创建结束事件，包含完整的usage信息
-	outputTokens := tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:min(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0)
+	outputTokens := tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:utils.IntMin(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0)
 	finalEvents := createAnthropicFinalEvents(outputTokens, inputTokens, stopReason)
 
 	logger.Debug("创建结束事件",
@@ -771,7 +768,7 @@ func createAnthropicFinalEvents(outputTokens, inputTokens int, stopReason string
 
 		if inputTokens > cacheThreshold {
 			// 模拟缓存使用情况：将部分输入token标记为缓存相关
-			cacheTokens := min(32, inputTokens-cacheThreshold) // 最多32个缓存token
+			cacheTokens := utils.IntMin(32, inputTokens-cacheThreshold) // 最多32个缓存token
 			regularInputTokens := inputTokens - cacheTokens
 
 			usage["input_tokens"] = regularInputTokens
@@ -905,7 +902,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 
 	logger.Debug("非流式响应处理完成",
 		addReqFields(c,
-			logger.String("text_content", textAgg[:min(100, len(textAgg))]),
+			logger.String("text_content", textAgg[:utils.IntMin(100, len(textAgg))]),
 			logger.Int("tool_calls_count", len(allTools)),
 			logger.Bool("saw_tool_use", sawToolUse),
 		)...)

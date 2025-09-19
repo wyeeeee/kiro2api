@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"kiro2api/logger"
+	"kiro2api/utils"
 	"strings"
 	"sync"
 	"time"
@@ -168,15 +169,10 @@ func (rv *ResponseValidator) checkSessionCompletion(session *ValidationSession, 
 		session.status = ValidationCompleted
 
 		// 验证是否收到了所有预期的结束事件
+		// 使用map进行O(1)查找，避免O(n²)复杂度
+		receivedEventsMap := utils.StringSliceToMap(session.receivedEndEvents)
 		for _, expectedEvent := range session.expectedEndEvents {
-			found := false
-			for _, receivedEvent := range session.receivedEndEvents {
-				if receivedEvent == expectedEvent {
-					found = true
-					break
-				}
-			}
-			if !found {
+			if !receivedEventsMap[expectedEvent] {
 				session.errors = append(session.errors, ValidationError{
 					Timestamp: time.Now(),
 					ErrorType: "missing_end_event",

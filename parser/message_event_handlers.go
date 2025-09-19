@@ -45,14 +45,6 @@ func isStreamingResponse(event *FullAssistantResponseEvent) bool {
 	return event != nil && (event.MessageStatus == "IN_PROGRESS" || event.Content != "")
 }
 
-// min 返回最小值
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // === 事件处理器实现 ===
 
 // CompletionEventHandler 处理代码补全事件

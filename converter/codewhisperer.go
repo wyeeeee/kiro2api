@@ -346,8 +346,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 	if len(anthropicReq.System) > 0 || len(anthropicReq.Messages) > 1 || len(anthropicReq.Tools) > 0 {
 		var history []any
 
-		// 构建综合系统提示
-		var systemContentBuilder strings.Builder
+		// 构建综合系统提示（使用对象池优化）
+		systemContentBuilder := utils.GetStringBuilder()
+		defer utils.PutStringBuilder(systemContentBuilder)
 
 		// 添加原有的 system 消息
 		if len(anthropicReq.System) > 0 {

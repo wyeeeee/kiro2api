@@ -45,14 +45,6 @@ type SonicParseState struct {
 	isValueFragment bool
 }
 
-// 辅助函数：获取两个整数的最大值
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // NewSonicStreamingJSONAggregatorWithCallback 创建带回调的Sonic流式JSON聚合器
 func NewSonicStreamingJSONAggregatorWithCallback(callback ToolParamsUpdateCallback) *SonicStreamingJSONAggregator {
 	logger.Debug("创建Sonic流式JSON聚合器",
@@ -173,7 +165,8 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 			fullInput = "{}"
 		}
 
-		// 清理完成的流式解析器
+		// 清理完成的流式解析器，归还对象到池中
+		ssja.cleanupStreamer(streamer)
 		delete(ssja.activeStreamers, toolUseId)
 
 		// 触发回调
@@ -197,9 +190,10 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 	return false, ""
 }
 
-// createSonicJSONStreamer 创建Sonic JSON流式解析器
+// createSonicJSONStreamer 创建Sonic JSON流式解析器（使用对象池优化）
 func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, toolName string) *SonicJSONStreamer {
-	buffer := &bytes.Buffer{}
+	// 使用对象池获取Buffer，避免频繁内存分配
+	buffer := utils.GetBuffer()
 
 	return &SonicJSONStreamer{
 		toolUseId:  toolUseId,
@@ -209,7 +203,7 @@ func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, too
 		state: SonicParseState{
 			expectingValue: true,
 		},
-		result: make(map[string]any),
+		result: utils.GetMap(), // 使用对象池获取Map
 	}
 }
 
@@ -253,7 +247,7 @@ func (sjs *SonicJSONStreamer) ensureUTF8Integrity(fragment string) string {
 				logger.Debug("检测到截断的UTF-8字符(2字节)",
 					logger.String("toolUseId", sjs.toolUseId),
 					logger.Int("position", i),
-					logger.String("fragment_end", fragment[max(0, len(fragment)-10):]))
+					logger.String("fragment_end", fragment[utils.IntMax(0, len(fragment)-10):]))
 				// 保存截断的字符到下一个片段处理
 				sjs.incompleteUTF8 = string(bytes[i:])
 				return string(bytes[:i])
@@ -265,7 +259,7 @@ func (sjs *SonicJSONStreamer) ensureUTF8Integrity(fragment string) string {
 				logger.Debug("检测到截断的UTF-8字符(3字节)",
 					logger.String("toolUseId", sjs.toolUseId),
 					logger.Int("position", i),
-					logger.String("fragment_end", fragment[max(0, len(fragment)-10):]))
+					logger.String("fragment_end", fragment[utils.IntMax(0, len(fragment)-10):]))
 				sjs.incompleteUTF8 = string(bytes[i:])
 				return string(bytes[:i])
 			}
@@ -276,7 +270,7 @@ func (sjs *SonicJSONStreamer) ensureUTF8Integrity(fragment string) string {
 				logger.Debug("检测到截断的UTF-8字符(4字节)",
 					logger.String("toolUseId", sjs.toolUseId),
 					logger.Int("position", i),
-					logger.String("fragment_end", fragment[max(0, len(fragment)-10):]))
+					logger.String("fragment_end", fragment[utils.IntMax(0, len(fragment)-10):]))
 				sjs.incompleteUTF8 = string(bytes[i:])
 				return string(bytes[:i])
 			}
@@ -404,6 +398,25 @@ func (ssja *SonicStreamingJSONAggregator) onAggregationComplete(toolUseId string
 	}
 }
 
+// cleanupStreamer 清理单个流式解析器，归还对象到池中
+func (ssja *SonicStreamingJSONAggregator) cleanupStreamer(streamer *SonicJSONStreamer) {
+	if streamer == nil {
+		return
+	}
+
+	// 归还Buffer到对象池
+	if streamer.buffer != nil {
+		utils.PutBuffer(streamer.buffer)
+		streamer.buffer = nil
+	}
+
+	// 归还Map到对象池
+	if streamer.result != nil {
+		utils.PutMap(streamer.result)
+		streamer.result = nil
+	}
+}
+
 // CleanupExpiredBuffers 清理过期的缓冲区
 func (ssja *SonicStreamingJSONAggregator) CleanupExpiredBuffers(timeout time.Duration) {
 	ssja.mu.Lock()
@@ -418,6 +431,9 @@ func (ssja *SonicStreamingJSONAggregator) CleanupExpiredBuffers(timeout time.Dur
 				logger.Duration("age", now.Sub(streamer.lastUpdate)),
 				logger.Int("fragments", streamer.fragmentCount),
 				logger.Int("totalBytes", streamer.totalBytes))
+
+			// 归还对象到池中
+			ssja.cleanupStreamer(streamer)
 			delete(ssja.activeStreamers, toolUseId)
 			cleanedCount++
 		}

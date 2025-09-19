@@ -6,13 +6,62 @@ import (
 	"log"
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/sonic"
 )
+
+// 简单的内部对象池，避免循环导入
+var (
+	stringBuilderPool = sync.Pool{
+		New: func() any {
+			var sb strings.Builder
+			sb.Grow(512) // 预分配512字节
+			return &sb
+		},
+	}
+	stringSlicePool = sync.Pool{
+		New: func() any {
+			return make([]string, 0, 8) // 预分配8个元素
+		},
+	}
+)
+
+// getStringBuilder 获取StringBuilder
+func getStringBuilder() *strings.Builder {
+	sb := stringBuilderPool.Get().(*strings.Builder)
+	sb.Reset()
+	return sb
+}
+
+// putStringBuilder 归还StringBuilder
+func putStringBuilder(sb *strings.Builder) {
+	if sb.Cap() > 8192 { // 如果太大就丢弃
+		return
+	}
+	sb.Reset()
+	stringBuilderPool.Put(sb)
+}
+
+// getStringSlice 获取字符串切片
+func getStringSlice() []string {
+	slice := stringSlicePool.Get().([]string)
+	return slice[:0] // 重置长度但保持容量
+}
+
+// putStringSlice 归还字符串切片
+func putStringSlice(slice []string) {
+	if cap(slice) > 100 { // 如果太大就丢弃
+		return
+	}
+	slice = slice[:0]
+	stringSlicePool.Put(slice)
+}
 
 // Level 日志级别类型
 type Level int
@@ -208,10 +257,13 @@ func (l *Logger) log(level Level, msg string, fields []Field) {
 	}
 }
 
-// marshalLogEntry 自定义日志条目序列化，确保字段顺序
+// marshalLogEntry 自定义日志条目序列化，确保字段顺序（使用对象池优化）
 func (l *Logger) marshalLogEntry(entry *LogEntry) []byte {
+	// 使用内部对象池获取StringBuilder，避免频繁内存分配
+	b := getStringBuilder()
+	defer putStringBuilder(b) // 确保归还到池中
+
 	// 手动构建JSON字符串确保字段顺序：timestamp > level > file > func > message > 其他字段
-	var b strings.Builder
 	b.WriteString(`{"timestamp":"`)
 	b.WriteString(entry.Timestamp)
 	b.WriteString(`","level":"`)
@@ -241,19 +293,16 @@ func (l *Logger) marshalLogEntry(entry *LogEntry) []byte {
 
 	// 添加动态字段（按键名排序确保一致性）
 	if len(entry.Fields) > 0 {
-		// 对字段名进行排序确保输出一致性
-		var keys []string
+		// 使用内部对象池获取字符串切片，避免临时分配
+		keys := getStringSlice()
+		defer putStringSlice(keys)
+
+		// 收集字段名
 		for k := range entry.Fields {
 			keys = append(keys, k)
 		}
-		// 简单排序（保持性能）
-		for i := 0; i < len(keys)-1; i++ {
-			for j := i + 1; j < len(keys); j++ {
-				if keys[i] > keys[j] {
-					keys[i], keys[j] = keys[j], keys[i]
-				}
-			}
-		}
+		// 使用Go标准库高效排序算法（O(n log n)）
+		sort.Strings(keys)
 
 		for _, k := range keys {
 			v := entry.Fields[k]
