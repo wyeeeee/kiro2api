@@ -134,10 +134,12 @@ LOG_FORMAT=json                           # text,json
 ### 核心服务层
 - **`server/`**: HTTP服务器和请求处理，遵循单一职责原则
   - `server.go` - 服务器初始化和路由配置
-  - `handlers.go` - Anthropic API处理器  
+  - `handlers.go` - Anthropic API处理器
   - `openai_handlers.go` - OpenAI API处理器
   - `middleware.go` - 认证中间件
   - `common.go` - 公共响应处理
+  - `sse_state_manager.go` - SSE状态管理器
+  - `stop_reason_manager.go` - 停止原因管理器
 
 ### 数据转换层  
 - **`converter/`**: API格式转换，实现开闭原则
@@ -156,10 +158,11 @@ LOG_FORMAT=json                           # text,json
 
 ### 基础设施层
 - **`auth/`**: 企业级认证和token管理系统
-  - `token.go` - 核心token池管理
-  - `smart_selector.go` - 智能token选择策略
+  - `auth.go` - 认证接口和核心功能
+  - `token_manager.go` - token池管理和选择策略
   - `usage_checker.go` - 使用限制实时监控
-  - `config/provider.go` - 多方式配置提供者
+  - `config.go` - 配置提供者和管理
+  - `refresh.go` - token刷新逻辑
 - **`utils/`**: 高性能工具包
   - `atomic_cache.go` - 原子操作缓存系统
   - `token_refresh_manager.go` - 并发刷新控制管理器
@@ -183,8 +186,8 @@ LOG_FORMAT=json                           # text,json
    - 测试新模型的请求响应转换
 
 2. **Token选择策略扩展**
-   - `auth/smart_selector.go`: 实现新的选择策略（实现Strategy接口）
-   - `auth/config/provider.go`: 添加新认证方式配置
+   - `auth/token_manager.go`: 实现新的选择策略（扩展现有选择逻辑）
+   - `auth/config.go`: 添加新认证方式配置
    - `auth/usage_checker.go`: 扩展使用限制监控功能
 
 ### 性能优化 (遵循KISS原则)
@@ -194,7 +197,7 @@ LOG_FORMAT=json                           # text,json
    - 优化冷热分离策略
 
 2. **Token选择优化**
-   - `auth/smart_selector.go`: 优化选择算法性能
+   - `auth/token_manager.go`: 优化选择算法性能
    - 调整使用量统计和预测模型
    - 测试不同负载下的选择策略效果
 
