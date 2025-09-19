@@ -122,7 +122,7 @@ func (sta *SimpleToolAggregator) CompleteTool(id string) *ToolData {
 	tool.State = ToolCompleted
 	duration := time.Since(tool.StartTime)
 
-	logger.Info("工具调用完成",
+	logger.Debug("工具调用完成",
 		logger.String("tool_id", id),
 		logger.String("tool_name", tool.Name),
 		logger.Duration("duration", duration),

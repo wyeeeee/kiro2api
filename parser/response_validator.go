@@ -227,7 +227,7 @@ func (rv *ResponseValidator) FinishValidation(sessionId string) *ValidationSessi
 	// 从活跃验证中移除
 	delete(rv.activeValidations, sessionId)
 
-	logger.Info("验证会话结束",
+	logger.Debug("验证会话结束",
 		logger.String("session_id", sessionId),
 		logger.String("status", rv.statusToString(session.status)),
 		logger.Int("total_messages", session.messageCount),

@@ -270,7 +270,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 		if len(toolResults) > 0 {
 			cwReq.ConversationState.CurrentMessage.UserInputMessage.UserInputMessageContext.ToolResults = toolResults
 
-			logger.Info("已添加工具结果到请求",
+			logger.Debug("已添加工具结果到请求",
 				logger.Int("tool_results_count", len(toolResults)),
 				logger.String("conversation_id", cwReq.ConversationState.ConversationId))
 

@@ -98,7 +98,7 @@ func (cesp *CompliantEventStreamParser) ParseResponse(streamData []byte) (*Parse
 	}
 
 	if len(errors) > 0 && !cesp.strictMode {
-		logger.Info("解析完成，但有部分错误",
+		logger.Debug("解析完成，但有部分错误",
 			logger.Int("success_messages", len(messages)),
 			logger.Int("total_events", len(allEvents)),
 			logger.Int("error_count", len(errors)))

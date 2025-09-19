@@ -577,7 +577,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 		// 检查是否是工具结果提交场景
 		if containsToolResults(anthropicReq) {
-			logger.Info("检测到工具结果提交场景，生成补偿内容",
+			logger.Debug("检测到工具结果提交场景，生成补偿内容",
 				addReqFields(c,
 					logger.String("scenario", "tool_result_submission"),
 				)...)
@@ -586,7 +586,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 			// 尝试获取解析器的聚合内容
 			aggregatedContent := compliantParser.GetCompletionBuffer()
 			if aggregatedContent != "" {
-				logger.Info("发现解析器聚合内容，使用聚合内容",
+				logger.Debug("发现解析器聚合内容，使用聚合内容",
 					addReqFields(c,
 						logger.String("content_preview", func() string {
 							if len(aggregatedContent) > 100 {
@@ -618,7 +618,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 			if err := sseStateManager.SendEvent(c, sender, contentBlockDelta); err == nil {
 				totalOutputChars += len(compensationContent)
-				logger.Info("成功发送补偿内容事件",
+				logger.Debug("成功发送补偿内容事件",
 					addReqFields(c,
 						logger.Int("compensation_length", len(compensationContent)),
 						logger.String("compensation_preview", func() string {
@@ -989,7 +989,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 		logger.String("stop_reason", stopReason),
 		logger.Int("content_blocks", len(contexts)))
 
-	logger.Info("下发非流式响应",
+	logger.Debug("下发非流式响应",
 		addReqFields(c,
 			logger.String("direction", "downstream_send"),
 			logger.Bool("saw_tool_use", sawToolUse),

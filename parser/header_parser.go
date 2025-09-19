@@ -166,7 +166,7 @@ func (hp *HeaderParser) ParseHeadersWithState(data []byte, state *HeaderParseSta
 
 		// 如果已经有一些解析结果，尝试强制完成
 		if len(state.ParsedHeaders) > 0 {
-			logger.Info("数据不完整但已有解析结果，强制完成头部解析")
+			logger.Debug("数据不完整但已有解析结果，强制完成头部解析")
 			return hp.ForceCompleteHeaderParsing(state), nil
 		}
 

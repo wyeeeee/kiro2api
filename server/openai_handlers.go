@@ -87,7 +87,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	openaiResp := converter.ConvertAnthropicToOpenAI(anthropicResp, anthropicReq.Model, openaiMessageId)
 
 	// 下发OpenAI兼容非流式响应
-	logger.Info("下发OpenAI非流式响应",
+	logger.Debug("下发OpenAI非流式响应",
 		addReqFields(c,
 			logger.String("direction", "downstream_send"),
 			logger.Bool("saw_tool_use", sawToolUse),

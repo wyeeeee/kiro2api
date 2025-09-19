@@ -251,7 +251,7 @@ func saveToFile(record RawDataRecord) error {
 		return fmt.Errorf("写入文件失败: %w", err)
 	}
 
-	logger.Info("原始数据已保存",
+	logger.Debug("原始数据已保存",
 		logger.String("file", filepath),
 		logger.Int("bytes", record.TotalBytes),
 		logger.String("md5", record.MD5Hash),

@@ -72,7 +72,7 @@ func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReq
 	}
 
 	// 上游请求即将发送（带方向和会话标识）
-	logger.Info("发送上游请求",
+	logger.Debug("发送上游请求",
 		addReqFields(c,
 			logger.String("direction", "upstream_request"),
 			logger.String("url", req.URL.String()),
