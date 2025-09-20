@@ -92,9 +92,9 @@ type SequentialSelectionStrategy struct {
 // NewSequentialSelectionStrategy 创建顺序选择策略
 func NewSequentialSelectionStrategy(configOrder []string) *SequentialSelectionStrategy {
 	return &SequentialSelectionStrategy{
-		configOrder: configOrder,
+		configOrder:  configOrder,
 		currentIndex: 0,
-		exhausted:   make(map[string]bool),
+		exhausted:    make(map[string]bool),
 	}
 }
 

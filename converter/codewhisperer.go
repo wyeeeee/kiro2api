@@ -417,8 +417,7 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 					toolUses := extractToolUsesFromMessage(anthropicReq.Messages[i+1].Content)
 					if len(toolUses) > 0 {
 						assistantMsg.AssistantResponseMessage.ToolUses = toolUses
-						logger.Debug("历史助手消息包含工具调用",
-							logger.Int("tool_uses_count", len(toolUses)))
+						// logger.Debug("历史助手消息包含工具调用", logger.Int("tool_uses_count", len(toolUses)))
 					} else {
 						assistantMsg.AssistantResponseMessage.ToolUses = nil
 					}
@@ -487,9 +486,7 @@ func extractToolUsesFromMessage(content any) []types.ToolUseEntry {
 
 						toolUses = append(toolUses, toolUse)
 
-						logger.Debug("提取到历史工具调用",
-							logger.String("tool_id", toolUse.ToolUseId),
-							logger.String("tool_name", toolUse.Name))
+						// logger.Debug("提取到历史工具调用", logger.String("tool_id", toolUse.ToolUseId), logger.String("tool_name", toolUse.Name))
 					}
 				}
 			}

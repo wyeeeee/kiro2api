@@ -206,11 +206,11 @@ func PutStringSlice(slice []string) {
 
 // PoolStats 对象池统计信息
 type PoolStats struct {
-	BufferPoolStats       PoolItemStats `json:"buffer_pool"`
-	StringBuilderStats    PoolItemStats `json:"string_builder_pool"`
-	ByteSlicePoolStats    PoolItemStats `json:"byte_slice_pool"`
-	MapPoolStats          PoolItemStats `json:"map_pool"`
-	StringSlicePoolStats  PoolItemStats `json:"string_slice_pool"`
+	BufferPoolStats      PoolItemStats `json:"buffer_pool"`
+	StringBuilderStats   PoolItemStats `json:"string_builder_pool"`
+	ByteSlicePoolStats   PoolItemStats `json:"byte_slice_pool"`
+	MapPoolStats         PoolItemStats `json:"map_pool"`
+	StringSlicePoolStats PoolItemStats `json:"string_slice_pool"`
 }
 
 // PoolItemStats 单个池的统计信息

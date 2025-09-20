@@ -155,7 +155,7 @@ func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	return req, nil
 }
 
-// handleCodeWhispererError 处理CodeWhisperer API错误响应
+// handleCodeWhispererError 处理CodeWhisperer API错误响应 (重构后符合SOLID原则)
 func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 	if resp.StatusCode == http.StatusOK {
 		return false
@@ -180,136 +180,34 @@ func handleCodeWhispererError(c *gin.Context, resp *http.Response) bool {
 			logger.String("response_body", string(body)),
 		)...)
 
-	// 如果是403错误，提示token失效
+	// 特殊处理：403错误表示token失效 (保持向后兼容)
 	if resp.StatusCode == http.StatusForbidden {
 		logger.Warn("收到403错误，token可能已失效")
 		respondErrorWithCode(c, http.StatusUnauthorized, "unauthorized", "%s", "Token已失效，请重试")
 		return true
 	}
 
-	respondErrorWithCode(c, http.StatusInternalServerError, "cw_error", "CodeWhisperer Error: %s", string(body))
+	// *** 新增：使用错误映射器处理错误，符合Claude API规范 ***
+	errorMapper := NewErrorMapper()
+	claudeError := errorMapper.MapCodeWhispererError(resp.StatusCode, body)
+
+	// 根据映射结果发送符合Claude规范的响应
+	if claudeError.StopReason == "max_tokens" {
+		// CONTENT_LENGTH_EXCEEDS_THRESHOLD -> max_tokens stop_reason
+		logger.Info("内容长度超限，映射为max_tokens stop_reason",
+			addReqFields(c,
+				logger.String("upstream_reason", "CONTENT_LENGTH_EXCEEDS_THRESHOLD"),
+				logger.String("claude_stop_reason", "max_tokens"),
+			)...)
+		errorMapper.SendClaudeError(c, claudeError)
+	} else {
+		// 其他错误使用传统方式处理 (向后兼容)
+		respondErrorWithCode(c, http.StatusInternalServerError, "cw_error", "CodeWhisperer Error: %s", string(body))
+	}
+
 	return true
 }
 
-// 兜底转义：用于防止将可疑工具标签文本以原始'<'形式直出
-// 仅对普通文本(text_delta)生效，不影响工具事件或参数JSON
-func sanitizeSuspiciousToolText(s string) (string, bool) {
-	if s == "" || !strings.Contains(s, "<") {
-		return s, false
-	}
-
-	// 新增：检查是否为完整的、合法的工具调用XML块，如果是，则跳过转义
-	trimmed := strings.TrimSpace(s)
-	if (strings.HasPrefix(trimmed, "<tool_use>") && strings.HasSuffix(trimmed, "</tool_use>")) ||
-		(strings.HasPrefix(trimmed, "<tool_result>") && strings.HasSuffix(trimmed, "</tool_result>")) {
-		// 进一步验证内部结构的完整性（简单检查）
-		if strings.Contains(trimmed, "</tool_name>") && strings.Contains(trimmed, "</tool_parameters>") {
-			logger.Debug("检测到完整工具调用XML块，跳过转义", logger.String("block", trimmed))
-			return s, false
-		}
-		if strings.Contains(trimmed, "<tool_use_id>") && strings.Contains(trimmed, "<content>") {
-			logger.Debug("检测到完整工具结果XML块，跳过转义", logger.String("block", trimmed))
-			return s, false
-		}
-	}
-
-	orig := s
-	replacements := [][2]string{
-		// 带空格的错误格式标签 - 优先处理
-		{"< tool_result>", ""},
-		{"< /tool_result>", ""},
-		{"< tool_use>", "＜tool_use＞"},
-		{"< /tool_use>", "＜/tool_use＞"},
-		{"< tool_parameter>", "＜tool_parameter＞"},
-		{"< /tool_parameter>", "＜/tool_parameter＞"},
-		{"< tool_name>", "＜tool_name＞"},
-		{"< /tool_name>", "＜/tool_name＞"},
-		{"< tool_parameters>", "＜tool_parameters＞"},
-		{"< /tool_parameters>", "＜/tool_parameters＞"},
-		{"< bash>", "＜bash＞"},
-		{"< /bash>", "＜/bash＞"},
-		{"< write>", "＜write＞"},
-		{"< /write>", "＜/write＞"},
-		{"< file_path>", "＜file_path＞"},
-		{"< /file_path>", "＜/file_path＞"},
-		{"< command>", "＜command＞"},
-		{"< /command>", "＜/command＞"},
-		{"< content>", "＜content＞"},
-		{"< /content>", "＜/content＞"},
-		// 标准格式标签（tool_result 直接移除，其余转全角）
-		{"<tool_result>", ""},
-		{"</tool_result>", ""},
-		{"<tool_", "＜tool_"},
-		{"</tool_", "＜/tool_"},
-		{"<tool ", "＜tool "},
-		{"</tool", "＜/tool"},
-		{"<tool_use", "＜tool_use"},
-		{"</tool_use>", "＜/tool_use＞"},
-		{"<tool_name>", "＜tool_name＞"},
-		{"</tool_name>", "＜/tool_name＞"},
-		{"<tool_parameters>", "＜tool_parameters＞"},
-		{"</tool_parameters>", "＜/tool_parameters＞"},
-		{"<tool_parameter>", "＜tool_parameter＞"},
-		{"</tool_parameter>", "＜/tool_parameter＞"},
-		{"<parameters>", "＜parameters＞"},
-		{"</parameters>", "＜/parameters＞"},
-		{"<tool_parameter", "＜tool_parameter"},
-		{"<bash>", "＜bash＞"},
-		{"</bash>", "＜/bash＞"},
-		{"<write>", "＜write＞"},
-		{"</write>", "＜/write＞"},
-		{"<file_path>", "＜file_path＞"},
-		{"</file_path>", "＜/file_path＞"},
-		{"<command>", "＜command＞"},
-		{"</command>", "＜/command＞"},
-		{"<content>", "＜content＞"},
-		{"</content>", "＜/content＞"},
-	}
-	changed := false
-	for _, p := range replacements {
-		if strings.Contains(s, p[0]) {
-			s = strings.ReplaceAll(s, p[0], p[1])
-			changed = true
-		}
-	}
-	// 泛化处理遗留的 <tool...> 和带空格的 < tool...> 形式
-	// 但是要避免误伤正常的工具调用文本
-	if strings.Contains(s, "< tool") {
-		s = strings.ReplaceAll(s, "< tool", "＜tool")
-		changed = true
-	}
-	if strings.Contains(s, "< /tool") {
-		s = strings.ReplaceAll(s, "< /tool", "＜/tool")
-		changed = true
-	}
-	// 只在特定情况下转义 <tool：
-	// 1. 不是完整的工具调用标签
-	// 2. 不是以 <tool_ 开头的正常标签
-	// 3. 不是以 <tool_calls> 等正常格式
-	if !changed && strings.Contains(s, "<tool") {
-		// 检查是否是不完整的标签片段
-		isFragment := !strings.Contains(s, "<tool_") &&
-			!strings.Contains(s, "<tool>") &&
-			!strings.Contains(s, "</tool") &&
-			len(s) < 20 // 片段通常很短
-
-		if isFragment {
-			s = strings.ReplaceAll(s, "<tool", "＜tool")
-			changed = true
-		}
-	}
-	if changed {
-		preview := s
-		if len(preview) > 120 {
-			preview = preview[:120] + "..."
-		}
-		logger.Debug("SSE文本兜底转义触发",
-			logger.Int("orig_len", len(orig)),
-			logger.Int("new_len", len(s)),
-			logger.String("preview", preview))
-	}
-	return s, changed
-}
 
 // StreamEventSender 统一的流事件发送接口
 type StreamEventSender interface {
@@ -323,27 +221,11 @@ type AnthropicStreamSender struct{}
 func (s *AnthropicStreamSender) SendEvent(c *gin.Context, data any) error {
 	var eventType string
 
-	// 对文本增量进行兜底转义
 	if dataMap, ok := data.(map[string]any); ok {
 		if t, exists := dataMap["type"]; exists {
 			eventType = t.(string)
 		}
 
-		// 仅对 content_block_delta 中的 text_delta 进行兜底转义
-		if eventType == "content_block_delta" {
-			if delta, ok := dataMap["delta"].(map[string]any); ok {
-				if deltaType, _ := delta["type"].(string); deltaType == "text_delta" {
-					if text, ok := delta["text"].(string); ok && text != "" {
-						sanitized, changed := sanitizeSuspiciousToolText(text)
-						if changed {
-							delta["text"] = sanitized
-							dataMap["delta"] = delta
-							data = dataMap
-						}
-					}
-				}
-			}
-		}
 	}
 
 	json, err := utils.SafeMarshal(data)
@@ -381,25 +263,6 @@ func (s *AnthropicStreamSender) SendError(c *gin.Context, message string, _ erro
 type OpenAIStreamSender struct{}
 
 func (s *OpenAIStreamSender) SendEvent(c *gin.Context, data any) error {
-	// 对OpenAI格式的文本内容进行兜底转义
-	if dataMap, ok := data.(map[string]any); ok {
-		if choices, ok := dataMap["choices"].([]map[string]any); ok && len(choices) > 0 {
-			if delta, ok := choices[0]["delta"].(map[string]any); ok {
-				// 检查是否为文本内容（而非工具调用）
-				if content, ok := delta["content"].(string); ok && content != "" {
-					if _, hasToolCalls := delta["tool_calls"]; !hasToolCalls {
-						sanitized, changed := sanitizeSuspiciousToolText(content)
-						if changed {
-							delta["content"] = sanitized
-							choices[0]["delta"] = delta
-							dataMap["choices"] = choices
-							data = dataMap
-						}
-					}
-				}
-			}
-		}
-	}
 
 	json, err := utils.SafeMarshal(data)
 	if err != nil {

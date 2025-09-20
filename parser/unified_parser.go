@@ -34,13 +34,12 @@ type UnifiedParser struct {
 	lastError  error
 }
 
-
 // UnifiedBlockState 简化的块状态
 type UnifiedBlockState struct {
-	Index   int       `json:"index"`
-	Type    string    `json:"type"`
-	Started bool      `json:"started"`
-	Stopped bool      `json:"stopped"`
+	Index   int             `json:"index"`
+	Type    string          `json:"type"`
+	Started bool            `json:"started"`
+	Stopped bool            `json:"stopped"`
 	Content strings.Builder `json:"-"` // 不序列化，内容缓冲区
 }
 
@@ -52,7 +51,6 @@ type ParseStats struct {
 	ErrorCount      int           `json:"error_count"`
 	BytesProcessed  int           `json:"bytes_processed"`
 }
-
 
 // NewUnifiedParser 创建统一解析器
 func NewUnifiedParser(strictMode bool) *UnifiedParser {
@@ -347,23 +345,6 @@ func (up *UnifiedParser) ParseResponse(data []byte) (*ParseResult, error) {
 	}
 
 	return compatibleResult, err
-}
-
-// convertToCompatibleToolCalls 转换为兼容的工具调用格式
-func (up *UnifiedParser) convertToCompatibleToolCalls() []*ToolExecution {
-	up.mu.RLock()
-	defer up.mu.RUnlock()
-
-	var result []*ToolExecution
-	for _, state := range up.toolStates {
-		result = append(result, &ToolExecution{
-			ID:        state.ID,
-			Name:      state.Name,
-			Status:    state.Status,
-			Arguments: state.Arguments,
-		})
-	}
-	return result
 }
 
 // GetCompletionBuffer 获取完成缓冲区（兼容现有接口）

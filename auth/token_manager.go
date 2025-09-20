@@ -12,12 +12,12 @@ import (
 
 // TokenManager 简化的token管理器
 type TokenManager struct {
-	cache            *SimpleTokenCache
-	configs          []AuthConfig
-	mutex            sync.RWMutex
-	lastRefresh      time.Time
+	cache             *SimpleTokenCache
+	configs           []AuthConfig
+	mutex             sync.RWMutex
+	lastRefresh       time.Time
 	selectionStrategy TokenSelectionStrategy // 新增：token选择策略
-	configOrder      []string                // 新增：配置顺序
+	configOrder       []string               // 新增：配置顺序
 }
 
 // SimpleTokenCache 简化的token缓存
@@ -67,10 +67,10 @@ func NewTokenManager(configs []AuthConfig) *TokenManager {
 		logger.Int("config_order_count", len(configOrder)))
 
 	return &TokenManager{
-		cache:            NewSimpleTokenCache(5 * time.Minute),
-		configs:          configs,
+		cache:             NewSimpleTokenCache(5 * time.Minute),
+		configs:           configs,
 		selectionStrategy: strategy,
-		configOrder:      configOrder,
+		configOrder:       configOrder,
 	}
 }
 
