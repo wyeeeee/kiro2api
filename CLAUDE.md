@@ -25,7 +25,7 @@ go build -o kiro2api main.go
 
 # 测试
 go test ./...                # 运行所有测试
-go test ./parser -v          # 运行parser包测试(详细输出)  
+go test ./parser -v          # 运行parser包测试(详细输出)
 go test ./auth -v            # 运行auth包测试(token管理)
 go test ./utils -v           # 运行utils包测试(工具函数)
 go test ./converter -v       # 运行converter包测试(格式转换)
@@ -35,6 +35,7 @@ go test ./... -bench=. -benchmem  # 基准测试
 go vet ./...                 # 静态代码检查
 go fmt ./...                 # 代码格式化
 go mod tidy                  # 整理依赖
+golangci-lint run            # 运行linter (如果已安装)
 
 # 运行模式
 GIN_MODE=debug LOG_LEVEL=debug ./kiro2api  # 开发模式(详细日志)
@@ -46,6 +47,10 @@ go build -ldflags="-s -w" -o kiro2api main.go  # 生产构建(压缩)
 # Docker部署
 docker build -t kiro2api .   # 构建镜像
 docker-compose up -d         # 启动服务
+
+# 清理
+go clean                     # 清理构建缓存
+rm -f kiro2api              # 删除可执行文件
 ```
 
 ## 技术栈
@@ -186,7 +191,7 @@ LOG_FORMAT=json                           # text,json
 ## 核心开发任务
 
 ### 扩展功能 (遵循开闭原则)
-1. **添加新模型支持** 
+1. **添加新模型支持**
    - `config/config.go`: 在 `ModelMap` 中添加模型映射
    - `types/model.go`: 验证结构支持新模型
    - 测试新模型的请求响应转换
@@ -217,6 +222,20 @@ LOG_FORMAT=json                           # text,json
 2. **测试覆盖**: 重点测试新的token管理系统和缓存机制
 3. **性能基准测试**: 建立token选择和缓存系统的性能基准
 4. **监控指标**: 完善token使用情况和性能监控
+
+## 重要提醒
+
+### 开发规范
+- **NEVER** 提交敏感信息（API keys、tokens）到代码库
+- **ALWAYS** 在修改核心逻辑前运行完整测试套件
+- **PREFER** 编辑现有文件而非创建新文件
+- **FOLLOW** 现有代码风格和命名约定
+
+### 测试策略
+- 单元测试：`go test ./package -v`
+- 集成测试：启动服务器并使用curl测试API端点
+- 性能测试：`go test -bench=. -benchmem`
+- 在提交前运行：`go vet ./... && go fmt ./...`
 
 
 ## 快速测试
