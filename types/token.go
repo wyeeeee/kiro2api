@@ -18,33 +18,6 @@ type Token struct {
 	ProfileArn string `json:"profileArn,omitempty"` // 来自RefreshResponse
 }
 
-// ToTokenInfo 转换为TokenInfo格式（向后兼容）
-func (t *Token) ToTokenInfo() TokenInfo {
-	return TokenInfo{
-		AccessToken:  t.AccessToken,
-		RefreshToken: t.RefreshToken,
-		ExpiresAt:    t.ExpiresAt,
-		ProfileArn:   t.ProfileArn, // 确保ProfileArn被包含在转换中
-		ExpiresIn:    t.ExpiresIn,
-	}
-}
-
-// ToRefreshResponse 转换为RefreshResponse格式（向后兼容）
-func (t *Token) ToRefreshResponse() RefreshResponse {
-	return RefreshResponse{
-		AccessToken:  t.AccessToken,
-		RefreshToken: t.RefreshToken,
-		ExpiresIn:    t.ExpiresIn,
-		ProfileArn:   t.ProfileArn,
-	}
-}
-
-// ToRefreshRequest 转换为RefreshRequest格式（向后兼容）
-func (t *Token) ToRefreshRequest() RefreshRequest {
-	return RefreshRequest{
-		RefreshToken: t.RefreshToken,
-	}
-}
 
 // FromRefreshResponse 从RefreshResponse创建Token
 func (t *Token) FromRefreshResponse(resp RefreshResponse, originalRefreshToken string) {

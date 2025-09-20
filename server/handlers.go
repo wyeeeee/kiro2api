@@ -275,7 +275,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 						"text": pendingText,
 					},
 				}
-				_ = sender.SendEvent(c, flush)
+				// 使用状态管理器发送事件，确保与主流程使用相同的发送机制
+				if err := sseStateManager.SendEvent(c, sender, flush); err != nil {
+					logger.Error("flushPending事件发送违规", logger.Err(err))
+				}
 				lastFlushedText = pendingText
 				totalOutputChars += len(pendingText)
 			} else {
@@ -437,30 +440,8 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 											shouldFlush = true
 										}
 										if shouldFlush {
-											trimmed := strings.TrimSpace(pendingText)
-											// 丢弃过短或与上次相同的片段，降低重复
-											if len([]rune(trimmed)) >= 2 && trimmed != strings.TrimSpace(lastFlushedText) {
-												flush := map[string]any{
-													"type":  "content_block_delta",
-													"index": pendingIndex,
-													"delta": map[string]any{
-														"type": "text_delta",
-														"text": pendingText,
-													},
-												}
-												// 使用状态管理器发送文本增量事件，确保符合Claude规范
-												if err := sseStateManager.SendEvent(c, sender, flush); err != nil {
-													logger.Error("文本增量事件发送违规", logger.Err(err))
-												}
-												lastFlushedText = pendingText
-											} else {
-												logger.Debug("跳过重复/过短文本片段B",
-													addReqFields(c,
-														logger.Int("len", len(pendingText)),
-													)...)
-											}
-											hasPending = false
-											pendingText = ""
+											// 使用统一的flushPending函数，避免重复逻辑
+											flushPending()
 										}
 										// 调试日志
 										preview := txt
