@@ -18,9 +18,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # 只有在发布的标签以 v 开头，或者手动触发时输入的标签以 v 开头时才执行
+    # 只有在推送的标签以 v 开头，或者手动触发时输入的标签以 v 开头时才执行
     if: >-
-      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v')) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'workflow_dispatch' && startsWith(github.event.inputs.tag, 'v'))
     permissions:
       contents: read
@@ -52,7 +52,7 @@ jobs:
           type=semver,pattern={{version}}
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
-          type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+          type=raw,value=latest,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
           type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
 
     - name: Build and push Docker image
