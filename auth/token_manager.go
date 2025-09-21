@@ -265,8 +265,6 @@ func getTokenSelectionStrategy() TokenSelectionStrategyType {
 		return StrategySequential
 	case "optimal", "best", "最优":
 		return StrategyOptimal
-	case "balanced", "均衡":
-		return StrategyBalanced
 	default:
 		// 默认使用顺序策略（满足用户需求）
 		return StrategySequential

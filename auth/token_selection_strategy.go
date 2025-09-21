@@ -31,8 +31,6 @@ const (
 	// StrategySequential 顺序策略：按配置顺序依次使用token
 	StrategySequential TokenSelectionStrategyType = "sequential"
 
-	// StrategyBalanced 均衡策略：轮询使用所有可用token
-	StrategyBalanced TokenSelectionStrategyType = "balanced"
 )
 
 // OptimalSelectionStrategy 最优选择策略（兼容现有逻辑）
@@ -195,9 +193,6 @@ func CreateTokenSelectionStrategy(strategyType TokenSelectionStrategyType, confi
 		return NewOptimalSelectionStrategy(), nil
 	case StrategySequential:
 		return NewSequentialSelectionStrategy(configOrder), nil
-	case StrategyBalanced:
-		// TODO: 实现均衡策略（如果需要）
-		return NewOptimalSelectionStrategy(), nil // 暂时降级到最优策略
 	default:
 		return nil, fmt.Errorf("不支持的token选择策略: %s", strategyType)
 	}
