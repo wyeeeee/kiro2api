@@ -67,6 +67,10 @@ func handleResponseReadError(c *gin.Context, err error) {
 func executeCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, isStream bool) (*http.Response, error) {
 	req, err := buildCodeWhispererRequest(c, anthropicReq, tokenInfo, isStream)
 	if err != nil {
+		// 检查是否是模型未找到错误，如果是，则响应已经发送，不需要再次处理
+		if _, ok := err.(*types.ModelNotFoundErrorType); ok {
+			return nil, err
+		}
 		handleRequestBuildError(c, err)
 		return nil, err
 	}
@@ -108,6 +112,12 @@ var execCWRequest = executeCodeWhispererRequest
 func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, isStream bool) (*http.Request, error) {
 	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq, tokenInfo.ProfileArn, c)
 	if err != nil {
+		// 检查是否是模型未找到错误
+		if modelNotFoundErr, ok := err.(*types.ModelNotFoundErrorType); ok {
+			// 直接返回用户期望的JSON格式
+			c.JSON(http.StatusBadRequest, modelNotFoundErr.ErrorData)
+			return nil, err
+		}
 		return nil, fmt.Errorf("构建CodeWhisperer请求失败: %v", err)
 	}
 

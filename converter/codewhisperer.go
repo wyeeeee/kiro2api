@@ -280,13 +280,15 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 		}
 	}
 
-	// 确保ModelId不为空，如果映射不存在则使用默认模型
+	// 检查模型映射是否存在，如果不存在则返回错误
 	modelId := config.ModelMap[anthropicReq.Model]
 	if modelId == "" {
-		modelId = "CLAUDE_3_7_SONNET_20250219_V1_0" // 使用默认模型
-		logger.Warn("使用默认模型，因为映射不存在",
+		logger.Warn("模型映射不存在",
 			logger.String("requested_model", anthropicReq.Model),
-			logger.String("default_model", modelId))
+			logger.String("request_id", cwReq.ConversationState.AgentContinuationId))
+
+		// 返回模型未找到错误，使用已生成的AgentContinuationId
+		return cwReq, types.NewModelNotFoundErrorType(anthropicReq.Model, cwReq.ConversationState.AgentContinuationId)
 	}
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.ModelId = modelId
 	cwReq.ConversationState.CurrentMessage.UserInputMessage.Origin = "AI_EDITOR" // v0.4兼容性：固定使用AI_EDITOR

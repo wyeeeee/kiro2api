@@ -200,6 +200,10 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 	resp, err := execCWRequest(c, anthropicReq, token.TokenInfo, true)
 	if err != nil {
+		// 检查是否是模型未找到错误，如果是，则响应已经发送，不需要再次处理
+		if _, ok := err.(*types.ModelNotFoundErrorType); ok {
+			return
+		}
 		_ = sender.SendError(c, "构建请求失败", err)
 		return
 	}
