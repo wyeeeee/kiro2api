@@ -33,7 +33,7 @@ type CachedToken struct {
 	UsageInfo *types.UsageLimits
 	CachedAt  time.Time
 	LastUsed  time.Time
-	Available int
+	Available float64
 }
 
 // NewSimpleTokenCache 创建简单的token缓存
@@ -99,7 +99,7 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 
 	logger.Debug("选择token成功",
 		logger.String("token_preview", bestToken.Token.AccessToken[:20]+"..."),
-		logger.Int("available_count", bestToken.Available))
+		logger.Float64("available_count", bestToken.Available))
 
 	return bestToken.Token, nil
 }
@@ -143,7 +143,7 @@ func (tm *TokenManager) selectBestToken() *CachedToken {
 	logger.Debug("token选择完成",
 		logger.String("strategy", tm.selectionStrategy.Name()),
 		logger.String("selected_key", selectedKey),
-		logger.Int("available_count", selectedToken.Available))
+		logger.Float64("available_count", selectedToken.Available))
 
 	return selectedToken
 }
@@ -172,15 +172,15 @@ func (tm *TokenManager) refreshCache() error {
 
 		// 检查使用限制
 		var usageInfo *types.UsageLimits
-		var available int
+		var available float64
 
 		checker := NewUsageLimitsChecker()
 		if usage, checkErr := checker.CheckUsageLimits(token); checkErr == nil {
 			usageInfo = usage
-			available = calculateAvailableCount(usage)
+			available = CalculateAvailableCount(usage)
 		} else {
 			logger.Warn("检查使用限制失败", logger.Err(checkErr))
-			available = 100 // 默认值
+			available = 100.0 // 默认值
 		}
 
 		// 更新缓存
@@ -194,7 +194,7 @@ func (tm *TokenManager) refreshCache() error {
 
 		logger.Debug("token缓存更新",
 			logger.String("cache_key", cacheKey),
-			logger.Int("available", available))
+			logger.Float64("available", available))
 	}
 
 	tm.lastRefresh = time.Now()
@@ -229,31 +229,29 @@ func (stc *SimpleTokenCache) updateLastUsed(token *CachedToken) {
 	}
 }
 
-// calculateAvailableCount 计算可用次数
-func calculateAvailableCount(usage *types.UsageLimits) int {
+// CalculateAvailableCount 计算可用次数 (基于CREDIT资源类型，返回浮点精度)
+func CalculateAvailableCount(usage *types.UsageLimits) float64 {
 	for _, breakdown := range usage.UsageBreakdownList {
-		if breakdown.ResourceType == "VIBE" {
-			totalLimit := breakdown.UsageLimit
-			totalUsed := breakdown.CurrentUsage
+		if breakdown.ResourceType == "CREDIT" {
+			var totalAvailable float64
 
+			// 优先使用免费试用额度 (如果存在且处于ACTIVE状态)
 			if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
-				totalLimit += breakdown.FreeTrialInfo.UsageLimit
-				totalUsed += breakdown.FreeTrialInfo.CurrentUsage
+				freeTrialAvailable := breakdown.FreeTrialInfo.UsageLimitWithPrecision - breakdown.FreeTrialInfo.CurrentUsageWithPrecision
+				totalAvailable += freeTrialAvailable
 			}
 
-			available := totalLimit - totalUsed
-			if available < 0 {
-				return 0
+			// 加上基础额度
+			baseAvailable := breakdown.UsageLimitWithPrecision - breakdown.CurrentUsageWithPrecision
+			totalAvailable += baseAvailable
+
+			if totalAvailable < 0 {
+				return 0.0
 			}
-			return available
+			return totalAvailable
 		}
 	}
-	return 0
-}
-
-// CalculateAvailableCount 公开的可用次数计算函数
-func CalculateAvailableCount(usage *types.UsageLimits) int {
-	return calculateAvailableCount(usage)
+	return 0.0
 }
 
 // getTokenSelectionStrategy 从环境变量获取token选择策略

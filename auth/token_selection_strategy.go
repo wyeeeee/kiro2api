@@ -63,7 +63,7 @@ func (oss *OptimalSelectionStrategy) SelectToken(tokens map[string]*CachedToken)
 	if bestKey != "" {
 		logger.Debug("最优策略选择token",
 			logger.String("selected_key", bestKey),
-			logger.Int("available_count", bestToken.Available))
+			logger.Float64("available_count", bestToken.Available))
 	}
 
 	return bestKey
@@ -107,7 +107,7 @@ func (sss *SequentialSelectionStrategy) SelectToken(tokens map[string]*CachedTok
 			if cached.IsUsable() {
 				logger.Debug("顺序策略选择token（无顺序配置）",
 					logger.String("selected_key", key),
-					logger.Int("available_count", cached.Available))
+					logger.Float64("available_count", cached.Available))
 				return key
 			}
 		}
@@ -123,7 +123,7 @@ func (sss *SequentialSelectionStrategy) SelectToken(tokens map[string]*CachedTok
 			logger.Debug("顺序策略选择token",
 				logger.String("selected_key", currentKey),
 				logger.Int("index", sss.currentIndex),
-				logger.Int("available_count", cached.Available))
+				logger.Float64("available_count", cached.Available))
 			return currentKey
 		}
 

@@ -89,23 +89,38 @@ func (c *UsageLimitsChecker) CheckUsageLimits(token types.TokenInfo) (*types.Usa
 // logUsageLimits 记录使用限制的关键信息
 func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 	for _, breakdown := range limits.UsageBreakdownList {
-		if breakdown.ResourceType == "VIBE" {
-			// 计算总可用次数 (遵循token.md公式)
-			totalLimit := breakdown.UsageLimit
-			totalUsed := breakdown.CurrentUsage
+		if breakdown.ResourceType == "CREDIT" {
+			// 计算可用次数 (使用浮点精度数据)
+			var totalLimit float64
+			var totalUsed float64
 
+			// 基础额度
+			baseLimit := breakdown.UsageLimitWithPrecision
+			baseUsed := breakdown.CurrentUsageWithPrecision
+			totalLimit += baseLimit
+			totalUsed += baseUsed
+
+			// 免费试用额度
+			var freeTrialLimit float64
+			var freeTrialUsed float64
 			if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
-				totalLimit += breakdown.FreeTrialInfo.UsageLimit
-				totalUsed += breakdown.FreeTrialInfo.CurrentUsage
+				freeTrialLimit = breakdown.FreeTrialInfo.UsageLimitWithPrecision
+				freeTrialUsed = breakdown.FreeTrialInfo.CurrentUsageWithPrecision
+				totalLimit += freeTrialLimit
+				totalUsed += freeTrialUsed
 			}
 
 			available := totalLimit - totalUsed
 
-			logger.Info("VIBE使用状态",
+			logger.Info("CREDIT使用状态",
 				logger.String("resource_type", breakdown.ResourceType),
-				logger.Int("total_limit", totalLimit),
-				logger.Int("total_used", totalUsed),
-				logger.Int("available", available),
+				logger.Float64("total_limit", totalLimit),
+				logger.Float64("total_used", totalUsed),
+				logger.Float64("available", available),
+				logger.Float64("base_limit", baseLimit),
+				logger.Float64("base_used", baseUsed),
+				logger.Float64("free_trial_limit", freeTrialLimit),
+				logger.Float64("free_trial_used", freeTrialUsed),
 				logger.String("free_trial_status", func() string {
 					if breakdown.FreeTrialInfo != nil {
 						return breakdown.FreeTrialInfo.FreeTrialStatus
@@ -114,8 +129,8 @@ func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 				}()))
 
 			if available <= 5 {
-				logger.Warn("VIBE使用量即将耗尽",
-					logger.Int("remaining", available),
+				logger.Warn("CREDIT使用量即将耗尽",
+					logger.Float64("remaining", available),
 					logger.String("recommendation", "考虑切换到其他token"))
 			}
 
@@ -157,14 +172,14 @@ func CheckAndEnhanceToken(token types.TokenInfo) types.TokenWithUsage {
 
 		enhancedToken.UsageCheckError = err.Error()
 		// 设置保守的默认值
-		enhancedToken.AvailableCount = 1 // 保守估计还能用1次
+		enhancedToken.AvailableCount = 1.0 // 保守估计还能用1次
 		enhancedToken.UserEmail = "unknown"
 		return enhancedToken
 	}
 
 	// 成功获取使用限制
 	enhancedToken.UsageLimits = usageLimits
-	enhancedToken.AvailableCount = enhancedToken.GetAvailableVIBECount()
+	enhancedToken.AvailableCount = enhancedToken.GetAvailableCount()
 	enhancedToken.IsUsageExceeded = enhancedToken.AvailableCount <= 0
 	enhancedToken.UsageCheckError = "" // 清除错误
 
@@ -174,7 +189,7 @@ func CheckAndEnhanceToken(token types.TokenInfo) types.TokenWithUsage {
 	logger.Info("Token使用状态检查完成",
 		logger.String("user_email", enhancedToken.GetUserEmailDisplay()),
 		logger.String("token_preview", enhancedToken.TokenPreview),
-		logger.Int("available_count", enhancedToken.AvailableCount),
+		logger.Float64("available_count", enhancedToken.AvailableCount),
 		logger.Bool("is_usable", enhancedToken.IsUsable()))
 
 	return enhancedToken

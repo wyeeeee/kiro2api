@@ -19,25 +19,33 @@ type UsageLimits struct {
 
 // UsageBreakdown 使用详细信息
 type UsageBreakdown struct {
-	NextDateReset   float64        `json:"nextDateReset"`
-	OverageCharges  float64        `json:"overageCharges"`
-	ResourceType    string         `json:"resourceType"`
-	Unit            string         `json:"unit"`
-	UsageLimit      int            `json:"usageLimit"`
-	OverageRate     float64        `json:"overageRate"`
-	CurrentUsage    int            `json:"currentUsage"`
-	OverageCap      int            `json:"overageCap"`
-	Currency        string         `json:"currency"`
-	CurrentOverages int            `json:"currentOverages"`
-	FreeTrialInfo   *FreeTrialInfo `json:"freeTrialInfo,omitempty"`
+	NextDateReset              float64        `json:"nextDateReset"`
+	OverageCharges             float64        `json:"overageCharges"`
+	ResourceType               string         `json:"resourceType"`
+	Unit                       string         `json:"unit"`
+	UsageLimit                 int            `json:"usageLimit"`
+	UsageLimitWithPrecision    float64        `json:"usageLimitWithPrecision"`
+	OverageRate                float64        `json:"overageRate"`
+	CurrentUsage               int            `json:"currentUsage"`
+	CurrentUsageWithPrecision  float64        `json:"currentUsageWithPrecision"`
+	OverageCap                 int            `json:"overageCap"`
+	OverageCapWithPrecision    float64        `json:"overageCapWithPrecision"`
+	Currency                   string         `json:"currency"`
+	CurrentOverages            int            `json:"currentOverages"`
+	CurrentOveragesWithPrecision float64      `json:"currentOveragesWithPrecision"`
+	FreeTrialInfo              *FreeTrialInfo `json:"freeTrialInfo,omitempty"`
+	DisplayName                string         `json:"displayName"`
+	DisplayNamePlural          string         `json:"displayNamePlural"`
 }
 
 // FreeTrialInfo 免费试用信息
 type FreeTrialInfo struct {
-	FreeTrialExpiry float64 `json:"freeTrialExpiry"`
-	FreeTrialStatus string  `json:"freeTrialStatus"`
-	UsageLimit      int     `json:"usageLimit"`
-	CurrentUsage    int     `json:"currentUsage"`
+	FreeTrialExpiry            float64 `json:"freeTrialExpiry"`
+	FreeTrialStatus            string  `json:"freeTrialStatus"`
+	UsageLimit                 int     `json:"usageLimit"`
+	UsageLimitWithPrecision    float64 `json:"usageLimitWithPrecision"`
+	CurrentUsage               int     `json:"currentUsage"`
+	CurrentUsageWithPrecision  float64 `json:"currentUsageWithPrecision"`
 }
 
 // UserInfo 用户信息
@@ -64,7 +72,7 @@ type SubscriptionInfo struct {
 type TokenWithUsage struct {
 	TokenInfo
 	UsageLimits     *UsageLimits `json:"usage_limits,omitempty"`
-	AvailableCount  int          `json:"available_count"`
+	AvailableCount  float64      `json:"available_count"` // 浮点精度支持小数使用量
 	LastUsageCheck  time.Time    `json:"last_usage_check"`
 	IsUsageExceeded bool         `json:"is_usage_exceeded"`
 	UsageCheckError string       `json:"usage_check_error,omitempty"`
@@ -72,27 +80,34 @@ type TokenWithUsage struct {
 	TokenPreview    string       `json:"token_preview,omitempty"` // Token前缀预览
 }
 
-// GetAvailableVIBECount 计算可用的VIBE调用次数 (遵循token.md公式)
-func (t *TokenWithUsage) GetAvailableVIBECount() int {
+// GetAvailableCount 计算可用的调用次数 (基于CREDIT资源类型，返回浮点精度)
+func (t *TokenWithUsage) GetAvailableCount() float64 {
 	if t.UsageLimits == nil {
-		return 0
+		return 0.0
 	}
 
 	for _, breakdown := range t.UsageLimits.UsageBreakdownList {
-		if breakdown.ResourceType == "VIBE" {
-			available := breakdown.UsageLimit - breakdown.CurrentUsage
+		if breakdown.ResourceType == "CREDIT" {
+			var totalAvailable float64
 
-			// 加上免费试用额度
+			// 优先使用免费试用额度 (如果存在且处于ACTIVE状态)
 			if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
-				trialAvailable := breakdown.FreeTrialInfo.UsageLimit - breakdown.FreeTrialInfo.CurrentUsage
-				available += trialAvailable
+				freeTrialAvailable := breakdown.FreeTrialInfo.UsageLimitWithPrecision - breakdown.FreeTrialInfo.CurrentUsageWithPrecision
+				totalAvailable += freeTrialAvailable
 			}
 
-			return available
+			// 加上基础额度
+			baseAvailable := breakdown.UsageLimitWithPrecision - breakdown.CurrentUsageWithPrecision
+			totalAvailable += baseAvailable
+
+			if totalAvailable < 0 {
+				return 0.0
+			}
+			return totalAvailable
 		}
 	}
 
-	return 0
+	return 0.0
 }
 
 // IsUsable 判断token是否可用 (综合考虑过期和使用限制)
@@ -108,7 +123,7 @@ func (t *TokenWithUsage) IsUsable() bool {
 	}
 
 	// 检查可用次数
-	return t.GetAvailableVIBECount() > 0
+	return t.GetAvailableCount() > 0
 }
 
 // NeedsUsageRefresh 判断是否需要刷新使用状态

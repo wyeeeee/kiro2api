@@ -1062,7 +1062,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 
 		// 检查使用限制
 		var usageInfo *types.UsageLimits
-		var available int = 100 // 默认值
+		var available float64 = 100.0 // 默认值 (浮点数)
 		var userEmail = "未知用户"
 
 		checker := auth.NewUsageLimitsChecker()
@@ -1088,21 +1088,26 @@ func handleTokenPoolAPI(c *gin.Context) {
 			"status":          "active",
 		}
 
-		// 添加使用限制详细信息
+		// 添加使用限制详细信息 (基于CREDIT资源类型)
 		if usageInfo != nil {
 			for _, breakdown := range usageInfo.UsageBreakdownList {
-				if breakdown.ResourceType == "VIBE" {
-					totalLimit := breakdown.UsageLimit
-					currentUsage := breakdown.CurrentUsage
+				if breakdown.ResourceType == "CREDIT" {
+					var totalLimit float64
+					var totalUsed float64
 
+					// 基础额度
+					totalLimit += breakdown.UsageLimitWithPrecision
+					totalUsed += breakdown.CurrentUsageWithPrecision
+
+					// 免费试用额度
 					if breakdown.FreeTrialInfo != nil && breakdown.FreeTrialInfo.FreeTrialStatus == "ACTIVE" {
-						totalLimit += breakdown.FreeTrialInfo.UsageLimit
-						currentUsage += breakdown.FreeTrialInfo.CurrentUsage
+						totalLimit += breakdown.FreeTrialInfo.UsageLimitWithPrecision
+						totalUsed += breakdown.FreeTrialInfo.CurrentUsageWithPrecision
 					}
 
 					tokenData["usage_limits"] = map[string]any{
-						"total_limit":   totalLimit,
-						"current_usage": currentUsage,
+						"total_limit":   totalLimit,   // 保留浮点精度
+						"current_usage": totalUsed,    // 保留浮点精度
 						"is_exceeded":   available <= 0,
 					}
 					break
