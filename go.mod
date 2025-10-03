@@ -1,6 +1,6 @@
 module kiro2api
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/bytedance/sonic v1.14.1
