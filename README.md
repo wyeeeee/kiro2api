@@ -9,21 +9,17 @@
 [![Go](https://img.shields.io/badge/Go-1.23.3-blue.svg)](https://golang.org/)
 [![Gin](https://img.shields.io/badge/Gin-1.10.1-green.svg)](https://github.com/gin-gonic/gin)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
 ## 🎯 为什么选择 kiro2api？
-
-
-
 ### 💡 四大核心优势
 
 #### 1. 🤖 Claude Code 原生集成
 
 ```bash
 # 一行配置，立即享受本地代理
-export ANTHROPIC_BASE_URL="http://localhost:8080"
+export ANTHROPIC_BASE_URL="http://localhost:8080/v1"
 export ANTHROPIC_API_KEY="your-kiro-token"
 
 # Claude Code 无感切换，所有功能完美支持
@@ -50,10 +46,10 @@ claude-code --model claude-sonnet-4 "帮我重构这段代码"
 ```
 
 **智能特性**:
-- 🎯 **最优选择**: 自动选择可用次数最多的账号
+- 🎯 **最优选择**: 自动选择可用次数最多的账号（设置 `TOKEN_SELECTION_STRATEGY=optimal`）
 - 🔄 **故障转移**: 账号用完自动切换到下一个
 - 📊 **使用监控**: 实时监控每个账号的使用情况
-- ⚡ **负载均衡**: 多账号并发使用，提升响应速度
+- ⚡ **选择策略**: 默认顺序使用（`sequential`），可切换为 `optimal`
 
 #### 3. 🏢 双认证方式支持
 
@@ -76,24 +72,20 @@ KIRO_AUTH_TOKEN='[
 ]'
 ```
 
-#### 4. 📸 完整图片识别支持
+#### 4. 📸 图片输入支持（data URL）
 
 ```bash
 # Claude Code 中直接使用图片
 claude-code "分析这张图片的内容" --image screenshot.png
 
 # 支持的图片格式
-✅ PNG - 高质量截图和图表
-✅ JPEG - 照片和复杂图像
-✅ GIF - 动图的首帧分析
-✅ WebP - 现代图片格式
+✅ data URL 的 PNG/JPEG 等常见格式
+⚠️ 目前仅支持 `data:` URL，不支持远程 HTTP 图片地址
 ```
 
-**图片处理优势**:
-- 🚀 **本地处理**: 图片在本地编码，无需上传到第三方
-- 🔒 **隐私保护**: 敏感图片不离开本地环境
-- ⚡ **速度优化**: Base64 编码优化，传输速度提升
-- 📏 **智能压缩**: 自动调整图片大小，节省 Token 消耗
+**说明**:
+- Claude Code 传入本地图片时会转为 `data:` URL，服务端按照 `Anthropic`/`OpenAI` 规范解析并转发。
+- 不做额外图片压缩或远程下载处理，避免引入不必要复杂度（KISS/YAGNI）。
 
 ### 🎯 典型使用场景
 
@@ -203,20 +195,19 @@ graph TB
 | | 混合认证 | ✅ | 多认证方式并存 |
 | 📊 **监控运维** | 基础日志 | ✅ | 标准日志输出 |
 | | 使用监控 | ✅ | 实时使用量统计 |
-| ⚡ **性能优化** | 流式响应 | ✅ | 零延迟传输 |
-| | 智能缓存 | ✅ | Token 和响应缓存 |
-| | 并发控制 | ✅ | 请求限流和排队 |
+| ⚡ **性能优化** | 流式响应 | ✅ | SSE 实时传输 |
+| | 智能缓存 | ✅ | Token 缓存（无响应缓存） |
+| | 并发控制 | ✅ | Token 刷新并发控制 |
 
 ### 🚀 高级特性
 
 | 特性 | 描述 | 技术实现 |
 |------|------|----------|
-| 📸 **多模态支持** | PNG/JPEG/GIF/WebP 图片处理 | Base64 编码 + 格式转换 |
+| 📸 **多模态支持** | data URL 的 PNG/JPEG 图片 | Base64 编码 + 格式转换 |
 | 🛠️ **工具调用** | 完整 Anthropic 工具使用支持 | 状态机 + 生命周期管理 |
 | 🔄 **格式转换** | Anthropic ↔ OpenAI ↔ CodeWhisperer | 智能协议转换器 |
 | ⚡ **零延迟流式** | 实时流式传输优化 | EventStream 解析 + 对象池 |
 | 🎯 **智能选择** | 最优/均衡 Token 策略 | 使用量预测 + 负载均衡 |
-| 🔒 **企业安全** | 多层认证 + 权限控制 | JWT + RBAC + 审计日志 |
 
 ## 技术栈
 
@@ -254,6 +245,9 @@ curl -X POST http://localhost:8080/v1/messages \
 
 #### 快速开始
 
+Token获取方式：
+ - Social tokens: 通常在 ~/.aws/sso/cache/kiro-auth-token.json
+ - IdC tokens: 在 ~/.aws/sso/cache/ 目录下的相关JSON文件中
 ```bash
 # 方式一：使用 docker-compose（推荐）
 docker-compose up -d
@@ -273,61 +267,6 @@ docker run -d \
   -p 8080:8080 \
   --env-file .env \
   kiro2api
-```
-
-#### 🏢 生产级部署
-
-##### 高可用配置
-```yaml
-# docker-compose.prod.yml
-services:
-  kiro2api:
-    image: ghcr.io/caidaoli/kiro2api:latest
-    deploy:
-      replicas: 3
-      restart_policy:
-        condition: on-failure
-        max_attempts: 3
-    environment:
-      # 多账号池配置
-      - KIRO_AUTH_TOKEN=${KIRO_AUTH_TOKEN}
-      - TOKEN_SELECTION_STRATEGY=optimal
-      # 生产级日志
-      - LOG_LEVEL=info
-      - LOG_FORMAT=json
-      - LOG_FILE=/var/log/kiro2api.log
-    volumes:
-      - aws_sso_cache:/home/appuser/.aws/sso/cache
-      - logs:/var/log
-    networks:
-      - kiro_network
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/v1/models"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  # 负载均衡器
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf
-      - ./ssl:/etc/ssl/certs
-    depends_on:
-      - kiro2api
-    networks:
-      - kiro_network
-
-networks:
-  kiro_network:
-    driver: bridge
-
-volumes:
-  aws_sso_cache:
-  logs:
 ```
 
 
@@ -351,7 +290,7 @@ KIRO_AUTH_TOKEN='[
 ]'
 
 # 负载均衡策略
-TOKEN_SELECTION_STRATEGY=optimal
+TOKEN_SELECTION_STRATEGY=sequential
 
 # 服务配置
 KIRO_CLIENT_TOKEN=your-secure-token
@@ -369,40 +308,15 @@ SERVER_READ_TIMEOUT_MINUTES=35
 SERVER_WRITE_TIMEOUT_MINUTES=35
 ```
 
-##### Docker Secrets（生产环境推荐）
+##### Docker Secrets（注意事项）
 ```bash
-# 创建 secrets
-echo "your-auth-token-json" | docker secret create kiro_auth_token -
-echo "your-client-token" | docker secret create kiro_client_token -
-
-# 在 docker-compose 中使用
-services:
-  kiro2api:
-    secrets:
-      - kiro_auth_token
-      - kiro_client_token
-    environment:
-      - KIRO_AUTH_TOKEN_FILE=/run/secrets/kiro_auth_token
-      - KIRO_CLIENT_TOKEN_FILE=/run/secrets/kiro_client_token
-
-secrets:
-  kiro_auth_token:
-    external: true
-  kiro_client_token:
-    external: true
+# 若使用 Docker Secrets，请将 `KIRO_AUTH_TOKEN` 设置为 secrets 文件路径：
+# 例如：/run/secrets/kiro_auth_token
+#
+# 说明：代码支持将 `KIRO_AUTH_TOKEN` 当作“文件路径”读取；
+#      但不支持 `*_FILE` 环境变量约定，也不读取 `KIRO_CLIENT_TOKEN_FILE`。
 ```
 
-#### 🚀 多平台构建
-
-```bash
-# 构建多架构镜像
-docker buildx create --name multiarch --use
-docker buildx build --platform linux/amd64,linux/arm64 -t kiro2api:latest .
-
-# 推送到注册表
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -t your-registry/kiro2api:latest --push .
-```
 
 #### 📊 健康检查和监控
 
@@ -424,9 +338,12 @@ docker exec -it kiro2api sh
 
 ### 支持的端点
 
-- `POST /v1/messages` - Anthropic Claude API 兼容接口（支持流式和非流式）
-- `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流式和非流式）
+- `GET /` - 静态首页（Dashboard）
+- `GET /static/*` - 静态资源
+- `GET /api/tokens` - Token 池状态与使用信息
 - `GET /v1/models` - 获取可用模型列表
+- `POST /v1/messages` - Anthropic Claude API 兼容接口（支持流/非流）
+- `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流/非流）
 
 ### 认证方式
 
@@ -482,9 +399,10 @@ curl -N -X POST http://localhost:8080/v1/messages \
 
 | 公开模型名称 | 内部 CodeWhisperer 模型 ID |
 |-------------|---------------------------|
+| `claude-sonnet-4-5-20250929` | `CLAUDE_SONNET_4_5_20250929_V1_0` |
 | `claude-sonnet-4-20250514` | `CLAUDE_SONNET_4_20250514_V1_0` |
 | `claude-3-7-sonnet-20250219` | `CLAUDE_3_7_SONNET_20250219_V1_0` |
-| `claude-3-5-haiku-20241022` | `CLAUDE_3_5_HAIKU_20241022_V1_0` |
+| `claude-3-5-haiku-20241022` | `auto` |
 
 ## 🔧 环境配置指南
 
@@ -523,21 +441,7 @@ export KIRO_AUTH_TOKEN='[
   }
 ]'
 ```
-### 🎛️ 智能负载均衡配置
 
-#### Token 选择策略
-
-```bash
-# 策略配置
-TOKEN_SELECTION_STRATEGY=optimal  # 推荐：智能最优选择
-# TOKEN_SELECTION_STRATEGY=sequential  # 备选：顺序轮询
-
-```
-
-| 策略 | 描述 | 适用场景 | 性能影响 |
-|------|------|----------|----------|
-| **optimal** | 智能选择可用次数最多的 Token | 生产环境 | 轻微性能开销，最优资源利用 |
-| **sequential** | 按配置顺序依次使用 Token | 开发测试环境 | 无性能开销，简单可靠 |
 
 ### ⚙️ 系统配置
 
@@ -559,9 +463,6 @@ STREAM_REQUEST_TIMEOUT_MINUTES=30        # 流式请求超时
 SERVER_READ_TIMEOUT_MINUTES=35           # 服务器读取超时
 SERVER_WRITE_TIMEOUT_MINUTES=35          # 服务器写入超时
 
-# 并发控制
-MAX_CONCURRENT_SESSIONS=100              # 最大并发会话数
-SESSION_TIMEOUT_MINUTES=60               # 会话超时时间
 ```
 
 #### 生产级日志配置
@@ -592,64 +493,7 @@ DISABLE_STREAM=false                     # 是否禁用流式响应
 
 ```
 
-### 📋 配置模板
 
-#### 开发环境配置
-
-```bash
-# .env.development
-KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"your-dev-token"}]'
-KIRO_CLIENT_TOKEN=dev-123456
-PORT=8080
-GIN_MODE=debug
-LOG_LEVEL=debug
-LOG_FORMAT=text
-LOG_CONSOLE=true
-TOKEN_SELECTION_STRATEGY=sequential
-REQUEST_TIMEOUT_MINUTES=5
-```
-
-#### 生产环境配置
-
-```bash
-# .env.production
-KIRO_AUTH_TOKEN='[
-  {"auth":"IdC","refreshToken":"prod-idc-token","clientId":"prod-client","clientSecret":"prod-secret"},
-  {"auth":"Social","refreshToken":"backup-social-token"}
-]'
-KIRO_CLIENT_TOKEN=prod-secure-key-$(openssl rand -hex 16)
-PORT=8080
-GIN_MODE=release
-LOG_LEVEL=info
-LOG_FORMAT=json
-LOG_FILE=/var/log/kiro2api.log
-TOKEN_SELECTION_STRATEGY=optimal
-MAX_CONCURRENT_SESSIONS=500
-METRICS_ENABLED=true
-```
-
-## 🛠️ 开发指南
-
-### 常用命令
-
-```bash
-# 🧪 测试
-go test ./...                    # 运行所有测试
-go test ./parser -v              # 详细模式测试
-go test ./... -bench=. -benchmem # 性能基准测试
-
-# 🔍 代码质量
-go vet ./...                     # 静态检查
-go fmt ./...                     # 代码格式化
-go mod tidy                      # 依赖整理
-
-# 🚀 运行模式
-GIN_MODE=debug LOG_LEVEL=debug ./kiro2api  # 开发模式
-GIN_MODE=release ./kiro2api                # 生产模式
-
-# 📦 构建
-go build -ldflags="-s -w" -o kiro2api main.go  # 优化构建
-```
 
 ### 架构图
 
@@ -744,8 +588,8 @@ ps aux
 netstat -tlnp
 env | grep KIRO
 
-# 检查网络连接
-docker exec kiro2api wget -qO- https://api.anthropic.com/v1/models || echo "网络连接失败"
+# 检查服务连通性（本地）
+docker exec kiro2api wget -qO- http://localhost:8080/v1/models || echo "服务不可用"
 
 # 重新构建和启动
 docker-compose down -v
@@ -763,7 +607,6 @@ docker stats kiro2api
 | 🔗 **代理连接失败** | Claude Code 无法连接到 kiro2api | 检查 baseURL 和网络连通性 |
 | 🔑 **认证失败** | 401 Unauthorized 错误 | 验证 apiKey 配置和 KIRO_CLIENT_TOKEN |
 | 📡 **流式响应中断** | 流式输出不完整 | 检查网络稳定性和超时配置 |
-| 🛠️ **MCP 工具失效** | 工具调用失败 | 验证 MCP 配置和权限设置 |
 
 ```bash
 # Claude Code 集成调试
@@ -777,112 +620,6 @@ curl -N -H "Authorization: Bearer $KIRO_CLIENT_TOKEN" \
   -d '{"model":"claude-sonnet-4-20250514","stream":true,"messages":[{"role":"user","content":"test"}]}' \
   http://localhost:8080/v1/messages
 
-```
-
-
-## 🤖 Claude Code 集成指南
-
-### 快速集成
-
-将 kiro2api 配置为 Claude Code 的后端代理，享受统一的 AI API 体验：
-
-#### 1. 配置代理设置
-
-在 Claude Code 中配置 kiro2api 作为 Anthropic API 代理：
-
-```json
-{
-  "anthropic": {
-    "baseURL": "http://localhost:8080/v1",
-    "apiKey": "your-kiro-client-token"
-  }
-}
-```
-
-#### 2. 环境变量设置
-
-```bash
-# 方式一：直接设置环境变量
-export ANTHROPIC_API_KEY="your-kiro-client-token"
-export ANTHROPIC_BASE_URL="http://localhost:8080/v1"
-
-# 方式二：使用 .env 文件
-echo "ANTHROPIC_API_KEY=your-kiro-client-token" >> ~/.claude-code/.env
-echo "ANTHROPIC_BASE_URL=http://localhost:8080/v1" >> ~/.claude-code/.env
-```
-
-#### 3. 验证集成
-
-```bash
-# 测试连接
-curl -H "Authorization: Bearer your-kiro-client-token" \
-  http://localhost:8080/v1/models
-
-# 测试 Claude Code 集成
-claude-code --test-connection
-```
-
-
-
-## 🛠️ 开发者最佳实践
-
-### 🔄 开发工作流程
-
-#### 1. 本地开发环境搭建
-
-```bash
-# 克隆项目
-git clone https://github.com/your-org/kiro2api.git
-cd kiro2api
-
-# 设置开发环境
-cp .env.example .env.development
-# 编辑 .env.development 配置开发用 Token
-
-# 启动开发服务器
-GIN_MODE=debug LOG_LEVEL=debug go run main.go
-
-# 或使用 Docker 开发环境
-docker-compose -f docker-compose.dev.yml up -d
-```
-
-#### 2. 代码质量保证
-
-```bash
-# 代码格式化和检查
-make fmt      # go fmt ./...
-make vet      # go vet ./...
-make lint     # golangci-lint run
-
-# 测试覆盖率
-make test-coverage
-# 目标：保持 80%+ 测试覆盖率
-
-# 性能基准测试
-make benchmark
-go test -bench=. -benchmem ./...
-```
-
-#### 3. 功能开发指南
-
-```bash
-# 添加新的 API 端点
-# 1. 在 server/handlers.go 中添加处理函数
-# 2. 在 server/server.go 中注册路由
-# 3. 添加对应的测试用例
-# 4. 更新 API 文档
-
-# 添加新的认证方式
-# 1. 在 auth/config.go 中定义配置结构
-# 2. 在 auth/auth.go 中实现认证逻辑
-# 3. 在 auth/token_manager.go 中集成选择策略
-# 4. 添加配置示例和文档
-
-# 优化性能
-# 1. 使用 pprof 分析性能瓶颈
-# 2. 优化热点代码路径
-# 3. 添加缓存机制
-# 4. 进行基准测试验证
 ```
 
 
@@ -900,7 +637,7 @@ go test -bench=. -benchmem ./...
 
 ## 🤝 贡献指南
 
-我们欢迎社区贡献！请查看 [CONTRIBUTING.md](./CONTRIBUTING.md) 了解详细的贡献流程。
+我们欢迎社区贡献！直接提交 Issue 或 Pull Request 即可。
 
 ### 快速贡献
 
@@ -910,23 +647,3 @@ go test -bench=. -benchmem ./...
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 创建 Pull Request
 
-## 📄 许可证
-
-本项目遵循 MIT 许可证。详情请查看 [LICENSE](LICENSE) 文件。
-
----
-
-<div align="center">
-
-**🚀 让 AI API 调用更简单、更高效！**
-
-*如果这个项目对您有帮助，请给我们一个 ⭐*
-
-[![Go](https://img.shields.io/badge/Go-1.23.3-blue.svg)](https://golang.org/)
-[![Gin](https://img.shields.io/badge/Gin-1.10.1-green.svg)](https://github.com/gin-gonic/gin)
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-**[🏠 主页](https://github.com/your-org/kiro2api) | [📖 文档](./CLAUDE.md) | [🐛 问题反馈](https://github.com/your-org/kiro2api/issues) | [💬 讨论](https://github.com/your-org/kiro2api/discussions)**
-
-</div>
