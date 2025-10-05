@@ -158,10 +158,20 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 				fullInput = "{}"
 			}
 		} else {
-			logger.Error("流式解析失败，无有效JSON结果",
-				logger.String("toolName", streamer.toolName),
-				logger.Bool("hasValidJSON", streamer.state.hasValidJSON))
-			// 使用空JSON对象，让工具调用失败
+			// 🔥 核心修复：区分真正的错误和无参数工具
+			if streamer.fragmentCount == 0 && streamer.totalBytes == 0 {
+				// 无参数工具，使用 Debug 级别（正常情况）
+				logger.Debug("工具无参数，使用默认空对象",
+					logger.String("toolName", streamer.toolName))
+			} else {
+				// 真正的解析失败，使用 Error 级别
+				logger.Error("流式解析失败，无有效JSON结果",
+					logger.String("toolName", streamer.toolName),
+					logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
+					logger.Int("fragmentCount", streamer.fragmentCount),
+					logger.Int("totalBytes", streamer.totalBytes))
+			}
+			// 使用空JSON对象
 			fullInput = "{}"
 		}
 
@@ -299,6 +309,22 @@ func (sjs *SonicJSONStreamer) tryParseWithSonic() string {
 	content := sjs.buffer.Bytes()
 	if len(content) == 0 {
 		return "empty"
+	}
+
+	// 🔥 核心修复：快速检测空对象/空数组（无参数工具）
+	contentStr := strings.TrimSpace(string(content))
+	if contentStr == "{}" || contentStr == "[]" {
+		// 空对象/数组是完全有效的 JSON，无需进一步解析
+		var emptyResult map[string]any
+		if contentStr == "{}" {
+			emptyResult = make(map[string]any)
+		}
+		sjs.result = emptyResult
+		sjs.state.hasValidJSON = true
+		logger.Debug("检测到空参数工具",
+			logger.String("toolUseId", sjs.toolUseId),
+			logger.String("content", contentStr))
+		return "complete"
 	}
 
 	// 尝试使用Sonic完整JSON解析
