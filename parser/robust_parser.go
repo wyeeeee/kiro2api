@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/utils"
 	"strings"
@@ -31,9 +32,9 @@ func NewRobustEventStreamParser(strictMode bool) *RobustEventStreamParser {
 	return &RobustEventStreamParser{
 		headerParser: NewHeaderParser(),
 		strictMode:   strictMode,
-		maxErrors:    10,
+		maxErrors:    config.ParserMaxErrors,
 		crcTable:     crc32.MakeTable(crc32.IEEE),
-		ringBuffer:   NewRingBuffer(512 * 1024), // *** 环形缓冲区也提升到512KB ***
+		ringBuffer:   NewRingBuffer(config.ParserBufferSize),
 	}
 }
 
@@ -71,7 +72,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 	defer func() {
 		duration := time.Since(startTime)
 		rp.lastProcessed = time.Now().Unix()
-		if duration > 100*time.Millisecond {
+		if duration > config.ParseSlowThreshold {
 			logger.Warn("解析耗时过长，可能存在性能问题",
 				logger.Duration("duration", duration),
 				logger.Int("input_bytes", len(data)))

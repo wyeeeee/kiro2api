@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 	"os"
@@ -67,7 +68,7 @@ func NewTokenManager(configs []AuthConfig) *TokenManager {
 		logger.Int("config_order_count", len(configOrder)))
 
 	return &TokenManager{
-		cache:             NewSimpleTokenCache(5 * time.Minute),
+		cache:             NewSimpleTokenCache(config.TokenCacheTTL),
 		configs:           configs,
 		selectionStrategy: strategy,
 		configOrder:       configOrder,
@@ -79,7 +80,7 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 	tm.mutex.RLock()
 
 	// 检查是否需要刷新缓存
-	needRefresh := time.Since(tm.lastRefresh) > 5*time.Minute
+	needRefresh := time.Since(tm.lastRefresh) > config.TokenCacheTTL
 	tm.mutex.RUnlock()
 
 	if needRefresh {

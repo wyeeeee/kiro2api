@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"kiro2api/auth"
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
@@ -202,9 +203,9 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	pendingText := ""
 	pendingIndex := 0
 	hasPending := false
-	// 新增：最小聚合阈值，避免极短片段导致颗粒化；默认10字符
-	const minFlushChars = 10
-	// 新增：简单去重，避免重复段落多次发送
+	// 最小聚合阈值，避免极短片段导致颗粒化
+	minFlushChars := config.MinTextFlushChars
+	// 简单去重，避免重复段落多次发送
 	lastFlushedText := ""
 	// 提取公共的文本冲刷逻辑，避免重复（DRY）
 	flushPending := func() {
@@ -380,7 +381,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 											shouldFlush = true
 										}
 										// 或者：遇到中文标点/换行
-										if strings.ContainsAny(txt, "。！？；\n") || len(pendingText) >= 64 {
+										if strings.ContainsAny(txt, "。！？；\n") || len(pendingText) >= config.TextFlushMaxChars {
 											shouldFlush = true
 										}
 										if shouldFlush {
@@ -389,8 +390,8 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 										}
 										// 调试日志
 										preview := txt
-										if len(preview) > 64 {
-											preview = preview[:64] + "..."
+										if len(preview) > config.DebugPayloadPreviewLength {
+											preview = preview[:config.DebugPayloadPreviewLength] + "..."
 										}
 										logger.Debug("转发文本增量",
 											addReqFields(c,
