@@ -221,15 +221,15 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, profileArn s
 		cwReq.ConversationState.ConversationId = utils.GenerateStableConversationID(ctx)
 
 		// 调试日志：记录会话ID生成信息
-		clientInfo := utils.ExtractClientInfo(ctx)
-		logger.Debug("生成稳定会话ID",
-			logger.String("conversation_id", cwReq.ConversationState.ConversationId),
-			logger.String("agent_continuation_id", cwReq.ConversationState.AgentContinuationId),
-			logger.String("agent_task_type", cwReq.ConversationState.AgentTaskType),
-			logger.String("client_ip", clientInfo["client_ip"]),
-			logger.String("user_agent", clientInfo["user_agent"]),
-			logger.String("custom_conv_id", clientInfo["custom_conv_id"]),
-			logger.String("custom_agent_cont_id", clientInfo["custom_agent_cont_id"]))
+		// clientInfo := utils.ExtractClientInfo(ctx)
+		// logger.Debug("生成稳定会话ID",
+		// 	logger.String("conversation_id", cwReq.ConversationState.ConversationId),
+		// 	logger.String("agent_continuation_id", cwReq.ConversationState.AgentContinuationId),
+		// 	logger.String("agent_task_type", cwReq.ConversationState.AgentTaskType),
+		// 	logger.String("client_ip", clientInfo["client_ip"]),
+		// 	logger.String("user_agent", clientInfo["user_agent"]),
+		// 	logger.String("custom_conv_id", clientInfo["custom_conv_id"]),
+		// logger.String("custom_agent_cont_id", clientInfo["custom_agent_cont_id"]))
 	} else {
 		// 向后兼容：如果没有提供context，仍使用UUID
 		cwReq.ConversationState.ConversationId = utils.GenerateUUID()

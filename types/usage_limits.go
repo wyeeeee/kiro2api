@@ -19,33 +19,33 @@ type UsageLimits struct {
 
 // UsageBreakdown 使用详细信息
 type UsageBreakdown struct {
-	NextDateReset              float64        `json:"nextDateReset"`
-	OverageCharges             float64        `json:"overageCharges"`
-	ResourceType               string         `json:"resourceType"`
-	Unit                       string         `json:"unit"`
-	UsageLimit                 int            `json:"usageLimit"`
-	UsageLimitWithPrecision    float64        `json:"usageLimitWithPrecision"`
-	OverageRate                float64        `json:"overageRate"`
-	CurrentUsage               int            `json:"currentUsage"`
-	CurrentUsageWithPrecision  float64        `json:"currentUsageWithPrecision"`
-	OverageCap                 int            `json:"overageCap"`
-	OverageCapWithPrecision    float64        `json:"overageCapWithPrecision"`
-	Currency                   string         `json:"currency"`
-	CurrentOverages            int            `json:"currentOverages"`
-	CurrentOveragesWithPrecision float64      `json:"currentOveragesWithPrecision"`
-	FreeTrialInfo              *FreeTrialInfo `json:"freeTrialInfo,omitempty"`
-	DisplayName                string         `json:"displayName"`
-	DisplayNamePlural          string         `json:"displayNamePlural"`
+	NextDateReset                float64        `json:"nextDateReset"`
+	OverageCharges               float64        `json:"overageCharges"`
+	ResourceType                 string         `json:"resourceType"`
+	Unit                         string         `json:"unit"`
+	UsageLimit                   int            `json:"usageLimit"`
+	UsageLimitWithPrecision      float64        `json:"usageLimitWithPrecision"`
+	OverageRate                  float64        `json:"overageRate"`
+	CurrentUsage                 int            `json:"currentUsage"`
+	CurrentUsageWithPrecision    float64        `json:"currentUsageWithPrecision"`
+	OverageCap                   int            `json:"overageCap"`
+	OverageCapWithPrecision      float64        `json:"overageCapWithPrecision"`
+	Currency                     string         `json:"currency"`
+	CurrentOverages              int            `json:"currentOverages"`
+	CurrentOveragesWithPrecision float64        `json:"currentOveragesWithPrecision"`
+	FreeTrialInfo                *FreeTrialInfo `json:"freeTrialInfo,omitempty"`
+	DisplayName                  string         `json:"displayName"`
+	DisplayNamePlural            string         `json:"displayNamePlural"`
 }
 
 // FreeTrialInfo 免费试用信息
 type FreeTrialInfo struct {
-	FreeTrialExpiry            float64 `json:"freeTrialExpiry"`
-	FreeTrialStatus            string  `json:"freeTrialStatus"`
-	UsageLimit                 int     `json:"usageLimit"`
-	UsageLimitWithPrecision    float64 `json:"usageLimitWithPrecision"`
-	CurrentUsage               int     `json:"currentUsage"`
-	CurrentUsageWithPrecision  float64 `json:"currentUsageWithPrecision"`
+	FreeTrialExpiry           float64 `json:"freeTrialExpiry"`
+	FreeTrialStatus           string  `json:"freeTrialStatus"`
+	UsageLimit                int     `json:"usageLimit"`
+	UsageLimitWithPrecision   float64 `json:"usageLimitWithPrecision"`
+	CurrentUsage              int     `json:"currentUsage"`
+	CurrentUsageWithPrecision float64 `json:"currentUsageWithPrecision"`
 }
 
 // UserInfo 用户信息

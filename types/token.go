@@ -18,7 +18,6 @@ type Token struct {
 	ProfileArn string `json:"profileArn,omitempty"` // 来自RefreshResponse
 }
 
-
 // FromRefreshResponse 从RefreshResponse创建Token
 func (t *Token) FromRefreshResponse(resp RefreshResponse, originalRefreshToken string) {
 	t.AccessToken = resp.AccessToken

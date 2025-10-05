@@ -436,11 +436,11 @@ func (h *StandardAssistantResponseEventHandler) Handle(message *EventStreamMessa
 	if fullEvent, err := parseFullAssistantResponseEvent(message.Payload); err == nil {
 		// 对于流式响应，放宽验证要求
 		if isStreamingResponse(fullEvent) {
-			logger.Debug("检测到流式格式assistantResponseEvent，使用宽松验证")
+			// logger.Debug("检测到流式格式assistantResponseEvent，使用宽松验证")
 			return h.handleStreamingEvent(fullEvent)
 		}
 
-		logger.Debug("检测到完整格式assistantResponseEvent，使用标准处理器")
+		// logger.Debug("检测到完整格式assistantResponseEvent，使用标准处理器")
 		return h.handleFullAssistantEvent(fullEvent)
 	}
 

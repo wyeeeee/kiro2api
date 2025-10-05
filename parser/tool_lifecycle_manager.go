@@ -10,11 +10,10 @@ import (
 
 // ToolLifecycleManager 工具调用生命周期管理器
 type ToolLifecycleManager struct {
-	activeTools        map[string]*ToolExecution
-	completedTools     map[string]*ToolExecution
-	blockIndexMap      map[string]int
-	nextBlockIndex     int
-	textIntroGenerated bool // 跟踪是否已生成文本介绍
+	activeTools    map[string]*ToolExecution
+	completedTools map[string]*ToolExecution
+	blockIndexMap  map[string]int
+	nextBlockIndex int
 }
 
 // validateRequiredArguments 针对常见工具进行必填参数校验
@@ -98,25 +97,12 @@ func (tlm *ToolLifecycleManager) Reset() {
 	tlm.completedTools = make(map[string]*ToolExecution)
 	tlm.blockIndexMap = make(map[string]int)
 	tlm.nextBlockIndex = 1
-	tlm.textIntroGenerated = false // 重置文本介绍生成状态
 }
 
 // HandleToolCallRequest 处理工具调用请求
 // HandleToolCallRequest 处理工具调用请求（增强参数验证）
 func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) []SSEEvent {
-	events := make([]SSEEvent, 0, len(request.ToolCalls)*3) // 调整预分配容量，包含文本介绍
-
-	// *** 关键修复：根据Claude规范，在第一个工具调用前自动生成文本介绍（index:0） ***
-	if !tlm.textIntroGenerated && len(request.ToolCalls) > 0 {
-		// 生成符合Claude规范的文本介绍事件序列
-		textIntroEvents := tlm.generateTextIntroduction(request.ToolCalls[0])
-		events = append(events, textIntroEvents...)
-		tlm.textIntroGenerated = true
-
-		logger.Debug("自动生成工具调用文本介绍",
-			logger.Int("intro_events", len(textIntroEvents)),
-			logger.String("first_tool", request.ToolCalls[0].Function.Name))
-	}
+	events := make([]SSEEvent, 0, len(request.ToolCalls)*2)
 
 	for _, toolCall := range request.ToolCalls {
 		// 严格验证工具调用基本格式
@@ -426,92 +412,6 @@ func (tlm *ToolLifecycleManager) GetBlockIndex(toolID string) int {
 		return index
 	}
 	return -1
-}
-
-// generateTextIntroduction 生成符合Claude规范的文本介绍事件序列
-// 根据Claude官方示例，工具调用前应有文本介绍，如："Okay, let's check the weather for San Francisco, CA:"
-func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []SSEEvent {
-	// 根据工具类型生成合适的介绍文本
-	introText := tlm.generateIntroText(firstTool.Function.Name, firstTool.Function.Arguments)
-
-	return []SSEEvent{
-		// 1. content_block_start for text (index:0)
-		{
-			Event: "content_block_start",
-			Data: map[string]any{
-				"type":  "content_block_start",
-				"index": 0,
-				"content_block": map[string]any{
-					"type": "text",
-					"text": "",
-				},
-			},
-		},
-		// 2. content_block_delta for text introduction
-		{
-			Event: "content_block_delta",
-			Data: map[string]any{
-				"type":  "content_block_delta",
-				"index": 0,
-				"delta": map[string]any{
-					"type": "text_delta",
-					"text": introText,
-				},
-			},
-		},
-		// 3. content_block_stop for text (index:0)
-		{
-			Event: "content_block_stop",
-			Data: map[string]any{
-				"type":  "content_block_stop",
-				"index": 0,
-			},
-		},
-	}
-}
-
-// generateIntroText 根据工具类型生成合适的介绍文本
-func (tlm *ToolLifecycleManager) generateIntroText(toolName string, arguments string) string {
-	switch strings.ToLower(toolName) {
-	case "get_weather":
-		// 尝试从参数中提取城市名
-		if city := tlm.extractCityFromArgs(arguments); city != "" {
-			return fmt.Sprintf("好的，让我为您查询%s的天气信息。", city)
-		}
-		return "好的，让我为您查询天气信息。"
-	case "search", "web_search":
-		return "好的，让我为您搜索相关信息。"
-	case "calculator", "calc":
-		return "好的，让我为您进行计算。"
-	case "todowrite":
-		return "好的，让我为您更新任务列表。"
-	default:
-		return fmt.Sprintf("好的，让我使用%s工具来帮助您。", toolName)
-	}
-}
-
-// extractCityFromArgs 从工具参数中提取城市名
-func (tlm *ToolLifecycleManager) extractCityFromArgs(arguments string) string {
-	// 简单的JSON解析来提取city字段
-	if strings.Contains(arguments, "city") {
-		// 使用简单的字符串匹配来提取city值
-		start := strings.Index(arguments, "\"city\"")
-		if start >= 0 {
-			substr := arguments[start:]
-			valueStart := strings.Index(substr, ":")
-			if valueStart >= 0 {
-				valueStr := substr[valueStart+1:]
-				valueStr = strings.TrimSpace(valueStr)
-				if strings.HasPrefix(valueStr, "\"") {
-					end := strings.Index(valueStr[1:], "\"")
-					if end >= 0 {
-						return valueStr[1 : end+1]
-					}
-				}
-			}
-		}
-	}
-	return ""
 }
 
 // GenerateToolSummary 生成工具执行摘要

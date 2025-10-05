@@ -253,11 +253,11 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	// 添加工具调用完整性验证
 	rp.validateToolUseIdIntegrity(message)
 
-	logger.Debug("消息解析成功",
-		logger.String("message_type", message.MessageType),
-		logger.String("event_type", message.EventType),
-		logger.Int("header_count", len(headers)),
-		logger.Int("payload_len", len(payloadData)))
+	// logger.Debug("消息解析成功",
+	// 	logger.String("message_type", message.MessageType),
+	// 	logger.String("event_type", message.EventType),
+	// 	logger.Int("header_count", len(headers)),
+	// 	logger.Int("payload_len", len(payloadData)))
 
 	return message, int(totalLength), nil
 }

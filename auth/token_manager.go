@@ -97,9 +97,9 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 	// 更新最后使用时间
 	tm.cache.updateLastUsed(bestToken)
 
-	logger.Debug("选择token成功",
-		logger.String("token_preview", bestToken.Token.AccessToken[:20]+"..."),
-		logger.Float64("available_count", bestToken.Available))
+	// logger.Debug("选择token成功",
+	// 	logger.String("token_preview", bestToken.Token.AccessToken[:20]+"..."),
+	// 	logger.Float64("available_count", bestToken.Available))
 
 	return bestToken.Token, nil
 }

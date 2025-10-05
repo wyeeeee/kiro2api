@@ -124,20 +124,20 @@ func (cmp *CompliantMessageProcessor) ProcessMessage(message *EventStreamMessage
 
 // processEventMessage 处理事件消息
 func (cmp *CompliantMessageProcessor) processEventMessage(message *EventStreamMessage, eventType string) ([]SSEEvent, error) {
-	logger.Debug("处理事件消息",
-		logger.String("event_type", eventType),
-		logger.Bool("has_standard_handler", func() bool {
-			_, exists := cmp.eventHandlers[eventType]
-			return exists
-		}()),
-		logger.Bool("has_legacy_handler", func() bool {
-			_, exists := cmp.legacyHandlers[eventType]
-			return exists
-		}()))
+	// logger.Debug("处理事件消息",
+	// 	logger.String("event_type", eventType),
+	// 	logger.Bool("has_standard_handler", func() bool {
+	// 		_, exists := cmp.eventHandlers[eventType]
+	// 		return exists
+	// 	}()),
+	// 	logger.Bool("has_legacy_handler", func() bool {
+	// 		_, exists := cmp.legacyHandlers[eventType]
+	// 		return exists
+	// 	}()))
 
 	// 优先处理标准事件
 	if handler, exists := cmp.eventHandlers[eventType]; exists {
-		logger.Debug("使用标准处理器", logger.String("event_type", eventType))
+		// logger.Debug("使用标准处理器", logger.String("event_type", eventType))
 		return handler.Handle(message)
 	}
 

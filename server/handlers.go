@@ -107,66 +107,6 @@ func containsToolResults(anthropicReq types.AnthropicRequest) bool {
 	return false
 }
 
-// generateToolResultFollowUp 为工具结果提交生成后续内容
-func generateToolResultFollowUp(anthropicReq types.AnthropicRequest) string {
-	// 根据最近的工具结果生成相应的跟进内容
-	var toolResults []string
-
-	for _, message := range anthropicReq.Messages {
-		if message.Role == "user" {
-			switch content := message.Content.(type) {
-			case []any:
-				for _, item := range content {
-					if block, ok := item.(map[string]any); ok {
-						if blockType, exists := block["type"]; exists {
-							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
-								if toolContent, exists := block["content"]; exists {
-									if contentStr, ok := toolContent.(string); ok && contentStr != "" {
-										toolResults = append(toolResults, contentStr)
-									}
-								}
-							}
-						}
-					}
-				}
-			case []types.ContentBlock:
-				for _, block := range content {
-					if block.Type == "tool_result" && block.Content != nil {
-						if contentStr, ok := block.Content.(string); ok && contentStr != "" {
-							toolResults = append(toolResults, contentStr)
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// 生成基于工具结果的跟进内容
-	if len(toolResults) > 0 {
-		// 检查是否是文件操作相关的工具结果
-		for _, result := range toolResults {
-			resultLower := strings.ToLower(result)
-			if strings.Contains(resultLower, "文件") || strings.Contains(resultLower, "file") {
-				if strings.Contains(resultLower, "成功") || strings.Contains(resultLower, "success") {
-					return "文件操作已成功完成。"
-				} else if strings.Contains(resultLower, "错误") || strings.Contains(resultLower, "error") {
-					return "文件操作遇到了问题，我来帮您分析一下。"
-				}
-			}
-			// 检查是否是命令执行结果
-			if strings.Contains(resultLower, "command") || strings.Contains(resultLower, "执行") {
-				return "命令执行完成。让我为您分析结果。"
-			}
-		}
-
-		// 通用的工具执行完成消息
-		return "工具执行完成，让我为您分析结果。"
-	}
-
-	// 默认的后续内容
-	return "好的，基于您提供的信息，让我来帮您处理。"
-}
-
 // handleGenericStreamRequest 通用流式请求处理
 func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
 	// 创建SSE状态管理器，确保事件序列符合Claude规范
@@ -558,65 +498,6 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 				logger.Bool("contains_tool_results", containsToolResults(anthropicReq)),
 			)...)
 
-		var compensationContent string
-
-		// 检查是否是工具结果提交场景
-		if containsToolResults(anthropicReq) {
-			logger.Debug("检测到工具结果提交场景，生成补偿内容",
-				addReqFields(c,
-					logger.String("scenario", "tool_result_submission"),
-				)...)
-			compensationContent = generateToolResultFollowUp(anthropicReq)
-		} else {
-			// 尝试获取解析器的聚合内容
-			aggregatedContent := compliantParser.GetCompletionBuffer()
-			if aggregatedContent != "" {
-				logger.Debug("发现解析器聚合内容，使用聚合内容",
-					addReqFields(c,
-						logger.String("content_preview", func() string {
-							if len(aggregatedContent) > 100 {
-								return aggregatedContent[:100] + "..."
-							}
-							return aggregatedContent
-						}()),
-						logger.Int("content_length", len(aggregatedContent)),
-					)...)
-				compensationContent = aggregatedContent
-			} else {
-				logger.Debug("未发现聚合内容，跳过补偿",
-					addReqFields(c,
-						logger.String("scenario", "empty_response_no_compensation"),
-					)...)
-			}
-		}
-
-		// 如果有补偿内容，生成content_block_delta事件
-		if compensationContent != "" {
-			contentBlockDelta := map[string]any{
-				"type":  "content_block_delta",
-				"index": 0,
-				"delta": map[string]any{
-					"type": "text_delta",
-					"text": compensationContent,
-				},
-			}
-
-			if err := sseStateManager.SendEvent(c, sender, contentBlockDelta); err == nil {
-				totalOutputChars += len(compensationContent)
-				logger.Debug("成功发送补偿内容事件",
-					addReqFields(c,
-						logger.Int("compensation_length", len(compensationContent)),
-						logger.String("compensation_preview", func() string {
-							if len(compensationContent) > 50 {
-								return compensationContent[:50] + "..."
-							}
-							return compensationContent
-						}()),
-					)...)
-			} else {
-				logger.Error("发送补偿内容事件失败", logger.Err(err))
-			}
-		}
 	}
 
 	// *** 使用新的stop_reason管理器，确保符合Claude官方规范 ***
@@ -1106,8 +987,8 @@ func handleTokenPoolAPI(c *gin.Context) {
 					}
 
 					tokenData["usage_limits"] = map[string]any{
-						"total_limit":   totalLimit,   // 保留浮点精度
-						"current_usage": totalUsed,    // 保留浮点精度
+						"total_limit":   totalLimit, // 保留浮点精度
+						"current_usage": totalUsed,  // 保留浮点精度
 						"is_exceeded":   available <= 0,
 					}
 					break

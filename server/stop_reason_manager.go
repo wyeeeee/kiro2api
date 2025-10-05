@@ -45,14 +45,14 @@ func (srm *StopReasonManager) SetActualTokensUsed(tokens int) {
 
 // DetermineStopReason 根据Claude官方规范确定stop_reason
 func (srm *StopReasonManager) DetermineStopReason() string {
-	logger.Debug("开始确定stop_reason",
-		logger.Int("max_tokens", srm.maxTokens),
-		logger.Int("actual_tokens", srm.actualTokensUsed),
-		logger.Bool("has_active_tools", srm.hasActiveToolCalls),
-		logger.Bool("has_completed_tools", srm.hasCompletedTools))
+	// logger.Debug("开始确定stop_reason",
+	// 	logger.Int("max_tokens", srm.maxTokens),
+	// 	logger.Int("actual_tokens", srm.actualTokensUsed),
+	// 	logger.Bool("has_active_tools", srm.hasActiveToolCalls),
+	// 	logger.Bool("has_completed_tools", srm.hasCompletedTools))
 
 	// 规则1: 检查是否达到token限制 - 根据Claude规范优先级最高
-	if srm.actualTokensUsed >= srm.maxTokens {
+	if srm.maxTokens > 1 && srm.actualTokensUsed >= srm.maxTokens {
 		logger.Debug("确定stop_reason: max_tokens - 达到token限制")
 		return "max_tokens"
 	}

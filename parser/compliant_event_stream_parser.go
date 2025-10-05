@@ -40,9 +40,9 @@ func (cesp *CompliantEventStreamParser) Reset() {
 
 // ParseResponse 解析完整的 CodeWhisperer 响应
 func (cesp *CompliantEventStreamParser) ParseResponse(streamData []byte) (*ParseResult, error) {
-	logger.Debug("开始解析事件流",
-		logger.Int("data_len", len(streamData)),
-		logger.Bool("strict_mode", cesp.strictMode))
+	// logger.Debug("开始解析事件流",
+	// 	logger.Int("data_len", len(streamData)),
+	// 	logger.Bool("strict_mode", cesp.strictMode))
 
 	// 1. 解析二进制事件流
 	messages, err := cesp.robustParser.ParseStream(streamData)
@@ -54,9 +54,9 @@ func (cesp *CompliantEventStreamParser) ParseResponse(streamData []byte) (*Parse
 		logger.Warn("事件流解析部分失败", logger.Err(err))
 	}
 
-	logger.Debug("解析到消息",
-		logger.Int("message_count", len(messages)),
-		logger.Bool("has_errors", err != nil))
+	// logger.Debug("解析到消息",
+	// 	logger.Int("message_count", len(messages)),
+	// 	logger.Bool("has_errors", err != nil))
 
 	// 2. 处理消息
 	var allEvents []SSEEvent
@@ -82,9 +82,9 @@ func (cesp *CompliantEventStreamParser) ParseResponse(streamData []byte) (*Parse
 		allEvents = append(allEvents, events...)
 	}
 
-	logger.Debug("消息处理完成",
-		logger.Int("total_events", len(allEvents)),
-		logger.Int("error_count", len(errors)))
+	// logger.Debug("消息处理完成",
+	// 	logger.Int("total_events", len(allEvents)),
+	// 	logger.Int("error_count", len(errors)))
 
 	// 3. 构建结果
 	result := &ParseResult{

@@ -30,7 +30,6 @@ const (
 
 	// StrategySequential 顺序策略：按配置顺序依次使用token
 	StrategySequential TokenSelectionStrategyType = "sequential"
-
 )
 
 // OptimalSelectionStrategy 最优选择策略（兼容现有逻辑）
