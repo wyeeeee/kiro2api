@@ -212,6 +212,9 @@ func StartServer(port string, authToken string) {
 		handleNonStreamRequest(c, anthropicReq, tokenInfo)
 	})
 
+	// Token计数端点
+	r.POST("/v1/messages/count_tokens", handleCountTokens)
+
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
 	r.POST("/v1/chat/completions", func(c *gin.Context) {
 		tokenInfo, err := auth.GetToken()
@@ -282,12 +285,13 @@ func StartServer(port string, authToken string) {
 		logger.String("auth_token", "***"))
 	logger.Info("AuthToken 验证已启用")
 	logger.Info("可用端点:")
-	logger.Info("  GET  /                    - 重定向到静态Dashboard")
-	logger.Info("  GET  /static/*            - 静态资源服务")
-	logger.Info("  GET  /api/tokens          - Token池状态API")
-	logger.Info("  GET  /v1/models           - 模型列表")
-	logger.Info("  POST /v1/messages         - Anthropic API代理")
-	logger.Info("  POST /v1/chat/completions - OpenAI API代理")
+	logger.Info("  GET  /                          - 重定向到静态Dashboard")
+	logger.Info("  GET  /static/*                  - 静态资源服务")
+	logger.Info("  GET  /api/tokens                - Token池状态API")
+	logger.Info("  GET  /v1/models                 - 模型列表")
+	logger.Info("  POST /v1/messages               - Anthropic API代理")
+	logger.Info("  POST /v1/messages/count_tokens  - Token计数接口")
+	logger.Info("  POST /v1/chat/completions       - OpenAI API代理")
 	logger.Info("按Ctrl+C停止服务器")
 
 	// 获取服务器超时配置
