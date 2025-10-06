@@ -110,7 +110,7 @@ var execCWRequest = executeCodeWhispererRequest
 
 // buildCodeWhispererRequest 构建通用的CodeWhisperer请求
 func buildCodeWhispererRequest(c *gin.Context, anthropicReq types.AnthropicRequest, tokenInfo types.TokenInfo, isStream bool) (*http.Request, error) {
-	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq, tokenInfo.ProfileArn, c)
+	cwReq, err := converter.BuildCodeWhispererRequest(anthropicReq, c)
 	if err != nil {
 		// 检查是否是模型未找到错误
 		if modelNotFoundErr, ok := err.(*types.ModelNotFoundErrorType); ok {
