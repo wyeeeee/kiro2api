@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"kiro2api/auth"
-	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
@@ -111,38 +110,23 @@ func containsToolResults(anthropicReq types.AnthropicRequest) bool {
 
 // handleGenericStreamRequest 通用流式请求处理
 func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
-	// 创建SSE状态管理器，确保事件序列符合Claude规范
-	sseStateManager := NewSSEStateManager(false) // 非严格模式，记录警告但不中断
-
-	// 创建stop_reason管理器，确保符合Claude官方规范
-	stopReasonManager := NewStopReasonManager(anthropicReq)
-
-	// 创建token计算器
-	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
+	tokenCalculator := utils.NewTokenCalculator()
 	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
-	// 更完整的SSE响应头，禁用反向代理缓冲
-	c.Header("Content-Type", "text/event-stream; charset=utf-8")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("X-Accel-Buffering", "no")
 
-	// 确认底层Writer支持Flush
-	if _, ok := c.Writer.(http.Flusher); !ok {
-		err := sender.SendError(c, "连接不支持SSE刷新", fmt.Errorf("no flusher"))
-		if err != nil {
-			return
-		}
+	// 初始化SSE响应
+	if err := initializeSSEResponse(c); err != nil {
+		_ = sender.SendError(c, "连接不支持SSE刷新", err)
 		return
 	}
 
-	messageId := fmt.Sprintf("msg_%s", time.Now().Format("20060102150405"))
-	// 注入 message_id 到上下文，便于统一日志会话标识
-	c.Set("message_id", messageId)
+	// 生成消息ID并注入上下文
+	messageID := fmt.Sprintf("msg_%s", time.Now().Format("20060102150405"))
+	c.Set("message_id", messageID)
 
+	// 执行CodeWhisperer请求
 	resp, err := execCWRequest(c, anthropicReq, token.TokenInfo, true)
 	if err != nil {
-		// 检查是否是模型未找到错误，如果是，则响应已经发送，不需要再次处理
 		var modelNotFoundErrorType *types.ModelNotFoundErrorType
 		if errors.As(err, &modelNotFoundErrorType) {
 			return
@@ -150,434 +134,32 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		_ = sender.SendError(c, "构建请求失败", err)
 		return
 	}
-	defer func(Body io.ReadCloser) {
-		_ = Body.Close()
-	}(resp.Body)
+	defer resp.Body.Close()
 
-	// 立即刷新响应头
-	c.Writer.Flush()
+	// 创建流处理上下文
+	ctx := NewStreamProcessorContext(c, anthropicReq, token, sender, messageID, inputTokens)
+	defer ctx.Cleanup()
 
-	// 发送初始事件，处理包含图片的消息内容
-	inputContent := ""
-	if len(anthropicReq.Messages) > 0 {
-		inputContent, _ = utils.GetMessageContent(anthropicReq.Messages[len(anthropicReq.Messages)-1].Content)
-	}
-	initialEvents := eventCreator(messageId, inputContent, anthropicReq.Model)
-	for _, event := range initialEvents {
-		// 更新流式事件中的input_tokens
-		// event本身就是map[string]any类型，直接使用
-		if message, exists := event["message"]; exists {
-			if msgMap, ok := message.(map[string]any); ok {
-				if usage, exists := msgMap["usage"]; exists {
-					if usageMap, ok := usage.(map[string]any); ok {
-						usageMap["input_tokens"] = inputTokens
-					}
-				}
-			}
-		}
-		// 使用状态管理器发送事件，确保符合Claude规范
-		err := sseStateManager.SendEvent(c, sender, event)
-		if err != nil {
-			logger.Error("初始SSE事件发送失败", logger.Err(err))
-			return
-		}
+	// 发送初始事件
+	if err := ctx.sendInitialEvents(eventCreator); err != nil {
+		return
 	}
 
-	// 创建符合AWS规范的流式解析器
-	compliantParser := parser.NewCompliantEventStreamParser(false) // 默认非严格模式
-
-	// 统计输出token（以字符数近似）
-	totalOutputChars := 0
-
-	// 维护 tool_use 区块索引到 tool_use_id 的映射，确保仅在对应的 stop 时标记完成
-	// 注意：由于这个map类型是map[int]string，而对象池提供的是map[string]any，直接使用make
-	toolUseIdByBlockIndex := make(map[int]string)
-
-	// 用于接收所有原始数据的字符串（使用对象池优化）
-	rawDataBuffer := utils.GetStringBuilder()
-	defer utils.PutStringBuilder(rawDataBuffer)
-
-	// 使用对象池获取字节缓冲区，避免频繁分配
-	buf := utils.GetByteSlice()
-	defer utils.PutByteSlice(buf)
-	buf = buf[:1024] // 限制为1024字节
-	// 文本增量简单聚合，减少断句割裂：累计到中文标点/换行或达到阈值再下发
-	pendingText := ""
-	pendingIndex := 0
-	hasPending := false
-	// 最小聚合阈值，避免极短片段导致颗粒化
-	minFlushChars := config.MinTextFlushChars
-	// 简单去重，避免重复段落多次发送
-	lastFlushedText := ""
-	// 提取公共的文本冲刷逻辑，避免重复（DRY）
-	flushPending := func() {
-		if hasPending {
-			trimmed := strings.TrimSpace(pendingText)
-			if len([]rune(trimmed)) >= 2 && trimmed != strings.TrimSpace(lastFlushedText) {
-				flush := map[string]any{
-					"type":  "content_block_delta",
-					"index": pendingIndex,
-					"delta": map[string]any{
-						"type": "text_delta",
-						"text": pendingText,
-					},
-				}
-				// 使用状态管理器发送事件，确保与主流程使用相同的发送机制
-				if err := sseStateManager.SendEvent(c, sender, flush); err != nil {
-					logger.Error("flushPending事件发送违规", logger.Err(err))
-				}
-				lastFlushedText = pendingText
-				totalOutputChars += len(pendingText)
-			} else {
-				logger.Debug("跳过重复/过短文本片段A",
-					addReqFields(c,
-						logger.Int("len", len(pendingText)),
-					)...)
-			}
-			hasPending = false
-			pendingText = ""
-		}
-	}
-
-	totalReadBytes := 0
-
-	// 跟踪解析状态用于元数据收集
-	var lastParseErr error
-	totalProcessedEvents := 0
-
-	for {
-		n, err := resp.Body.Read(buf)
-		totalReadBytes += n
-
-		if n > 0 {
-			// 将原始数据写入缓冲区
-			rawDataBuffer.Write(buf[:n])
-
-			// 使用符合规范的解析器解析流式数据
-			events, parseErr := compliantParser.ParseStream(buf[:n])
-			lastParseErr = parseErr // 保存最后的解析错误
-			if parseErr != nil {
-				logger.Warn("符合规范的解析器处理失败",
-					addReqFields(c,
-						logger.Err(parseErr),
-						logger.Int("read_bytes", n),
-						logger.String("direction", "upstream_response"),
-					)...)
-				// 在非严格模式下继续处理
-			}
-
-			totalProcessedEvents += len(events) // 累计处理的事件数量
-			logger.Debug("解析到符合规范的CW事件批次",
-				addReqFields(c,
-					logger.String("direction", "upstream_response"),
-					logger.Int("batch_events", len(events)),
-					logger.Int("read_bytes", n),
-					logger.Bool("has_parse_error", parseErr != nil),
-				)...)
-			for _, event := range events {
-
-				// 增强调试：记录关键事件字段
-				if dataMap, ok := event.Data.(map[string]any); ok {
-					if t, ok := dataMap["type"].(string); ok {
-						switch t {
-						case "content_block_start":
-							// 不在tool_use开始前冲刷文本，避免在tool_use之前插入额外的text_delta
-							if cb, ok := dataMap["content_block"].(map[string]any); ok {
-								if cbType, _ := cb["type"].(string); cbType == "tool_use" {
-									logger.Debug("转发tool_use开始",
-										logger.String("tool_use_id", func() string {
-											if s, _ := cb["id"].(string); s != "" {
-												return s
-											}
-											return ""
-										}()),
-										logger.String("tool_name", func() string {
-											if s, _ := cb["name"].(string); s != "" {
-												return s
-											}
-											return ""
-										}()),
-										logger.Int("index", func() int {
-											if v, ok := dataMap["index"].(int); ok {
-												return v
-											}
-											if f, ok := dataMap["index"].(float64); ok {
-												return int(f)
-											}
-											return -1
-										}()))
-
-									// 记录索引到 tool_use_id 的映射，供 stop 时精确标记
-									idx := func() int {
-										if v, ok := dataMap["index"].(int); ok {
-											return v
-										}
-										if f, ok := dataMap["index"].(float64); ok {
-											return int(f)
-										}
-										return -1
-									}()
-									if idx >= 0 {
-										if id, _ := cb["id"].(string); id != "" {
-											toolUseIdByBlockIndex[idx] = id
-											logger.Debug("建立tool_use索引映射",
-												logger.Int("index", idx),
-												logger.String("tool_use_id", id))
-										}
-									}
-								}
-							}
-						case "content_block_delta":
-							if delta, ok := dataMap["delta"].(map[string]any); ok {
-								if dType, _ := delta["type"].(string); dType == "input_json_delta" {
-									// 只打印前128字符
-									if pj, ok := delta["partial_json"]; ok {
-										var s string
-										switch v := pj.(type) {
-										case string:
-											s = v
-										case *string:
-											if v != nil {
-												s = *v
-											}
-										}
-										if len(s) > 128 {
-											s = s[:128] + "..."
-										}
-										logger.Debug("转发tool_use参数增量",
-											logger.Int("index", func() int {
-												if v, ok := dataMap["index"].(int); ok {
-													return v
-												}
-												if f, ok := dataMap["index"].(float64); ok {
-													return int(f)
-												}
-												return -1
-											}()),
-											logger.Int("partial_len", len(s)),
-											logger.String("partial_preview", s))
-
-										// 额外：尝试解析出 file_path 与 content 长度（用于快速验证）
-										if s != "" {
-											if strings.Contains(s, "file_path") || strings.Contains(s, "content") {
-												logger.Debug("Write参数预览", logger.String("raw", s))
-											}
-										}
-									}
-								} else if dType == "text_delta" {
-									if txt, ok := delta["text"].(string); ok {
-										// 聚合逻辑：累计到中文句末标点/换行或长度阈值
-										idx := 0
-										if v, ok := dataMap["index"].(int); ok {
-											idx = v
-										} else if f, ok := dataMap["index"].(float64); ok {
-											idx = int(f)
-										}
-										pendingIndex = idx
-										pendingText += txt
-										hasPending = true
-
-										shouldFlush := false
-										// 首先：达到基本长度阈值
-										if len(pendingText) >= minFlushChars {
-											shouldFlush = true
-										}
-										// 或者：遇到中文标点/换行
-										if strings.ContainsAny(txt, "。！？；\n") || len(pendingText) >= config.TextFlushMaxChars {
-											shouldFlush = true
-										}
-										if shouldFlush {
-											// 使用统一的flushPending函数，避免重复逻辑
-											flushPending()
-										}
-										// 调试日志
-										preview := txt
-										if len(preview) > config.DebugPayloadPreviewLength {
-											preview = preview[:config.DebugPayloadPreviewLength] + "..."
-										}
-										logger.Debug("转发文本增量",
-											addReqFields(c,
-												logger.Int("len", len(txt)),
-												logger.String("preview", preview),
-												logger.String("direction", "downstream_send"),
-											)...)
-										// 跳过原始事件的直接发送（因为已聚合发送或等待后续）
-										continue
-									}
-								}
-							}
-						case "content_block_stop":
-							// 在停止前冲刷挂起文本
-							flushPending()
-
-							// 仅在 tool_use 的对应索引 stop 时标记该工具完成，避免误标记
-							idx := func() int {
-								if v, ok := dataMap["index"].(int); ok {
-									return v
-								}
-								if f, ok := dataMap["index"].(float64); ok {
-									return int(f)
-								}
-								return -1
-							}()
-							if idx >= 0 {
-								if toolId, exists := toolUseIdByBlockIndex[idx]; exists && toolId != "" {
-									logger.Debug("工具执行完成",
-										logger.String("tool_id", toolId),
-										logger.Int("block_index", idx))
-									// 清理映射，防止泄漏
-									delete(toolUseIdByBlockIndex, idx)
-								} else {
-									logger.Debug("非tool_use或未知索引的内容块结束",
-										logger.Int("block_index", idx))
-								}
-							}
-
-							logger.Debug("转发内容块结束",
-								logger.Int("index", idx))
-						case "message_delta":
-							if delta, ok := dataMap["delta"].(map[string]any); ok {
-								if sr, _ := delta["stop_reason"].(string); sr != "" {
-									logger.Debug("转发消息增量",
-										logger.String("stop_reason", sr))
-								}
-							}
-						}
-					}
-				}
-
-				// 使用状态管理器发送事件，确保符合Claude规范
-				if eventDataMap, ok := event.Data.(map[string]any); ok {
-					if err := sseStateManager.SendEvent(c, sender, eventDataMap); err != nil {
-						logger.Error("SSE事件发送违规", logger.Err(err))
-						// 非严格模式下，违规事件被跳过但不中断流
-					}
-				} else {
-					logger.Warn("事件数据类型不匹配，跳过", logger.String("event_type", event.Event))
-				}
-
-				if event.Event == "content_block_delta" {
-					content, _ := utils.GetMessageContent(event.Data)
-					// 如果该事件是我们自行聚合发出的，就不会走到这里；
-					// 但若落入此处，说明直接转发了文本增量，也加入统计
-					totalOutputChars += len(content)
-				}
-				c.Writer.Flush()
-			}
-		}
-		if err != nil {
-			if err == io.EOF {
-
-				logger.Debug("响应流结束",
-					addReqFields(c,
-						logger.Int("total_read_bytes", totalReadBytes),
-					)...)
-			} else {
-				logger.Error("读取响应流时发生错误",
-					addReqFields(c,
-						logger.Err(err),
-						logger.Int("total_read_bytes", totalReadBytes),
-						logger.String("direction", "upstream_response"),
-					)...)
-			}
-			break
-		}
+	// 处理事件流
+	processor := NewEventStreamProcessor(ctx)
+	if err := processor.ProcessEventStream(resp.Body); err != nil {
+		logger.Error("事件流处理失败", logger.Err(err))
+		return
 	}
 
 	// 发送结束事件
-	// 冲刷可能遗留的文本
-	if pendingText != "" && hasPending {
-		// 冲刷尾部挂起内容
-		flushPending()
+	if err := ctx.sendFinalEvents(); err != nil {
+		logger.Error("发送结束事件失败", logger.Err(err))
+		return
 	}
 
-	// *** 关键修复：处理空响应流的情况 ***
-	// 当CodeWhisperer返回空响应时，特别是工具结果提交场景，需要生成适当的内容
-	if totalReadBytes == 0 && totalProcessedEvents == 0 {
-		logger.Debug("检测到空响应流，分析处理策略",
-			addReqFields(c,
-				logger.Int("total_read_bytes", totalReadBytes),
-				logger.Int("processed_events", totalProcessedEvents),
-				logger.Bool("contains_tool_results", containsToolResults(anthropicReq)),
-			)...)
-
-	}
-
-	// *** 使用新的stop_reason管理器，确保符合Claude官方规范 ***
-	// 更新工具调用状态
-	stopReasonManager.UpdateToolCallStatus(
-		len(toolUseIdByBlockIndex) > 0, // 有活跃工具
-		len(toolUseIdByBlockIndex) > 0, // 有已完成工具
-	)
-
-	// 设置实际使用的tokens
-	stopReasonManager.SetActualTokensUsed(tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:utils.IntMin(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0))
-
-	// 根据Claude官方规范确定stop_reason
-	stopReason := stopReasonManager.DetermineStopReason()
-
-	// 使用符合规范的stop_reason创建结束事件，包含完整的usage信息
-	outputTokens := tokenCalculator.CalculateOutputTokens(rawDataBuffer.String()[:utils.IntMin(totalOutputChars*4, rawDataBuffer.Len())], len(toolUseIdByBlockIndex) > 0)
-	finalEvents := createAnthropicFinalEvents(outputTokens, inputTokens, stopReason)
-
-	logger.Debug("创建结束事件",
-		logger.String("stop_reason", stopReason),
-		logger.String("stop_reason_description", GetStopReasonDescription(stopReason)),
-		logger.Int("output_tokens", outputTokens))
-
-	// *** 关键修复：在发送message_delta之前，显式关闭所有未关闭的content_block ***
-	// 确保符合Claude规范：所有content_block_stop必须在message_delta之前发送
-	activeBlocks := sseStateManager.GetActiveBlocks()
-	for index, block := range activeBlocks {
-		if block.Started && !block.Stopped {
-			stopEvent := map[string]any{
-				"type":  "content_block_stop",
-				"index": index,
-			}
-			logger.Debug("最终事件前关闭未关闭的content_block", logger.Int("index", index))
-			if err := sseStateManager.SendEvent(c, sender, stopEvent); err != nil {
-				logger.Error("关闭content_block失败", logger.Err(err), logger.Int("index", index))
-			}
-		}
-	}
-
-	for _, event := range finalEvents {
-		// 使用状态管理器发送结束事件，确保符合Claude规范
-		if err := sseStateManager.SendEvent(c, sender, event); err != nil {
-			logger.Error("结束事件发送违规", logger.Err(err))
-		}
-	}
-
-	// 输出接收到的所有原始数据，支持回放和测试
-	rawData := rawDataBuffer.String()
-	rawDataBytes := []byte(rawData)
-
-	// 生成请求ID（如果messageId不够唯一，可以使用更复杂的生成方式）
-	requestID := fmt.Sprintf("req_%s_%d", messageId, time.Now().Unix())
-
-	// 收集元数据
-	metadata := utils.Metadata{
-		ClientIP:       c.ClientIP(),
-		UserAgent:      c.GetHeader("User-Agent"),
-		RequestHeaders: extractRelevantHeaders(c),
-		ParseSuccess:   lastParseErr == nil, // 使用最后一次解析的错误状态
-		EventsCount:    totalProcessedEvents,
-	}
-
-	// 仅在debug模式下保存原始数据以供回放和测试
-	if isDebugMode() {
-		if err := utils.SaveRawDataForReplay(rawDataBytes, requestID, messageId, anthropicReq.Model, true, metadata); err != nil {
-			logger.Warn("保存原始数据失败", logger.Err(err))
-		}
-	}
-
-	// 保留原有的调试日志
-	logger.Debug("完整原始数据接收完成",
-		addReqFields(c,
-			logger.Int("total_bytes", len(rawData)),
-			logger.String("request_id", requestID),
-			logger.String("save_status", "saved_for_replay"),
-		)...)
+	// 保存原始数据用于调试
+	ctx.saveRawDataForReplay()
 }
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件
