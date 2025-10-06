@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -142,7 +143,8 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	resp, err := execCWRequest(c, anthropicReq, token.TokenInfo, true)
 	if err != nil {
 		// 检查是否是模型未找到错误，如果是，则响应已经发送，不需要再次处理
-		if _, ok := err.(*types.ModelNotFoundErrorType); ok {
+		var modelNotFoundErrorType *types.ModelNotFoundErrorType
+		if errors.As(err, &modelNotFoundErrorType) {
 			return
 		}
 		_ = sender.SendError(c, "构建请求失败", err)
@@ -747,7 +749,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	}
 
 	// 转换为Anthropic格式
-	var contexts = []map[string]any{}
+	var contexts []map[string]any
 	textAgg := result.GetCompletionText()
 
 	// 先获取工具管理器的所有工具，确保sawToolUse的判断基于实际工具
@@ -906,14 +908,14 @@ func handleTokenPoolAPI(c *gin.Context) {
 	}
 
 	// 遍历所有配置
-	for i, config := range configs {
+	for i, authConfig := range configs {
 		// 检查配置是否被禁用
-		if config.Disabled {
+		if authConfig.Disabled {
 			tokenData := map[string]any{
 				"index":           i,
 				"user_email":      "已禁用",
 				"token_preview":   "***已禁用",
-				"auth_type":       strings.ToLower(config.AuthType),
+				"auth_type":       strings.ToLower(authConfig.AuthType),
 				"remaining_usage": 0,
 				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 				"last_used":       "未知",
@@ -925,13 +927,13 @@ func handleTokenPoolAPI(c *gin.Context) {
 		}
 
 		// 尝试获取token信息
-		tokenInfo, err := refreshSingleTokenByConfig(config)
+		tokenInfo, err := refreshSingleTokenByConfig(authConfig)
 		if err != nil {
 			tokenData := map[string]any{
 				"index":           i,
 				"user_email":      "获取失败",
-				"token_preview":   createTokenPreview(config.RefreshToken),
-				"auth_type":       strings.ToLower(config.AuthType),
+				"token_preview":   createTokenPreview(authConfig.RefreshToken),
+				"auth_type":       strings.ToLower(authConfig.AuthType),
 				"remaining_usage": 0,
 				"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 				"last_used":       "未知",
@@ -944,7 +946,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 
 		// 检查使用限制
 		var usageInfo *types.UsageLimits
-		var available float64 = 100.0 // 默认值 (浮点数)
+		var available = 100.0 // 默认值 (浮点数)
 		var userEmail = "未知用户"
 
 		checker := auth.NewUsageLimitsChecker()
@@ -963,7 +965,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 			"index":           i,
 			"user_email":      userEmail,
 			"token_preview":   createTokenPreview(tokenInfo.AccessToken),
-			"auth_type":       strings.ToLower(config.AuthType),
+			"auth_type":       strings.ToLower(authConfig.AuthType),
 			"remaining_usage": available,
 			"expires_at":      tokenInfo.ExpiresAt.Format(time.RFC3339),
 			"last_used":       time.Now().Format(time.RFC3339),
@@ -1005,12 +1007,12 @@ func handleTokenPoolAPI(c *gin.Context) {
 		}
 
 		// 如果是 IdC 认证，显示额外信息
-		if config.AuthType == auth.AuthMethodIdC && config.ClientID != "" {
+		if authConfig.AuthType == auth.AuthMethodIdC && authConfig.ClientID != "" {
 			tokenData["client_id"] = func() string {
-				if len(config.ClientID) > 10 {
-					return config.ClientID[:5] + "***" + config.ClientID[len(config.ClientID)-3:]
+				if len(authConfig.ClientID) > 10 {
+					return authConfig.ClientID[:5] + "***" + authConfig.ClientID[len(authConfig.ClientID)-3:]
 				}
-				return config.ClientID
+				return authConfig.ClientID
 			}()
 		}
 

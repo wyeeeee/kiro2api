@@ -478,9 +478,7 @@ func (h *StandardAssistantResponseEventHandler) handleToolCallEvent(message *Eve
 // handleStreamingEvent 处理流式事件
 func (h *StandardAssistantResponseEventHandler) handleStreamingEvent(event *FullAssistantResponseEvent) ([]SSEEvent, error) {
 	// 处理流式响应事件
-	events := []SSEEvent{}
-
-	// 提取内容
+	var events []SSEEvent // 提取内容
 	if event.Content != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_delta",
@@ -501,9 +499,7 @@ func (h *StandardAssistantResponseEventHandler) handleStreamingEvent(event *Full
 // handleFullAssistantEvent 处理完整的assistant事件
 func (h *StandardAssistantResponseEventHandler) handleFullAssistantEvent(event *FullAssistantResponseEvent) ([]SSEEvent, error) {
 	// 处理完整的assistant响应事件
-	events := []SSEEvent{}
-
-	// 提取文本内容
+	var events []SSEEvent // 提取文本内容
 	if event.Content != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_start",
@@ -568,7 +564,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 	}
 
 	// 基本处理
-	events := []SSEEvent{}
+	var events []SSEEvent
 	if content, ok := data["content"].(string); ok && content != "" {
 		events = append(events, SSEEvent{
 			Event: "content_block_delta",
@@ -678,11 +674,11 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 
 	// 🔥 核心修复：处理未完整数据时发送增量事件而不是空事件
 	if !complete {
-		logger.Debug("工具调用数据未完整，发送增量事件",
-			logger.String("toolUseId", evt.ToolUseId),
-			logger.String("name", evt.Name),
-			logger.String("inputFragment", inputStr),
-			logger.Bool("stop", evt.Stop))
+		//logger.Debug("工具调用数据未完整，发送增量事件",
+		//	logger.String("toolUseId", evt.ToolUseId),
+		//	logger.String("name", evt.Name),
+		//	logger.String("inputFragment", inputStr),
+		//	logger.Bool("stop", evt.Stop))
 
 		// 如果有新的输入片段，检查配置后发送参数增量事件
 		if inputStr != "" && inputStr != "{}" {

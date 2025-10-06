@@ -55,14 +55,14 @@ func handleCountTokens(c *gin.Context) {
 	// 计算token数量
 	tokenCount := estimator.EstimateTokens(&req)
 
-	logger.Debug("token计数完成",
-		addReqFields(c,
-			logger.String("model", req.Model),
-			logger.Int("input_tokens", tokenCount),
-			logger.Int("messages_count", len(req.Messages)),
-			logger.Int("tools_count", len(req.Tools)),
-			logger.Int("system_count", len(req.System)),
-		)...)
+	//logger.Debug("token计数完成",
+	//	addReqFields(c,
+	//		logger.String("model", req.Model),
+	//		logger.Int("input_tokens", tokenCount),
+	//		logger.Int("messages_count", len(req.Messages)),
+	//		logger.Int("tools_count", len(req.Tools)),
+	//		logger.Int("system_count", len(req.System)),
+	//	)...)
 
 	// 返回符合官方API格式的响应
 	c.JSON(http.StatusOK, types.CountTokensResponse{
