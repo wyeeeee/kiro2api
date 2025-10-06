@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"fmt"
 	"kiro2api/logger"
 	"kiro2api/utils"
 	"strings"
@@ -423,16 +422,17 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 
 // generateIntroText 根据工具类型生成合适的介绍文本
 func (tlm *ToolLifecycleManager) generateIntroText(toolName string) string {
-	switch strings.ToLower(toolName) {
-	case "search", "web_search":
-		return "让我为您搜索相关信息。"
-	case "calculator", "calc":
-		return "让我为您进行计算。"
-	case "todowrite":
-		return "让我为您更新任务列表。"
-	default:
-		return fmt.Sprintf("让我使用%s工具来帮助您。", toolName)
-	}
+	//switch strings.ToLower(toolName) {
+	//case "search", "web_search":
+	//	return "让我为您搜索相关信息。"
+	//case "calculator", "calc":
+	//	return "让我为您进行计算。"
+	//case "todowrite":
+	//	return "让我为您更新任务列表。"
+	//default:
+	//	return fmt.Sprintf("让我使用%s工具来帮助您。", toolName)
+	//}
+	return ""
 }
 
 // GenerateToolSummary 生成工具执行摘要
