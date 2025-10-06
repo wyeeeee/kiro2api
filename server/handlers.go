@@ -383,36 +383,8 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 	// 使用新的stop_reason管理器，确保符合Claude官方规范
 	stopReasonManager := NewStopReasonManager(anthropicReq)
 
-	// 计算输出tokens（内联TokenEstimator的文本估算算法）
-	runes := []rune(textAgg)
-	runeCount := len(runes)
-
-	var baseTokens int
-	if runeCount == 0 {
-		baseTokens = 0
-	} else {
-		// 检测中文字符比例（采样前500字符）
-		sampleSize := runeCount
-		if sampleSize > 500 {
-			sampleSize = 500
-		}
-
-		chineseChars := 0
-		for i := 0; i < sampleSize; i++ {
-			r := runes[i]
-			if r >= 0x4E00 && r <= 0x9FFF {
-				chineseChars++
-			}
-		}
-
-		chineseRatio := float64(chineseChars) / float64(sampleSize)
-		charsPerToken := 4.0 - (4.0-1.5)*chineseRatio
-		baseTokens = int(float64(runeCount) / charsPerToken)
-		if baseTokens < 1 {
-			baseTokens = 1
-		}
-	}
-
+	// 计算输出tokens（使用TokenEstimator统一算法）
+	baseTokens := estimator.EstimateTextTokens(textAgg)
 	outputTokens := baseTokens
 	if sawToolUse {
 		outputTokens = int(float64(baseTokens) * 1.2) // 增加20%结构化开销

@@ -361,38 +361,9 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 		len(ctx.toolUseIdByBlockIndex) > 0,
 	)
 
-	// 计算输出tokens
+	// 计算输出tokens（使用TokenEstimator统一算法）
 	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())]
-
-	// 使用TokenEstimator的文本估算算法
-	runes := []rune(content)
-	runeCount := len(runes)
-
-	var baseTokens int
-	if runeCount == 0 {
-		baseTokens = 0
-	} else {
-		// 检测中文字符比例（采样前500字符）
-		sampleSize := runeCount
-		if sampleSize > 500 {
-			sampleSize = 500
-		}
-
-		chineseChars := 0
-		for i := 0; i < sampleSize; i++ {
-			r := runes[i]
-			if r >= 0x4E00 && r <= 0x9FFF {
-				chineseChars++
-			}
-		}
-
-		chineseRatio := float64(chineseChars) / float64(sampleSize)
-		charsPerToken := 4.0 - (4.0-1.5)*chineseRatio
-		baseTokens = int(float64(runeCount) / charsPerToken)
-		if baseTokens < 1 {
-			baseTokens = 1
-		}
-	}
+	baseTokens := ctx.tokenEstimator.EstimateTextTokens(content)
 
 	// 如果包含工具调用，增加20%结构化开销
 	outputTokens := baseTokens

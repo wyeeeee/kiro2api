@@ -31,7 +31,7 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 	// 1. 系统提示词（system prompt）
 	for _, sysMsg := range req.System {
 		if sysMsg.Text != "" {
-			totalTokens += e.estimateTextTokens(sysMsg.Text)
+			totalTokens += e.EstimateTextTokens(sysMsg.Text)
 			totalTokens += 5 // 系统提示的固定开销
 		}
 	}
@@ -45,7 +45,7 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 		switch content := msg.Content.(type) {
 		case string:
 			// 文本消息
-			totalTokens += e.estimateTextTokens(content)
+			totalTokens += e.EstimateTextTokens(content)
 		case []any:
 			// 复杂内容块（文本、图片、文档等）
 			for _, block := range content {
@@ -95,7 +95,7 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 			totalTokens += nameTokens
 
 			// 工具描述
-			totalTokens += e.estimateTextTokens(tool.Description)
+			totalTokens += e.EstimateTextTokens(tool.Description)
 
 			// 工具schema（JSON Schema）
 			if tool.InputSchema != nil {
@@ -178,12 +178,12 @@ func (e *TokenEstimator) estimateToolName(name string) int {
 	return totalTokens
 }
 
-// estimateTextTokens 估算纯文本的token数量
+// EstimateTextTokens 估算纯文本的token数量
 // 混合语言处理：
 // - 检测中文字符比例
 // - 中文: 1.5字符/token（汉字信息密度高）
 // - 英文: 4字符/token（标准GPT tokenizer比率）
-func (e *TokenEstimator) estimateTextTokens(text string) int {
+func (e *TokenEstimator) EstimateTextTokens(text string) int {
 	if text == "" {
 		return 0
 	}
@@ -245,7 +245,7 @@ func (e *TokenEstimator) estimateContentBlock(block any) int {
 	case "text":
 		// 文本块
 		if text, ok := blockMap["text"].(string); ok {
-			return e.estimateTextTokens(text)
+			return e.EstimateTextTokens(text)
 		}
 		return 10
 
@@ -270,7 +270,7 @@ func (e *TokenEstimator) estimateContentBlock(block any) int {
 	case "tool_result":
 		// 工具执行结果
 		if content, ok := blockMap["content"].(string); ok {
-			return e.estimateTextTokens(content)
+			return e.EstimateTextTokens(content)
 		}
 		return 50
 
@@ -288,7 +288,7 @@ func (e *TokenEstimator) estimateTypedContentBlock(block types.ContentBlock) int
 	switch block.Type {
 	case "text":
 		if block.Text != nil {
-			return e.estimateTextTokens(*block.Text)
+			return e.EstimateTextTokens(*block.Text)
 		}
 		return 10
 
@@ -309,7 +309,7 @@ func (e *TokenEstimator) estimateTypedContentBlock(block types.ContentBlock) int
 		// 工具执行结果
 		switch content := block.Content.(type) {
 		case string:
-			return e.estimateTextTokens(content)
+			return e.EstimateTextTokens(content)
 		case []any:
 			total := 0
 			for _, item := range content {
