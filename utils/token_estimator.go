@@ -32,14 +32,15 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 	for _, sysMsg := range req.System {
 		if sysMsg.Text != "" {
 			totalTokens += e.EstimateTextTokens(sysMsg.Text)
-			totalTokens += 5 // 系统提示的固定开销
+			totalTokens += 3 // 系统提示的固定开销（优化：从5降至3）
 		}
 	}
 
 	// 2. 消息内容（messages）
 	for _, msg := range req.Messages {
 		// 角色标记开销（"user"/"assistant" + JSON结构）
-		totalTokens += 10
+		// 优化：根据官方测试调整
+		totalTokens += 3
 
 		// 消息内容
 		switch content := msg.Content.(type) {
@@ -75,16 +76,17 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 
 		if toolCount == 1 {
 			// 单工具场景：高开销（包含tools数组初始化、类型信息等）
+			// 优化：平衡简单工具(403)和复杂工具(874)的估算
 			baseToolsOverhead = 0
-			perToolOverhead = 400
+			perToolOverhead = 320  // 最优平衡值
 		} else if toolCount <= 5 {
 			// 少量工具：中等开销
-			baseToolsOverhead = 150
-			perToolOverhead = 150
+			baseToolsOverhead = 100  // 从150降至100
+			perToolOverhead = 120    // 从150降至120
 		} else {
 			// 大量工具：共享开销 + 低增量
-			baseToolsOverhead = 250
-			perToolOverhead = 80
+			baseToolsOverhead = 180  // 从250降至180
+			perToolOverhead = 60     // 从80降至60
 		}
 
 		totalTokens += baseToolsOverhead
@@ -101,31 +103,32 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 			if tool.InputSchema != nil {
 				if jsonBytes, err := SafeMarshal(tool.InputSchema); err == nil {
 					// Schema编码密度：根据工具数量自适应
+					// 优化：平衡编码密度
 					var schemaCharsPerToken float64
 					if toolCount == 1 {
-						schemaCharsPerToken = 1.6 // 单工具密集编码
+						schemaCharsPerToken = 1.9 // 单工具平衡值
 					} else if toolCount <= 5 {
-						schemaCharsPerToken = 1.9 // 少量工具
+						schemaCharsPerToken = 2.2 // 少量工具
 					} else {
-						schemaCharsPerToken = 2.2 // 大量工具更宽松
+						schemaCharsPerToken = 2.5 // 大量工具
 					}
 
 					schemaLen := len(jsonBytes)
 					schemaTokens := int(float64(schemaLen) / schemaCharsPerToken)
 
-					// $schema字段URL开销
+					// $schema字段URL开销（优化：降低开销）
 					if strings.Contains(string(jsonBytes), "$schema") {
 						if toolCount == 1 {
-							schemaTokens += 15
+							schemaTokens += 10  // 从15降至10
 						} else {
-							schemaTokens += 8
+							schemaTokens += 5   // 从8降至5
 						}
 					}
 
-					// 最小schema开销
-					minSchemaTokens := 80
+					// 最小schema开销（优化：降低最小值）
+					minSchemaTokens := 50  // 从80降至50
 					if toolCount > 5 {
-						minSchemaTokens = 40
+						minSchemaTokens = 30  // 从40降至30
 					}
 					if schemaTokens < minSchemaTokens {
 						schemaTokens = minSchemaTokens
@@ -140,7 +143,8 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 	}
 
 	// 4. 基础请求开销（API格式固定开销）
-	totalTokens += 10
+	// 优化：根据官方测试调整
+	totalTokens += 4  // 调整至4以匹配官方
 
 	return totalTokens
 }
@@ -196,31 +200,46 @@ func (e *TokenEstimator) EstimateTextTokens(text string) int {
 		return 0
 	}
 
-	// 检测中文字符比例（优化：只采样前500字符）
-	sampleSize := runeCount
-	if sampleSize > 500 {
-		sampleSize = 500
-	}
-
+	// 统计中文字符数（扫描全部字符）
 	chineseChars := 0
-	for i := 0; i < sampleSize; i++ {
-		r := runes[i]
+	for _, r := range runes {
 		// 中文字符范围（CJK统一汉字）
 		if r >= 0x4E00 && r <= 0x9FFF {
 			chineseChars++
 		}
 	}
 
-	// 计算中文比例
-	chineseRatio := float64(chineseChars) / float64(sampleSize)
-
 	// 混合语言token估算
-	// 纯英文: 4字符/token
-	// 纯中文: 1.5字符/token
-	// 混合: 线性插值
-	charsPerToken := 4.0 - (4.0-1.5)*chineseRatio
+	// 根据官方测试数据精确校准：
+	// 纯中文: '你'(1字符)→2tokens, '你好'(2字符)→3tokens
+	// 混合: '你好hello'(2中+5英)→4tokens = 2中文 + 2英文
+	// 结论: 纯中文有基础开销，混合文本无额外开销
 
-	tokens := int(float64(runeCount) / charsPerToken)
+	nonChineseChars := runeCount - chineseChars
+
+	// 判断是否为纯中文
+	isPureChinese := (nonChineseChars == 0)
+
+	// 中文token计算
+	chineseTokens := 0
+	if chineseChars > 0 {
+		if isPureChinese {
+			chineseTokens = 1 + chineseChars  // 纯中文: 基础1 + 字符数
+		} else {
+			chineseTokens = chineseChars  // 混合文本: 仅字符数
+		}
+	}
+
+	// 英文/数字: 约2.2字符 = 1 token（数字略密集）
+	nonChineseTokens := 0
+	if nonChineseChars > 0 {
+		nonChineseTokens = int(float64(nonChineseChars) / 2.2)
+		if nonChineseTokens < 1 {
+			nonChineseTokens = 1  // 至少1 token
+		}
+	}
+
+	tokens := chineseTokens + nonChineseTokens
 	if tokens < 1 {
 		tokens = 1 // 最少1个token
 	}
