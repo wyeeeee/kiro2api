@@ -585,7 +585,7 @@ func (h *StandardAssistantResponseEventHandler) handleLegacyFormat(payload []byt
 // LegacyToolUseEventHandler 处理旧格式的工具使用事件
 type LegacyToolUseEventHandler struct {
 	toolManager *ToolLifecycleManager
-	aggregator  ToolDataAggregatorInterface
+	aggregator  *SonicStreamingJSONAggregator
 }
 
 // Handle 实现EventHandler接口

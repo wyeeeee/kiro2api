@@ -8,12 +8,6 @@ import (
 	"time"
 )
 
-// ToolDataAggregatorInterface 定义工具数据聚合器接口
-type ToolDataAggregatorInterface interface {
-	ProcessToolData(toolUseId, name, input string, stop bool, fragmentIndex int) (complete bool, fullInput string)
-	CleanupExpiredBuffers(timeout time.Duration)
-}
-
 // toolDataBuffer 工具数据缓冲区
 type toolDataBuffer struct {
 	toolUseId  string

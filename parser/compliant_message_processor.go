@@ -13,8 +13,8 @@ type CompliantMessageProcessor struct {
 	toolAggregator     *SimpleToolAggregator   // 简化：使用简单工具聚合器替代复杂FSM
 	eventHandlers      map[string]EventHandler // 统一的事件处理器（包含标准和旧格式）
 	completionBuffer   []string
-	legacyToolState    *toolIndexState             // 添加旧格式事件的工具状态
-	toolDataAggregator ToolDataAggregatorInterface // 统一的工具调用数据聚合器接口
+	legacyToolState    *toolIndexState               // 添加旧格式事件的工具状态
+	toolDataAggregator *SonicStreamingJSONAggregator // 统一的工具调用数据聚合器
 	// 运行时状态：跟踪已开始的工具与其内容块索引，用于按增量输出
 	startedTools   map[string]bool
 	toolBlockIndex map[string]int

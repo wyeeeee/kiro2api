@@ -14,8 +14,8 @@ import (
 // 减少锁竞争，提升高并发场景下的性能
 type AtomicTokenCache struct {
 	// hot是最常用的token，使用atomic.Value确保类型安全和GC友好
-	hot    atomic.Value   // stores *types.TokenInfo
-	hotIdx atomic.Int64   // 热点token的索引
+	hot    atomic.Value // stores *types.TokenInfo
+	hotIdx atomic.Int64 // 热点token的索引
 
 	// 冷缓存使用sync.Map，适合读多写少的场景
 	cache sync.Map // int -> *types.TokenInfo

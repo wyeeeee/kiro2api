@@ -151,14 +151,6 @@ func (tm *TokenManager) selectBestToken() *CachedToken {
 	return nil
 }
 
-// resetTokenSelection 重置token选择状态
-func (tm *TokenManager) resetTokenSelection() {
-	tm.currentIndex = 0
-	tm.exhausted = make(map[string]bool)
-	logger.Debug("token选择状态重置")
-}
-
-
 // refreshCache 刷新token缓存
 func (tm *TokenManager) refreshCache() error {
 	tm.mutex.Lock()
@@ -265,7 +257,6 @@ func CalculateAvailableCount(usage *types.UsageLimits) float64 {
 	return 0.0
 }
 
-
 // generateConfigOrder 生成token配置的顺序
 func generateConfigOrder(configs []AuthConfig) []string {
 	var order []string
@@ -282,7 +273,6 @@ func generateConfigOrder(configs []AuthConfig) []string {
 
 	return order
 }
-
 
 // GetSelectionStrategyStatus 获取选择策略状态（用于监控和调试）
 func (tm *TokenManager) GetSelectionStrategyStatus() map[string]interface{} {

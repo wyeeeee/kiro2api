@@ -35,16 +35,16 @@ type StreamProcessorContext struct {
 	compliantParser *parser.CompliantEventStreamParser
 
 	// 统计信息
-	totalOutputChars    int
-	totalReadBytes      int
+	totalOutputChars     int
+	totalReadBytes       int
 	totalProcessedEvents int
-	lastParseErr        error
+	lastParseErr         error
 
 	// 文本聚合状态
-	pendingText      string
-	pendingIndex     int
-	hasPending       bool
-	lastFlushedText  string
+	pendingText     string
+	pendingIndex    int
+	hasPending      bool
+	lastFlushedText string
 
 	// 工具调用跟踪
 	toolUseIdByBlockIndex map[int]string

@@ -300,11 +300,6 @@ func (up *UnifiedParser) Reset() {
 	up.stats = &ParseStats{}
 }
 
-// SetStrictMode 设置严格模式
-func (up *UnifiedParser) SetStrictMode(strict bool) {
-	up.strictMode = strict
-}
-
 // SetMaxErrors 设置最大错误数
 func (up *UnifiedParser) SetMaxErrors(maxErrors int) {
 	up.maxErrors = maxErrors
