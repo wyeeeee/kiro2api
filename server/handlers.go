@@ -81,38 +81,17 @@ func isDebugMode() bool {
 	return false
 }
 
-// containsToolResults 检测请求是否包含工具结果
-func containsToolResults(anthropicReq types.AnthropicRequest) bool {
-	for _, message := range anthropicReq.Messages {
-		if message.Role == "user" {
-			switch content := message.Content.(type) {
-			case []any:
-				for _, item := range content {
-					if block, ok := item.(map[string]any); ok {
-						if blockType, exists := block["type"]; exists {
-							if typeStr, ok := blockType.(string); ok && typeStr == "tool_result" {
-								return true
-							}
-						}
-					}
-				}
-			case []types.ContentBlock:
-				for _, block := range content {
-					if block.Type == "tool_result" {
-						return true
-					}
-				}
-			}
-		}
-	}
-	return false
-}
-
 // handleGenericStreamRequest 通用流式请求处理
 func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
 	// 计算输入tokens
-	tokenCalculator := utils.NewTokenCalculator()
-	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
+	estimator := utils.NewTokenEstimator()
+	countReq := &types.CountTokensRequest{
+		Model:    anthropicReq.Model,
+		System:   anthropicReq.System,
+		Messages: anthropicReq.Messages,
+		Tools:    anthropicReq.Tools,
+	}
+	inputTokens := estimator.EstimateTokens(countReq)
 
 	// 初始化SSE响应
 	if err := initializeSSEResponse(c); err != nil {
@@ -164,10 +143,11 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件
 func createAnthropicStreamEvents(messageId, inputContent, model string) []map[string]any {
-	// 创建token计算器来计算输入tokens
-	tokenCalculator := utils.NewTokenCalculator()
-	// 基于输入内容估算输入tokens
-	inputTokens := tokenCalculator.EstimateTokensFromChars(len(inputContent))
+	// 基于输入内容估算输入tokens（英文平均4字符/token）
+	inputTokens := len(inputContent) / 4
+	if inputTokens < 1 && len(inputContent) > 0 {
+		inputTokens = 1
+	}
 
 	// 创建完整的初始事件序列，包括content_block_start
 	// 这确保符合Claude API规范的完整SSE事件序列
@@ -208,26 +188,11 @@ func createAnthropicFinalEvents(outputTokens, inputTokens int, stopReason string
 	// 构建符合Claude规范的完整usage信息
 	usage := map[string]any{
 		"output_tokens": outputTokens,
+		"input_tokens":  inputTokens,
 	}
 
 	// 根据Claude规范，message_delta中的usage应包含完整的token统计
 	// 包括输入tokens和可能的缓存相关tokens
-	if inputTokens > 0 {
-		// 注意：这里为了演示缓存机制，我们假设有一部分输入来自缓存
-		// 实际实现中，这些值应该从真实的缓存系统中获取
-		cacheThreshold := 100 // 假设超过100个输入token的部分可能来自缓存
-
-		if inputTokens > cacheThreshold {
-			// 模拟缓存使用情况：将部分输入token标记为缓存相关
-			cacheTokens := utils.IntMin(32, inputTokens-cacheThreshold) // 最多32个缓存token
-			regularInputTokens := inputTokens - cacheTokens
-
-			usage["input_tokens"] = regularInputTokens
-			usage["cache_read_input_tokens"] = cacheTokens
-		} else {
-			usage["input_tokens"] = inputTokens
-		}
-	}
 
 	// 根据Claude API规范，确保包含必要的content_block_stop事件
 	// 这是为了处理可能缺失的content_block_stop事件
@@ -254,10 +219,15 @@ func createAnthropicFinalEvents(outputTokens, inputTokens int, stopReason string
 
 // handleNonStreamRequest 处理非流式请求
 func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token types.TokenInfo) {
-	// 创建token计算器
-	tokenCalculator := utils.NewTokenCalculator()
 	// 计算输入tokens
-	inputTokens := tokenCalculator.CalculateInputTokens(anthropicReq)
+	estimator := utils.NewTokenEstimator()
+	countReq := &types.CountTokensRequest{
+		Model:    anthropicReq.Model,
+		System:   anthropicReq.System,
+		Messages: anthropicReq.Messages,
+		Tools:    anthropicReq.Tools,
+	}
+	inputTokens := estimator.EstimateTokens(countReq)
 
 	resp, err := executeCodeWhispererRequest(c, anthropicReq, token, false)
 	if err != nil {
@@ -412,7 +382,45 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 
 	// 使用新的stop_reason管理器，确保符合Claude官方规范
 	stopReasonManager := NewStopReasonManager(anthropicReq)
-	outputTokens := tokenCalculator.CalculateOutputTokens(textAgg, sawToolUse)
+
+	// 计算输出tokens（内联TokenEstimator的文本估算算法）
+	runes := []rune(textAgg)
+	runeCount := len(runes)
+
+	var baseTokens int
+	if runeCount == 0 {
+		baseTokens = 0
+	} else {
+		// 检测中文字符比例（采样前500字符）
+		sampleSize := runeCount
+		if sampleSize > 500 {
+			sampleSize = 500
+		}
+
+		chineseChars := 0
+		for i := 0; i < sampleSize; i++ {
+			r := runes[i]
+			if r >= 0x4E00 && r <= 0x9FFF {
+				chineseChars++
+			}
+		}
+
+		chineseRatio := float64(chineseChars) / float64(sampleSize)
+		charsPerToken := 4.0 - (4.0-1.5)*chineseRatio
+		baseTokens = int(float64(runeCount) / charsPerToken)
+		if baseTokens < 1 {
+			baseTokens = 1
+		}
+	}
+
+	outputTokens := baseTokens
+	if sawToolUse {
+		outputTokens = int(float64(baseTokens) * 1.2) // 增加20%结构化开销
+	}
+	if outputTokens < 1 && len(textAgg) > 0 {
+		outputTokens = 1
+	}
+
 	stopReasonManager.SetActualTokensUsed(outputTokens)
 	stopReasonManager.UpdateToolCallStatus(sawToolUse, sawToolUse)
 	stopReason := stopReasonManager.DetermineStopReason()

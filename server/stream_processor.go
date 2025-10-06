@@ -29,7 +29,7 @@ type StreamProcessorContext struct {
 	// 状态管理器
 	sseStateManager   *SSEStateManager
 	stopReasonManager *StopReasonManager
-	tokenCalculator   *utils.TokenCalculator
+	tokenEstimator    *utils.TokenEstimator
 
 	// 流解析器
 	compliantParser *parser.CompliantEventStreamParser
@@ -71,7 +71,7 @@ func NewStreamProcessorContext(
 		inputTokens:           inputTokens,
 		sseStateManager:       NewSSEStateManager(false),
 		stopReasonManager:     NewStopReasonManager(req),
-		tokenCalculator:       utils.NewTokenCalculator(),
+		tokenEstimator:        utils.NewTokenEstimator(),
 		compliantParser:       parser.NewCompliantEventStreamParser(false),
 		toolUseIdByBlockIndex: make(map[int]string),
 		rawDataBuffer:         utils.GetStringBuilder(),
@@ -361,20 +361,53 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 		len(ctx.toolUseIdByBlockIndex) > 0,
 	)
 
+	// 计算输出tokens
+	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())]
+
+	// 使用TokenEstimator的文本估算算法
+	runes := []rune(content)
+	runeCount := len(runes)
+
+	var baseTokens int
+	if runeCount == 0 {
+		baseTokens = 0
+	} else {
+		// 检测中文字符比例（采样前500字符）
+		sampleSize := runeCount
+		if sampleSize > 500 {
+			sampleSize = 500
+		}
+
+		chineseChars := 0
+		for i := 0; i < sampleSize; i++ {
+			r := runes[i]
+			if r >= 0x4E00 && r <= 0x9FFF {
+				chineseChars++
+			}
+		}
+
+		chineseRatio := float64(chineseChars) / float64(sampleSize)
+		charsPerToken := 4.0 - (4.0-1.5)*chineseRatio
+		baseTokens = int(float64(runeCount) / charsPerToken)
+		if baseTokens < 1 {
+			baseTokens = 1
+		}
+	}
+
+	// 如果包含工具调用，增加20%结构化开销
+	outputTokens := baseTokens
+	if len(ctx.toolUseIdByBlockIndex) > 0 {
+		outputTokens = int(float64(baseTokens) * 1.2)
+	}
+	if outputTokens < 1 && len(content) > 0 {
+		outputTokens = 1
+	}
+
 	// 设置实际使用的tokens
-	ctx.stopReasonManager.SetActualTokensUsed(
-		ctx.tokenCalculator.CalculateOutputTokens(
-			ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())],
-			len(ctx.toolUseIdByBlockIndex) > 0,
-		),
-	)
+	ctx.stopReasonManager.SetActualTokensUsed(outputTokens)
 
 	// 确定stop_reason
 	stopReason := ctx.stopReasonManager.DetermineStopReason()
-	outputTokens := ctx.tokenCalculator.CalculateOutputTokens(
-		ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())],
-		len(ctx.toolUseIdByBlockIndex) > 0,
-	)
 
 	logger.Debug("创建结束事件",
 		logger.String("stop_reason", stopReason),
