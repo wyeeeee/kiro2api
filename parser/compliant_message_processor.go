@@ -10,9 +10,8 @@ import (
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
 	toolManager        *ToolLifecycleManager
-	toolAggregator     *SimpleToolAggregator // 简化：使用简单工具聚合器替代复杂FSM
-	eventHandlers      map[string]EventHandler
-	legacyHandlers     map[string]EventHandler
+	toolAggregator     *SimpleToolAggregator   // 简化：使用简单工具聚合器替代复杂FSM
+	eventHandlers      map[string]EventHandler // 统一的事件处理器（包含标准和旧格式）
 	completionBuffer   []string
 	legacyToolState    *toolIndexState             // 添加旧格式事件的工具状态
 	toolDataAggregator ToolDataAggregatorInterface // 统一的工具调用数据聚合器接口
@@ -33,7 +32,6 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 		toolManager:      NewToolLifecycleManager(),
 		toolAggregator:   NewSimpleToolAggregator(), // 简化：使用简单聚合器
 		eventHandlers:    make(map[string]EventHandler),
-		legacyHandlers:   make(map[string]EventHandler),
 		completionBuffer: make([]string, 0, 16),
 		startedTools:     make(map[string]bool),
 		toolBlockIndex:   make(map[string]int),
@@ -85,8 +83,8 @@ func (cmp *CompliantMessageProcessor) registerEventHandlers() {
 	// 标准事件处理器 - 将assistantResponseEvent作为标准事件
 	cmp.eventHandlers[EventTypes.ASSISTANT_RESPONSE_EVENT] = &StandardAssistantResponseEventHandler{cmp}
 
-	// 兼容旧格式的处理器
-	cmp.legacyHandlers[EventTypes.TOOL_USE_EVENT] = &LegacyToolUseEventHandler{
+	// 旧格式兼容处理器（合并到统一的eventHandlers中）
+	cmp.eventHandlers[EventTypes.TOOL_USE_EVENT] = &LegacyToolUseEventHandler{
 		toolManager: cmp.toolManager,
 		aggregator:  cmp.toolDataAggregator,
 	}
@@ -124,42 +122,17 @@ func (cmp *CompliantMessageProcessor) ProcessMessage(message *EventStreamMessage
 
 // processEventMessage 处理事件消息
 func (cmp *CompliantMessageProcessor) processEventMessage(message *EventStreamMessage, eventType string) ([]SSEEvent, error) {
-	// logger.Debug("处理事件消息",
-	// 	logger.String("event_type", eventType),
-	// 	logger.Bool("has_standard_handler", func() bool {
-	// 		_, exists := cmp.eventHandlers[eventType]
-	// 		return exists
-	// 	}()),
-	// 	logger.Bool("has_legacy_handler", func() bool {
-	// 		_, exists := cmp.legacyHandlers[eventType]
-	// 		return exists
-	// 	}()))
-
-	// 优先处理标准事件
+	// 查找并处理事件
 	if handler, exists := cmp.eventHandlers[eventType]; exists {
-		// logger.Debug("使用标准处理器", logger.String("event_type", eventType))
-		return handler.Handle(message)
-	}
-
-	// 处理兼容的旧格式事件
-	if handler, exists := cmp.legacyHandlers[eventType]; exists {
-		logger.Debug("使用旧格式处理器", logger.String("event_type", eventType))
 		return handler.Handle(message)
 	}
 
 	// 未知事件类型，记录日志但不报错
 	logger.Warn("未知事件类型",
 		logger.String("event_type", eventType),
-		logger.Any("available_standard", func() []string {
+		logger.Any("available_handlers", func() []string {
 			var keys []string
 			for k := range cmp.eventHandlers {
-				keys = append(keys, k)
-			}
-			return keys
-		}()),
-		logger.Any("available_legacy", func() []string {
-			var keys []string
-			for k := range cmp.legacyHandlers {
 				keys = append(keys, k)
 			}
 			return keys
