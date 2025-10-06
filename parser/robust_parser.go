@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -20,7 +21,7 @@ type RobustEventStreamParser struct {
 	errorCount   int
 	maxErrors    int
 	crcTable     *crc32.Table
-	ringBuffer   *RingBuffer // 新的环形缓冲区
+	buffer       *bytes.Buffer // 使用标准库bytes.Buffer替代RingBuffer
 	// *** 新增：并发访问控制和状态保护 ***
 	mu            sync.RWMutex // 保护并发访问
 	lastProcessed int64        // 最后处理的字节数，用于监控
@@ -34,7 +35,7 @@ func NewRobustEventStreamParser(strictMode bool) *RobustEventStreamParser {
 		strictMode:   strictMode,
 		maxErrors:    config.ParserMaxErrors,
 		crcTable:     crc32.MakeTable(crc32.IEEE),
-		ringBuffer:   NewRingBuffer(config.ParserBufferSize),
+		buffer:       &bytes.Buffer{},
 	}
 }
 
@@ -46,8 +47,8 @@ func (rp *RobustEventStreamParser) SetMaxErrors(maxErrors int) {
 // Reset 重置解析器状态
 func (rp *RobustEventStreamParser) Reset() {
 	rp.errorCount = 0
-	if rp.ringBuffer != nil {
-		rp.ringBuffer.Reset()
+	if rp.buffer != nil {
+		rp.buffer.Reset()
 	}
 }
 
@@ -79,7 +80,7 @@ func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessa
 		}
 	}()
 
-	return rp.parseStreamWithRingBuffer(data)
+	return rp.parseStreamWithBuffer(data)
 
 }
 
@@ -427,42 +428,37 @@ func (rp *RobustEventStreamParser) isValidToolUseIdFormat(toolUseId string) bool
 	return true
 }
 
-// parseStreamWithRingBuffer 使用环形缓冲区解析流数据
-func (rp *RobustEventStreamParser) parseStreamWithRingBuffer(data []byte) ([]*EventStreamMessage, error) {
-	// 写入新数据到环形缓冲区
-	written, err := rp.ringBuffer.TryWrite(data)
-	if err == ErrBufferFull {
-		// 缓冲区满，尝试处理现有数据
-		logger.Warn("环形缓冲区已满，处理现有数据")
-	} else if written < len(data) {
-		logger.Warn("环形缓冲区空间不足",
-			logger.Int("written", written),
-			logger.Int("total", len(data)))
+// parseStreamWithBuffer 使用bytes.Buffer解析流数据
+func (rp *RobustEventStreamParser) parseStreamWithBuffer(data []byte) ([]*EventStreamMessage, error) {
+	// 写入新数据到缓冲区
+	_, err := rp.buffer.Write(data)
+	if err != nil {
+		logger.Warn("写入缓冲区失败", logger.Err(err))
+		return nil, err
 	}
 
 	messages := make([]*EventStreamMessage, 0, 8)
-	tempBuffer := make([]byte, 16*1024) // 16KB临时缓冲区
 
 	for {
 		// 查看可用数据
-		available := rp.ringBuffer.Available()
+		available := rp.buffer.Len()
 		if available < 16 { // 最小消息大小
 			break
 		}
 
-		// 查看消息头
-		n, _ := rp.ringBuffer.Peek(tempBuffer[:16])
-		if n < 16 {
+		// 查看消息头（不移除数据）
+		bufferBytes := rp.buffer.Bytes()
+		if len(bufferBytes) < 16 {
 			break
 		}
 
 		// 解析消息长度
-		totalLength := binary.BigEndian.Uint32(tempBuffer[:4])
+		totalLength := binary.BigEndian.Uint32(bufferBytes[:4])
 
 		// 验证长度合理性
 		if totalLength < 16 || totalLength > 16*1024*1024 {
-			// 跳过无效数据
-			rp.ringBuffer.Skip(1)
+			// 跳过无效数据（丢弃1字节）
+			rp.buffer.Next(1)
 			rp.errorCount++
 			logger.Warn("跳过无效消息头",
 				logger.Int("total_length", int(totalLength)))
@@ -477,11 +473,12 @@ func (rp *RobustEventStreamParser) parseStreamWithRingBuffer(data []byte) ([]*Ev
 
 		// 读取完整消息
 		messageData := make([]byte, totalLength)
-		n, _ = rp.ringBuffer.Read(messageData)
-		if n != int(totalLength) {
+		n, err := rp.buffer.Read(messageData)
+		if err != nil || n != int(totalLength) {
 			logger.Error("读取消息失败",
 				logger.Int("expected", int(totalLength)),
-				logger.Int("actual", n))
+				logger.Int("actual", n),
+				logger.Err(err))
 			break
 		}
 
