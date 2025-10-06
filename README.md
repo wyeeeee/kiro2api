@@ -32,24 +32,23 @@ claude-code --model claude-sonnet-4 "帮我重构这段代码"
 - ✅ 工具调用完整支持
 - ✅ 多模态图片处理
 
-#### 2. 🎛️ 智能多账号池管理
+#### 2. 🎛️ 多账号池管理
 
 ```json
 {
   "多账号配置": [
-    {"auth": "Social", "refreshToken": "个人账号1", "quota": "高优先级"},
-    {"auth": "Social", "refreshToken": "个人账号2", "quota": "备用账号"},
-    {"auth": "IdC", "refreshToken": "企业账号", "quota": "无限制"}
+    {"auth": "Social", "refreshToken": "个人账号1"},
+    {"auth": "Social", "refreshToken": "个人账号2"},
+    {"auth": "IdC", "refreshToken": "企业账号"}
   ],
-  "智能策略": "optimal - 自动选择可用次数最多的账号"
+  "选择策略": "sequential - 按配置顺序依次使用"
 }
 ```
 
-**智能特性**:
-- 🎯 **最优选择**: 自动选择可用次数最多的账号（设置 `TOKEN_SELECTION_STRATEGY=optimal`）
+**核心特性**:
+- 🔄 **顺序选择**: 按配置顺序依次使用账号
 - 🔄 **故障转移**: 账号用完自动切换到下一个
 - 📊 **使用监控**: 实时监控每个账号的使用情况
-- ⚡ **选择策略**: 默认顺序使用（`sequential`），可切换为 `optimal`
 
 #### 3. 🏢 双认证方式支持
 
@@ -188,7 +187,7 @@ graph TB
 | 🔄 **API 兼容** | Anthropic API | ✅ | 完整的 Claude API 支持 |
 | | OpenAI API | ✅ | ChatCompletion 格式兼容 |
 | 🎛️ **负载管理** | 单账号 | ✅ | 基础 Token 管理 |
-| | 多账号池 | ✅ | 智能负载均衡 |
+| | 多账号池 | ✅ | 顺序负载均衡 |
 | | 故障转移 | ✅ | 自动切换机制 |
 | 🔐 **认证方式** | Social 认证 | ✅ | AWS SSO 认证 |
 | | IdC 认证 | ✅ | 身份中心认证 |
@@ -207,7 +206,7 @@ graph TB
 | 🛠️ **工具调用** | 完整 Anthropic 工具使用支持 | 状态机 + 生命周期管理 |
 | 🔄 **格式转换** | Anthropic ↔ OpenAI ↔ CodeWhisperer | 智能协议转换器 |
 | ⚡ **零延迟流式** | 实时流式传输优化 | EventStream 解析 + 对象池 |
-| 🎯 **智能选择** | 最优/均衡 Token 策略 | 使用量预测 + 负载均衡 |
+| 🎯 **顺序选择** | 按配置顺序使用 Token | 顺序轮换 + 故障转移 |
 
 ## 技术栈
 
@@ -288,9 +287,6 @@ KIRO_AUTH_TOKEN='[
     "clientSecret": "xxx-secret-key-xxx"
   }
 ]'
-
-# 负载均衡策略
-TOKEN_SELECTION_STRATEGY=sequential
 
 # 服务配置
 KIRO_CLIENT_TOKEN=your-secure-token
@@ -412,7 +408,7 @@ curl -N -X POST http://localhost:8080/v1/messages \
 
 | 配置方式 | 适用场景 | 优势 | 限制 |
 |----------|----------|------|------|
-| 🔑 **JSON 配置** | 生产级部署 | 多认证方式、智能负载均衡 | 配置相对复杂 |
+| 🔑 **JSON 配置** | 生产级部署 | 多认证方式、顺序负载均衡 | 配置相对复杂 |
 | 📝 **环境变量** | 快速测试 | 简单直接、向后兼容 | 功能有限 |
 
 #### JSON 格式配置（推荐）

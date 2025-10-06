@@ -67,12 +67,8 @@ rm -f kiro2api              # 删除可执行文件
 # 复制配置文件
 cp .env.example .env
 
-# === Token选择策略配置 ===
-# 控制多个token时的使用顺序，支持三种策略：
-TOKEN_SELECTION_STRATEGY=sequential     # 顺序使用（默认）：按配置顺序依次使用token，用完再用下一个
-# TOKEN_SELECTION_STRATEGY=optimal     # 最优使用：选择可用次数最多的token
-
 # === Token管理配置（推荐使用JSON格式） ===
+# Token选择策略：固定使用顺序策略（sequential），按配置顺序依次使用token
 # 新的JSON格式配置方式，支持多认证方式和多token。
 #
 # 示例 1: 单个 Social 认证
@@ -91,10 +87,6 @@ KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"},{"auth":"IdC","refreshT
 # === 基础服务配置 ===
 KIRO_CLIENT_TOKEN=123456                  # API认证密钥,默认: 123456
 PORT=8080                                 # 服务端口,默认: 8080
-
-# === Token使用监控配置 ===
-# TOKEN_SELECTION_STRATEGY=optimal        # optimal(最优使用) 或 sequential(顺序使用)
-
 
 # === 日志配置 ===
 LOG_LEVEL=info                            # debug,info,warn,error
@@ -121,10 +113,9 @@ LOG_FORMAT=json                           # text,json
 
 ### 智能特性
 - **请求复杂度分析**: 根据MaxTokens、内容长度、工具使用等因素动态选择超时时间
-- **企业级Token管理**: 智能token选择、原子缓存、并发控制、使用限制监控
+- **企业级Token管理**: 顺序token选择、原子缓存、并发控制、使用限制监控
 - **双认证方式**: Social和IdC认证支持
 - **高性能缓存**: 智能token缓存和并发控制
-- **智能选择策略**: 最优使用和均衡使用策略，基于使用量的智能选择
 - **流式优化**: 零延迟流式传输，对象池复用解析器实例
 
 ## 包结构 (按职责分层)
@@ -157,7 +148,7 @@ LOG_FORMAT=json                           # text,json
 ### 基础设施层
 - **`auth/`**: 企业级认证和token管理系统
   - `auth.go` - 认证接口和核心功能
-  - `token_manager.go` - token池管理和选择策略
+  - `token_manager.go` - token池管理和顺序选择
   - `usage_checker.go` - 使用限制实时监控
   - `config.go` - 配置提供者和管理
   - `refresh.go` - token刷新逻辑
@@ -183,27 +174,21 @@ LOG_FORMAT=json                           # text,json
    - `types/model.go`: 验证结构支持新模型
    - 测试新模型的请求响应转换
 
-2. **Token选择策略扩展**
-   - `auth/token_manager.go`: 实现新的选择策略（扩展现有选择逻辑）
+2. **Token管理扩展**
+   - `auth/token_manager.go`: 优化顺序选择逻辑
    - `auth/config.go`: 添加新认证方式配置
    - `auth/usage_checker.go`: 扩展使用限制监控功能
 
 ### 性能优化 (遵循KISS原则)
-1. **Token选择优化**
-   - `auth/token_manager.go`: 优化选择算法性能
-   - 调整使用量统计和预测模型
-   - 测试不同负载下的选择策略效果
-
-2. **流式响应调试**
+1. **流式响应调试**
    - `parser/robust_parser.go`: EventStream解析器错误恢复
    - `parser/compliant_message_processor.go`: 消息处理
    - 验证BigEndian格式的EventStream解析
 
 ### 代码质量改进 (遵循DRY和SOLID原则)
-1. **接口抽象**: 为选择策略创建更多接口
-2. **测试覆盖**: 重点测试token管理系统
-3. **性能基准测试**: 建立token选择的性能基准
-4. **监控指标**: 完善token使用情况监控
+1. **测试覆盖**: 重点测试token管理系统
+2. **性能基准测试**: 建立性能基准
+3. **监控指标**: 完善token使用情况监控
 
 ## 重要提醒
 
