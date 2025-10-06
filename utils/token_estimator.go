@@ -32,7 +32,7 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 	for _, sysMsg := range req.System {
 		if sysMsg.Text != "" {
 			totalTokens += e.EstimateTextTokens(sysMsg.Text)
-			totalTokens += 3 // 系统提示的固定开销（优化：从5降至3）
+			totalTokens += 2 // 系统提示的固定开销（P0优化：从3降至2）
 		}
 	}
 
@@ -78,15 +78,15 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 			// 单工具场景：高开销（包含tools数组初始化、类型信息等）
 			// 优化：平衡简单工具(403)和复杂工具(874)的估算
 			baseToolsOverhead = 0
-			perToolOverhead = 320  // 最优平衡值
+			perToolOverhead = 320 // 最优平衡值
 		} else if toolCount <= 5 {
 			// 少量工具：中等开销
-			baseToolsOverhead = 100  // 从150降至100
-			perToolOverhead = 120    // 从150降至120
+			baseToolsOverhead = 100 // 从150降至100
+			perToolOverhead = 120   // 从150降至120
 		} else {
 			// 大量工具：共享开销 + 低增量
-			baseToolsOverhead = 180  // 从250降至180
-			perToolOverhead = 60     // 从80降至60
+			baseToolsOverhead = 180 // 从250降至180
+			perToolOverhead = 60    // 从80降至60
 		}
 
 		totalTokens += baseToolsOverhead
@@ -119,16 +119,16 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 					// $schema字段URL开销（优化：降低开销）
 					if strings.Contains(string(jsonBytes), "$schema") {
 						if toolCount == 1 {
-							schemaTokens += 10  // 从15降至10
+							schemaTokens += 10 // 从15降至10
 						} else {
-							schemaTokens += 5   // 从8降至5
+							schemaTokens += 5 // 从8降至5
 						}
 					}
 
 					// 最小schema开销（优化：降低最小值）
-					minSchemaTokens := 50  // 从80降至50
+					minSchemaTokens := 50 // 从80降至50
 					if toolCount > 5 {
-						minSchemaTokens = 30  // 从40降至30
+						minSchemaTokens = 30 // 从40降至30
 					}
 					if schemaTokens < minSchemaTokens {
 						schemaTokens = minSchemaTokens
@@ -144,7 +144,7 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 
 	// 4. 基础请求开销（API格式固定开销）
 	// 优化：根据官方测试调整
-	totalTokens += 4  // 调整至4以匹配官方
+	totalTokens += 4 // 调整至4以匹配官方
 
 	return totalTokens
 }
@@ -224,22 +224,61 @@ func (e *TokenEstimator) EstimateTextTokens(text string) int {
 	chineseTokens := 0
 	if chineseChars > 0 {
 		if isPureChinese {
-			chineseTokens = 1 + chineseChars  // 纯中文: 基础1 + 字符数
+			chineseTokens = 1 + chineseChars // 纯中文: 基础1 + 字符数
 		} else {
-			chineseTokens = chineseChars  // 混合文本: 仅字符数
+			chineseTokens = chineseChars // 混合文本: 仅字符数
 		}
 	}
 
-	// 英文/数字: 约2.2字符 = 1 token（数字略密集）
+	// 英文/数字字符密度优化
+	// 短期优化: 进一步调整以降低纯英文误差
 	nonChineseTokens := 0
 	if nonChineseChars > 0 {
-		nonChineseTokens = int(float64(nonChineseChars) / 2.2)
+		// 根据文本长度动态调整字符密度
+		var charsPerToken float64
+		if nonChineseChars < 50 {
+			// 超短文本(1-50字符): 密度低(分词多)
+			charsPerToken = 2.8
+		} else if nonChineseChars < 100 {
+			// 短文本(50-100字符): 标准密度
+			charsPerToken = 2.6
+		} else {
+			// 中长文本(100+字符): 密度高(更多常见词)
+			charsPerToken = 2.5
+		}
+		
+		nonChineseTokens = int(float64(nonChineseChars) / charsPerToken)
 		if nonChineseTokens < 1 {
-			nonChineseTokens = 1  // 至少1 token
+			nonChineseTokens = 1 // 至少1 token
 		}
 	}
 
 	tokens := chineseTokens + nonChineseTokens
+
+	// 长文本压缩系数 (短期优化: 细化阈值)
+	// 原因: BPE编码的token密度随文本长度增长而提高
+	// 新增分段: 50/100/200/300/500/1000字符
+	if runeCount >= 1000 {
+		// 超长文本(1000+字符): 压缩40%
+		tokens = int(float64(tokens) * 0.60)
+	} else if runeCount >= 500 {
+		// 长文本(500-1000字符): 压缩30%
+		tokens = int(float64(tokens) * 0.70)
+	} else if runeCount >= 300 {
+		// 中长文本(300-500字符): 压缩20%
+		tokens = int(float64(tokens) * 0.80)
+	} else if runeCount >= 200 {
+		// 中等文本(200-300字符): 压缩15%
+		tokens = int(float64(tokens) * 0.85)
+	} else if runeCount >= 100 {
+		// 较长文本(100-200字符): 压缩10%
+		tokens = int(float64(tokens) * 0.90)
+	} else if runeCount >= 50 {
+		// 普通文本(50-100字符): 压缩5%
+		tokens = int(float64(tokens) * 0.95)
+	}
+	// <50字符: 不压缩
+
 	if tokens < 1 {
 		tokens = 1 // 最少1个token
 	}
