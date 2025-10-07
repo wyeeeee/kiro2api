@@ -82,7 +82,7 @@ func isDebugMode() bool {
 }
 
 // handleGenericStreamRequest 通用流式请求处理
-func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, string, string) []map[string]any) {
+func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, int, string) []map[string]any) {
 	// 计算输入tokens
 	estimator := utils.NewTokenEstimator()
 	countReq := &types.CountTokensRequest{
@@ -142,13 +142,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 }
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件
-func createAnthropicStreamEvents(messageId, inputContent, model string) []map[string]any {
-	// 基于输入内容估算输入tokens（英文平均4字符/token）
-	inputTokens := len(inputContent) / 4
-	if inputTokens < 1 && len(inputContent) > 0 {
-		inputTokens = 1
-	}
-
+func createAnthropicStreamEvents(messageId string, inputTokens int, model string) []map[string]any {
 	// 创建完整的初始事件序列，包括content_block_start
 	// 这确保符合Claude API规范的完整SSE事件序列
 	events := []map[string]any{
@@ -164,7 +158,7 @@ func createAnthropicStreamEvents(messageId, inputContent, model string) []map[st
 				"stop_sequence": nil,
 				"usage": map[string]any{
 					"input_tokens":  inputTokens,
-					"output_tokens": 1,
+					"output_tokens": 0, // 初始输出tokens为0，最终在message_delta中更新
 				},
 			},
 		},

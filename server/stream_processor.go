@@ -188,25 +188,11 @@ func initializeSSEResponse(c *gin.Context) error {
 }
 
 // sendInitialEvents 发送初始事件
-func (ctx *StreamProcessorContext) sendInitialEvents(eventCreator func(string, string, string) []map[string]any) error {
-	inputContent := ""
-	if len(ctx.req.Messages) > 0 {
-		inputContent, _ = utils.GetMessageContent(ctx.req.Messages[len(ctx.req.Messages)-1].Content)
-	}
-
-	initialEvents := eventCreator(ctx.messageID, inputContent, ctx.req.Model)
+func (ctx *StreamProcessorContext) sendInitialEvents(eventCreator func(string, int, string) []map[string]any) error {
+	// 直接使用上下文中的 inputTokens（已经通过 TokenEstimator 精确计算）
+	initialEvents := eventCreator(ctx.messageID, ctx.inputTokens, ctx.req.Model)
+	
 	for _, event := range initialEvents {
-		// 更新流式事件中的input_tokens
-		if message, exists := event["message"]; exists {
-			if msgMap, ok := message.(map[string]any); ok {
-				if usage, exists := msgMap["usage"]; exists {
-					if usageMap, ok := usage.(map[string]any); ok {
-						usageMap["input_tokens"] = ctx.inputTokens
-					}
-				}
-			}
-		}
-
 		// 使用状态管理器发送事件
 		if err := ctx.sseStateManager.SendEvent(ctx.c, ctx.sender, event); err != nil {
 			logger.Error("初始SSE事件发送失败", logger.Err(err))
