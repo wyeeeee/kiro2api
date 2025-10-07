@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/md5"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,6 +11,7 @@ import (
 
 // ConversationIDManager 会话ID管理器 (SOLID-SRP: 单一职责)
 type ConversationIDManager struct {
+	mu    sync.RWMutex      // 保护cache的并发访问
 	cache map[string]string // 简单的内存缓存，生产环境可以使用Redis
 }
 
@@ -39,17 +41,22 @@ func (c *ConversationIDManager) GenerateConversationID(ctx *gin.Context) string 
 	// 构建客户端特征字符串
 	clientSignature := fmt.Sprintf("%s|%s|%s", clientIP, userAgent, timeWindow)
 
-	// 检查缓存
+	// 检查缓存 (使用读锁)
+	c.mu.RLock()
 	if cachedID, exists := c.cache[clientSignature]; exists {
+		c.mu.RUnlock()
 		return cachedID
 	}
+	c.mu.RUnlock()
 
 	// 生成基于特征的MD5哈希
 	hash := md5.Sum([]byte(clientSignature))
 	conversationID := fmt.Sprintf("conv-%x", hash[:8]) // 使用前8字节，保持简洁
 
-	// 缓存结果 (YAGNI: 简单内存缓存，未来可扩展为持久化)
+	// 缓存结果 (使用写锁，YAGNI: 简单内存缓存，未来可扩展为持久化)
+	c.mu.Lock()
 	c.cache[clientSignature] = conversationID
+	c.mu.Unlock()
 
 	return conversationID
 }
@@ -64,7 +71,9 @@ func (c *ConversationIDManager) GetOrCreateConversationID(ctx *gin.Context) stri
 func (c *ConversationIDManager) InvalidateOldSessions() {
 	// 简单实现：清空所有缓存，依赖时间窗口重新生成
 	// 生产环境可以实现基于TTL的精确清理
+	c.mu.Lock()
 	c.cache = make(map[string]string)
+	c.mu.Unlock()
 }
 
 // 全局实例 - 单例模式 (SOLID-DIP: 提供抽象访问)
