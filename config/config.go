@@ -40,6 +40,11 @@ func IsStreamDisabled() bool {
 	return os.Getenv("DISABLE_STREAM") == "true"
 }
 
+// IsSaveRawDataEnabled 检查是否启用原始数据保存（用于调试）
+func IsSaveRawDataEnabled() bool {
+	return os.Getenv("SAVE_RAW_DATA") == "true"
+}
+
 // RefreshTokenURL 刷新token的URL (social方式)
 const RefreshTokenURL = "https://prod.us-east-1.auth.desktop.kiro.dev/refreshToken"
 

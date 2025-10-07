@@ -100,6 +100,9 @@ LOG_FORMAT=json                           # text,json
 # SERVER_READ_TIMEOUT_MINUTES=16          # 服务器读取超时
 # SERVER_WRITE_TIMEOUT_MINUTES=16         # 服务器写入超时
 # DISABLE_STREAM=false                    # 是否禁用流式响应
+
+# === 调试配置 ===
+# SAVE_RAW_DATA=false                     # 是否保存原始EventStream数据用于调试(默认: false)
 ```
 
 ## 核心架构

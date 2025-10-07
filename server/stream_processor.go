@@ -384,7 +384,7 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 
 // saveRawDataForReplay 保存原始数据用于调试
 func (ctx *StreamProcessorContext) saveRawDataForReplay() {
-	if !utils.IsDebugMode() {
+	if !config.IsSaveRawDataEnabled() {
 		return
 	}
 
