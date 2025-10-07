@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"kiro2api/config"
 	"kiro2api/types"
 )
 
@@ -38,20 +39,20 @@ func init() {
 	createBaseTransport := func() *http.Transport {
 		return &http.Transport{
 			// 连接池配置优化
-			MaxIdleConns:        200,               // 总连接池大小增加到200
-			MaxIdleConnsPerHost: 50,                // 每个主机最大空闲连接数提升到50
-			MaxConnsPerHost:     100,               // 每个主机最大连接数增加到100
-			IdleConnTimeout:     120 * time.Second, // 空闲连接超时延长到2分钟
+			MaxIdleConns:        config.HTTPClientMaxIdleConns,
+			MaxIdleConnsPerHost: config.HTTPClientMaxIdleConnsPerHost,
+			MaxConnsPerHost:     config.HTTPClientMaxConnsPerHost,
+			IdleConnTimeout:     config.HTTPClientIdleConnTimeout,
 
 			// 连接建立优化
 			DialContext: (&net.Dialer{
-				Timeout:   15 * time.Second, // 连接超时增加到15秒
-				KeepAlive: 60 * time.Second, // Keep-Alive间隔延长到60秒
-				DualStack: true,             // 启用IPv4/IPv6双栈
+				Timeout:   config.HTTPClientConnectTimeout,
+				KeepAlive: config.HTTPClientKeepAlive,
+				DualStack: true, // 启用IPv4/IPv6双栈
 			}).DialContext,
 
 			// TLS配置优化
-			TLSHandshakeTimeout: 15 * time.Second, // TLS握手超时
+			TLSHandshakeTimeout: config.HTTPClientTLSHandshakeTimeout,
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: shouldSkipTLSVerify(), // 基于环境动态控制
 				MinVersion:         tls.VersionTLS12,      // 最低TLS 1.2
@@ -64,12 +65,12 @@ func init() {
 			},
 
 			// HTTP/2和压缩优化
-			ForceAttemptHTTP2:     true,             // 强制尝试HTTP/2
-			DisableCompression:    false,            // 启用压缩
-			WriteBufferSize:       32 * 1024,        // 写缓冲区32KB
-			ReadBufferSize:        32 * 1024,        // 读缓冲区32KB
-			ResponseHeaderTimeout: 60 * time.Second, // 响应头超时1分钟
-			ExpectContinueTimeout: 2 * time.Second,  // Expect 100-continue超时
+			ForceAttemptHTTP2:     true,  // 强制尝试HTTP/2
+			DisableCompression:    false, // 启用压缩
+			WriteBufferSize:       32 * 1024,
+			ReadBufferSize:        32 * 1024,
+			ResponseHeaderTimeout: config.HTTPClientResponseHeaderTimeout,
+			ExpectContinueTimeout: config.HTTPClientExpectContinueTimeout,
 		}
 	}
 
@@ -89,10 +90,10 @@ func init() {
 
 	// 流式请求客户端（专门优化）
 	streamTransport := createBaseTransport()
-	streamTransport.MaxIdleConnsPerHost = 100                // 流式连接池更大
-	streamTransport.ResponseHeaderTimeout = 10 * time.Minute // 流式响应头超时更长
-	streamTransport.WriteBufferSize = 64 * 1024              // 流式写缓冲区更大
-	streamTransport.ReadBufferSize = 64 * 1024               // 流式读缓冲区更大
+	streamTransport.MaxIdleConnsPerHost = config.HTTPClientMaxConnsPerHost
+	streamTransport.ResponseHeaderTimeout = config.HTTPClientStreamResponseHeaderTimeout
+	streamTransport.WriteBufferSize = 64 * 1024
+	streamTransport.ReadBufferSize = 64 * 1024
 	StreamingClient = &http.Client{
 		Timeout:   streamTimeout,
 		Transport: streamTransport,

@@ -72,6 +72,38 @@ const (
 	// ServerIdleTimeout 服务器空闲连接超时
 	ServerIdleTimeout = 120 * time.Second
 
+	// ========== HTTP客户端配置 ==========
+
+	// HTTPClientIdleConnTimeout HTTP客户端空闲连接超时
+	HTTPClientIdleConnTimeout = 120 * time.Second
+
+	// HTTPClientConnectTimeout HTTP客户端连接超时
+	HTTPClientConnectTimeout = 15 * time.Second
+
+	// HTTPClientKeepAlive HTTP客户端Keep-Alive间隔
+	HTTPClientKeepAlive = 60 * time.Second
+
+	// HTTPClientTLSHandshakeTimeout HTTP客户端TLS握手超时
+	HTTPClientTLSHandshakeTimeout = 15 * time.Second
+
+	// HTTPClientResponseHeaderTimeout HTTP客户端响应头超时
+	HTTPClientResponseHeaderTimeout = 60 * time.Second
+
+	// HTTPClientExpectContinueTimeout HTTP客户端Expect 100-continue超时
+	HTTPClientExpectContinueTimeout = 2 * time.Second
+
+	// HTTPClientStreamResponseHeaderTimeout 流式请求响应头超时
+	HTTPClientStreamResponseHeaderTimeout = 10 * time.Minute
+
+	// HTTPClientMaxIdleConns HTTP客户端最大空闲连接数
+	HTTPClientMaxIdleConns = 200
+
+	// HTTPClientMaxIdleConnsPerHost 每个主机最大空闲连接数
+	HTTPClientMaxIdleConnsPerHost = 100
+
+	// HTTPClientMaxConnsPerHost 每个主机最大连接数
+	HTTPClientMaxConnsPerHost = 100
+
 	// ========== HTTP服务器配置 ==========
 
 	// MaxHeaderBytes HTTP请求头最大字节数
@@ -87,6 +119,60 @@ const (
 
 	// ToolUseIDMaxLength tool_use_id的最大有效长度
 	ToolUseIDMaxLength = 50
+
+	// ========== 对象池配置 ==========
+
+	// ParserPoolSize 解析器对象池大小
+	ParserPoolSize = 10
+
+	// BufferPoolSize 缓冲区对象池大小
+	BufferPoolSize = 20
+
+	// BufferInitialSize Buffer对象池初始缓冲区大小
+	BufferInitialSize = 4096
+
+	// StringBuilderInitialSize StringBuilder初始大小
+	StringBuilderInitialSize = 1024
+
+	// ByteSliceInitialSize 字节数组初始大小
+	ByteSliceInitialSize = 8192
+
+	// BufferMaxRetainSize Buffer对象最大保留大小（超过则丢弃）
+	BufferMaxRetainSize = 64 * 1024
+
+	// StringBuilderMaxRetainSize StringBuilder最大保留大小
+	StringBuilderMaxRetainSize = 32 * 1024
+
+	// ByteSliceMaxRetainSize 字节数组最大保留大小
+	ByteSliceMaxRetainSize = 128 * 1024
+
+	// MapInitialCapacity Map对象池初始容量
+	MapInitialCapacity = 16
+
+	// MapMaxSize Map对象最大大小（超过则丢弃）
+	MapMaxSize = 100
+
+	// StringSliceInitialCapacity 字符串数组初始容量
+	StringSliceInitialCapacity = 8
+
+	// StringSliceMaxSize 字符串数组最大大小（超过则丢弃）
+	StringSliceMaxSize = 1000
+
+	// ========== 解析器超时和重试 ==========
+
+	// ParserValidationTimeout 解析器验证超时
+	ParserValidationTimeout = 30 * time.Second
+
+	// ParserHandlerTimeout 处理器超时时间
+	ParserHandlerTimeout = 10 * time.Second
+
+	// ========== SSE和流式响应配置 ==========
+
+	// SSERetryDelay SSE重试延迟
+	SSERetryDelay = 100 * time.Millisecond
+
+	// StreamDuplicateWindow 重复事件检测时间窗口
+	StreamDuplicateWindow = 100 * time.Millisecond
 )
 
 // GetParseSlowThreshold 获取解析慢操作阈值（支持运行时配置）

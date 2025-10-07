@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"sync"
+
+	"kiro2api/config"
 )
 
 // ObjectPool 通用对象池管理器
@@ -28,33 +30,29 @@ func NewObjectPool() *ObjectPool {
 	return &ObjectPool{
 		bufferPool: &sync.Pool{
 			New: func() any {
-				// 预分配4KB缓冲区，适合大多数JSON数据
-				return bytes.NewBuffer(make([]byte, 0, 4096))
+				return bytes.NewBuffer(make([]byte, 0, config.BufferInitialSize))
 			},
 		},
 		stringBuilderPool: &sync.Pool{
 			New: func() any {
 				var sb strings.Builder
-				sb.Grow(1024) // 预分配1KB，适合日志和错误消息
+				sb.Grow(config.StringBuilderInitialSize)
 				return &sb
 			},
 		},
 		byteSlicePool: &sync.Pool{
 			New: func() any {
-				// 8KB字节数组，适合网络读取和EventStream解析
-				return make([]byte, 8192)
+				return make([]byte, config.ByteSliceInitialSize)
 			},
 		},
 		mapPool: &sync.Pool{
 			New: func() any {
-				// 预分配容量为16的map，减少rehash
-				return make(map[string]any, 16)
+				return make(map[string]any, config.MapInitialCapacity)
 			},
 		},
 		stringSlicePool: &sync.Pool{
 			New: func() any {
-				// 预分配容量为8的字符串数组
-				return make([]string, 0, 8)
+				return make([]string, 0, config.StringSliceInitialCapacity)
 			},
 		},
 	}
@@ -73,7 +71,7 @@ func (op *ObjectPool) PutBuffer(buf *bytes.Buffer) {
 		return
 	}
 	// 如果缓冲区太大，直接丢弃，避免内存泄漏
-	if buf.Cap() > 64*1024 { // 64KB阈值
+	if buf.Cap() > config.BufferMaxRetainSize {
 		return
 	}
 	buf.Reset()
@@ -93,7 +91,7 @@ func (op *ObjectPool) PutStringBuilder(sb *strings.Builder) {
 		return
 	}
 	// 如果StringBuilder太大，直接丢弃
-	if sb.Cap() > 32*1024 { // 32KB阈值
+	if sb.Cap() > config.StringBuilderMaxRetainSize {
 		return
 	}
 	sb.Reset()
@@ -107,7 +105,7 @@ func (op *ObjectPool) GetByteSlice() []byte {
 
 // PutByteSlice 将字节数组归还到池中
 func (op *ObjectPool) PutByteSlice(slice []byte) {
-	if slice == nil || cap(slice) > 128*1024 { // 128KB阈值
+	if slice == nil || cap(slice) > config.ByteSliceMaxRetainSize {
 		return
 	}
 	// 重置长度但保持容量
@@ -127,7 +125,7 @@ func (op *ObjectPool) GetMap() map[string]any {
 
 // PutMap 将Map归还到池中
 func (op *ObjectPool) PutMap(m map[string]any) {
-	if m == nil || len(m) > 100 { // 太大的map直接丢弃
+	if m == nil || len(m) > config.MapMaxSize {
 		return
 	}
 	// 清空map
@@ -145,7 +143,7 @@ func (op *ObjectPool) GetStringSlice() []string {
 
 // PutStringSlice 将字符串数组归还到池中
 func (op *ObjectPool) PutStringSlice(slice []string) {
-	if slice == nil || cap(slice) > 1000 { // 太大的slice直接丢弃
+	if slice == nil || cap(slice) > config.StringSliceMaxSize {
 		return
 	}
 	slice = slice[:0]
