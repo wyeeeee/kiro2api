@@ -308,3 +308,42 @@ func (s *OpenAIStreamSender) SendError(c *gin.Context, message string, _ error) 
 	c.Writer.Flush()
 	return nil
 }
+
+// RequestContext 请求处理上下文，封装通用的请求处理逻辑
+type RequestContext struct {
+	GinContext   *gin.Context
+	AuthService  interface{ GetToken() (types.TokenInfo, error) }
+	RequestType  string // "anthropic" 或 "openai"
+}
+
+// GetTokenAndBody 通用的token获取和请求体读取
+// 返回: tokenInfo, requestBody, error
+func (rc *RequestContext) GetTokenAndBody() (types.TokenInfo, []byte, error) {
+	// 获取token
+	tokenInfo, err := rc.AuthService.GetToken()
+	if err != nil {
+		logger.Error("获取token失败", logger.Err(err))
+		respondError(rc.GinContext, http.StatusInternalServerError, "获取token失败: %v", err)
+		return types.TokenInfo{}, nil, err
+	}
+
+	// 读取请求体
+	body, err := rc.GinContext.GetRawData()
+	if err != nil {
+		logger.Error("读取请求体失败", logger.Err(err))
+		respondError(rc.GinContext, http.StatusBadRequest, "读取请求体失败: %v", err)
+		return types.TokenInfo{}, nil, err
+	}
+
+	// 记录请求日志
+	logger.Debug(fmt.Sprintf("收到%s请求", rc.RequestType),
+		addReqFields(rc.GinContext,
+			logger.String("direction", "client_request"),
+			logger.String("body", string(body)),
+			logger.Int("body_size", len(body)),
+			logger.String("remote_addr", rc.GinContext.ClientIP()),
+			logger.String("user_agent", rc.GinContext.GetHeader("User-Agent")),
+		)...)
+
+	return tokenInfo, body, nil
+}

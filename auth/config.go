@@ -32,7 +32,7 @@ func loadConfigs() ([]AuthConfig, error) {
 		"IDC_REFRESH_TOKEN",
 		"BULK_REFRESH_TOKENS",
 	}
-	
+
 	for _, envVar := range deprecatedVars {
 		if os.Getenv(envVar) != "" {
 			logger.Warn("检测到已弃用的环境变量",
@@ -43,17 +43,34 @@ func loadConfigs() ([]AuthConfig, error) {
 		}
 	}
 
-	// 只支持KIRO_AUTH_TOKEN的JSON格式
+	// 只支持KIRO_AUTH_TOKEN的JSON格式（支持文件路径或JSON字符串）
 	jsonData := os.Getenv("KIRO_AUTH_TOKEN")
 	if jsonData == "" {
 		return nil, fmt.Errorf("未找到KIRO_AUTH_TOKEN环境变量\n" +
 			"请设置: KIRO_AUTH_TOKEN='[{\"auth\":\"Social\",\"refreshToken\":\"your_token\"}]'\n" +
+			"或设置为配置文件路径: KIRO_AUTH_TOKEN=/path/to/config.json\n" +
 			"支持的认证方式: Social, IdC\n" +
 			"详细配置请参考: .env.example")
 	}
 
+	// 优先尝试从文件加载，失败后再作为JSON字符串处理
+	var configData string
+	if fileInfo, err := os.Stat(jsonData); err == nil && !fileInfo.IsDir() {
+		// 是文件，读取文件内容
+		content, err := os.ReadFile(jsonData)
+		if err != nil {
+			return nil, fmt.Errorf("读取配置文件失败: %w\n配置文件路径: %s", err, jsonData)
+		}
+		configData = string(content)
+		logger.Info("从文件加载认证配置", logger.String("文件路径", jsonData))
+	} else {
+		// 不是文件或文件不存在，作为JSON字符串处理
+		configData = jsonData
+		logger.Debug("从环境变量加载JSON配置")
+	}
+
 	// 解析JSON配置
-	configs, err := parseJSONConfig(jsonData)
+	configs, err := parseJSONConfig(configData)
 	if err != nil {
 		return nil, fmt.Errorf("解析KIRO_AUTH_TOKEN失败: %w\n"+
 			"请检查JSON格式是否正确\n"+

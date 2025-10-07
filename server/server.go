@@ -75,29 +75,17 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	})
 
 	r.POST("/v1/messages", func(c *gin.Context) {
-
-		tokenInfo, err := authService.GetToken()
-		if err != nil {
-			logger.Error("获取token失败", logger.Err(err))
-			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
-			return
+		// 使用RequestContext统一处理token获取和请求体读取
+		reqCtx := &RequestContext{
+			GinContext:  c,
+			AuthService: authService,
+			RequestType: "Anthropic",
 		}
 
-		body, err := c.GetRawData()
+		tokenInfo, body, err := reqCtx.GetTokenAndBody()
 		if err != nil {
-			logger.Error("读取请求体失败", logger.Err(err))
-			respondError(c, http.StatusBadRequest, "读取请求体失败: %v", err)
-			return
+			return // 错误已在GetTokenAndBody中处理
 		}
-
-		logger.Debug("收到Anthropic请求",
-			addReqFields(c,
-				logger.String("direction", "client_request"),
-				logger.String("body", string(body)),
-				logger.Int("body_size", len(body)),
-				logger.String("remote_addr", c.ClientIP()),
-				logger.String("user_agent", c.GetHeader("User-Agent")),
-			)...)
 
 		// 先解析为通用map以便处理工具格式
 		var rawReq map[string]any
@@ -217,26 +205,17 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
 	r.POST("/v1/chat/completions", func(c *gin.Context) {
-		tokenInfo, err := authService.GetToken()
-		if err != nil {
-			logger.Error("获取token失败", logger.Err(err))
-			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
-			return
+		// 使用RequestContext统一处理token获取和请求体读取
+		reqCtx := &RequestContext{
+			GinContext:  c,
+			AuthService: authService,
+			RequestType: "OpenAI",
 		}
 
-		body, err := c.GetRawData()
+		tokenInfo, body, err := reqCtx.GetTokenAndBody()
 		if err != nil {
-			logger.Error("读取请求体失败", logger.Err(err))
-			respondError(c, http.StatusBadRequest, "读取请求体失败: %v", err)
-			return
+			return // 错误已在GetTokenAndBody中处理
 		}
-
-		logger.Debug("收到OpenAI请求",
-			addReqFields(c,
-				logger.String("direction", "client_request"),
-				logger.String("body", string(body)),
-				logger.Int("body_size", len(body)),
-			)...)
 
 		var openaiReq types.OpenAIRequest
 		if err := utils.SafeUnmarshal(body, &openaiReq); err != nil {
