@@ -92,15 +92,19 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 	return bestToken.Token, nil
 }
 
-// selectBestToken 按配置顺序选择下一个可用token
+// selectBestToken 按配置顺序选择下一个可用token（并发安全）
 func (tm *TokenManager) selectBestToken() *CachedToken {
+	// 持有cache读锁保护tokens map的并发访问
 	tm.cache.mutex.RLock()
-	tokens := tm.cache.tokens // 获取token映射的引用
-	tm.cache.mutex.RUnlock()
+	defer tm.cache.mutex.RUnlock()
+
+	// 持有manager写锁保护exhausted和currentIndex的并发修改
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
 
 	// 如果没有配置顺序，降级到按map遍历顺序
 	if len(tm.configOrder) == 0 {
-		for key, cached := range tokens {
+		for key, cached := range tm.cache.tokens {
 			if time.Since(cached.CachedAt) <= tm.cache.ttl && cached.IsUsable() {
 				logger.Debug("顺序策略选择token（无顺序配置）",
 					logger.String("selected_key", key),
@@ -116,7 +120,7 @@ func (tm *TokenManager) selectBestToken() *CachedToken {
 		currentKey := tm.configOrder[tm.currentIndex]
 
 		// 检查这个token是否存在且可用
-		if cached, exists := tokens[currentKey]; exists {
+		if cached, exists := tm.cache.tokens[currentKey]; exists {
 			// 检查token是否过期
 			if time.Since(cached.CachedAt) > tm.cache.ttl {
 				tm.exhausted[currentKey] = true

@@ -25,10 +25,11 @@ func main() {
 		logger.String("config_level", os.Getenv("LOG_LEVEL")),
 		logger.String("config_file", os.Getenv("LOG_FILE")))
 
-	// 🚀 启动时主动初始化token系统
-	logger.Info("正在初始化token系统...")
-	if err := auth.Initialize(); err != nil {
-		logger.Error("Token系统初始化失败", logger.Err(err))
+	// 🚀 创建AuthService实例（使用依赖注入）
+	logger.Info("正在创建AuthService...")
+	authService, err := auth.NewAuthService()
+	if err != nil {
+		logger.Error("AuthService创建失败", logger.Err(err))
 		logger.Error("请检查token配置后重新启动服务器")
 		os.Exit(1)
 	}
@@ -48,5 +49,5 @@ func main() {
 		clientToken = "123456"
 	}
 
-	server.StartServer(port, clientToken)
+	server.StartServer(port, clientToken, authService)
 }

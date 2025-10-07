@@ -21,7 +21,7 @@ import (
 // 移除全局httpClient，使用utils包中的共享客户端
 
 // StartServer 启动HTTP代理服务器
-func StartServer(port string, authToken string) {
+func StartServer(port string, authToken string, authService *auth.AuthService) {
 	// 设置 gin 模式
 	ginMode := os.Getenv("GIN_MODE")
 	if ginMode == "" {
@@ -76,7 +76,7 @@ func StartServer(port string, authToken string) {
 
 	r.POST("/v1/messages", func(c *gin.Context) {
 
-		tokenInfo, err := auth.GetToken()
+		tokenInfo, err := authService.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
 			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
@@ -217,7 +217,7 @@ func StartServer(port string, authToken string) {
 
 	// 新增：OpenAI兼容的 /v1/chat/completions 端点
 	r.POST("/v1/chat/completions", func(c *gin.Context) {
-		tokenInfo, err := auth.GetToken()
+		tokenInfo, err := authService.GetToken()
 		if err != nil {
 			logger.Error("获取token失败", logger.Err(err))
 			respondError(c, http.StatusInternalServerError, "获取token失败: %v", err)
