@@ -3,6 +3,7 @@ package utils
 import (
 	"strings"
 
+	"kiro2api/config"
 	"kiro2api/types"
 )
 
@@ -81,8 +82,8 @@ func (e *TokenEstimator) EstimateTokens(req *types.CountTokensRequest) int {
 			perToolOverhead = 320 // 最优平衡值
 		} else if toolCount <= 5 {
 			// 少量工具：中等开销
-			baseToolsOverhead = 100 // 从150降至100
-			perToolOverhead = 120   // 从150降至120
+			baseToolsOverhead = config.BaseToolsOverhead // 从150降至100
+			perToolOverhead = 120                        // 从150降至120
 		} else {
 			// 大量工具：共享开销 + 低增量
 			baseToolsOverhead = 180 // 从250降至180
@@ -258,7 +259,7 @@ func (e *TokenEstimator) EstimateTextTokens(text string) int {
 	// 长文本压缩系数 (短期优化: 细化阈值)
 	// 原因: BPE编码的token密度随文本长度增长而提高
 	// 新增分段: 50/100/200/300/500/1000字符
-	if runeCount >= 1000 {
+	if runeCount >= config.LongTextThreshold {
 		// 超长文本(1000+字符): 压缩40%
 		tokens = int(float64(tokens) * 0.60)
 	} else if runeCount >= 500 {
@@ -270,7 +271,7 @@ func (e *TokenEstimator) EstimateTextTokens(text string) int {
 	} else if runeCount >= 200 {
 		// 中等文本(200-300字符): 压缩15%
 		tokens = int(float64(tokens) * 0.85)
-	} else if runeCount >= 100 {
+	} else if runeCount >= config.ShortTextThreshold {
 		// 较长文本(100-200字符): 压缩10%
 		tokens = int(float64(tokens) * 0.90)
 	} else if runeCount >= 50 {

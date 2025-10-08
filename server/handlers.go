@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"kiro2api/auth"
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/parser"
 	"kiro2api/types"
@@ -80,7 +81,7 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 	}
 
 	// 生成消息ID并注入上下文
-	messageID := fmt.Sprintf("msg_%s", time.Now().Format("20060102150405"))
+	messageID := fmt.Sprintf(config.MessageIDFormat, time.Now().Format(config.MessageIDTimeFormat))
 	c.Set("message_id", messageID)
 
 	// 执行CodeWhisperer请求
@@ -297,7 +298,7 @@ func handleNonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest,
 
 	logger.Debug("非流式响应处理完成",
 		addReqFields(c,
-			logger.String("text_content", textAgg[:utils.IntMin(100, len(textAgg))]),
+			logger.String("text_content", textAgg[:utils.IntMin(config.LogPreviewMaxLength, len(textAgg))]),
 			logger.Int("tool_calls_count", len(allTools)),
 			logger.Bool("saw_tool_use", sawToolUse),
 		)...)
@@ -482,7 +483,7 @@ func handleTokenPoolAPI(c *gin.Context) {
 
 		// 检查使用限制
 		var usageInfo *types.UsageLimits
-		var available = 100.0 // 默认值 (浮点数)
+		var available = config.DefaultTokenAvailableCount // 默认值 (浮点数)
 		var userEmail = "未知用户"
 
 		checker := auth.NewUsageLimitsChecker()

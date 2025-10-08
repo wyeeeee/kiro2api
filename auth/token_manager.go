@@ -187,7 +187,7 @@ func (tm *TokenManager) refreshCache() error {
 			available = CalculateAvailableCount(usage)
 		} else {
 			logger.Warn("检查使用限制失败", logger.Err(checkErr))
-			available = 100.0 // 默认值
+			available = 100.0 // 默认值 - 保留硬编码避免与变量名冲突
 		}
 
 		// 更新缓存
