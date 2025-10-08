@@ -549,6 +549,12 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 				logger.Debug("转发消息增量", logger.String("stop_reason", sr))
 			}
 		}
+
+	case "exception":
+		// 处理上游异常事件，检查是否需要映射为max_tokens
+		if esp.handleExceptionEvent(dataMap) {
+			return nil // 已转换并发送，不转发原始exception事件
+		}
 	}
 
 	// 使用状态管理器发送事件
@@ -593,6 +599,73 @@ func (esp *EventStreamProcessor) processContentBlockDelta(dataMap map[string]any
 		processToolInputDelta(dataMap)
 	}
 
+	return false
+}
+
+// handleExceptionEvent 处理上游异常事件，检查是否需要映射为max_tokens
+// 返回true表示已处理并转换，不需要转发原始exception事件
+func (esp *EventStreamProcessor) handleExceptionEvent(dataMap map[string]any) bool {
+	// 提取异常类型
+	exceptionType, _ := dataMap["exception_type"].(string)
+
+	// 检查是否为内容长度超限异常
+	if exceptionType == "ContentLengthExceededException" ||
+		strings.Contains(exceptionType, "CONTENT_LENGTH_EXCEEDS") {
+
+		logger.Info("检测到内容长度超限异常，映射为max_tokens stop_reason",
+			addReqFields(esp.ctx.c,
+				logger.String("exception_type", exceptionType),
+				logger.String("claude_stop_reason", "max_tokens"))...)
+
+		// 先冲刷待处理文本
+		_ = esp.flushPendingText()
+
+		// 关闭所有活跃的content_block
+		activeBlocks := esp.ctx.sseStateManager.GetActiveBlocks()
+		for index, block := range activeBlocks {
+			if block.Started && !block.Stopped {
+				stopEvent := map[string]any{
+					"type":  "content_block_stop",
+					"index": index,
+				}
+				_ = esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, stopEvent)
+			}
+		}
+
+		// 构造符合Claude规范的max_tokens响应
+		maxTokensEvent := map[string]any{
+			"type": "message_delta",
+			"delta": map[string]any{
+				"stop_reason":   "max_tokens",
+				"stop_sequence": nil,
+			},
+			"usage": map[string]any{
+				"input_tokens":  esp.ctx.inputTokens,
+				"output_tokens": esp.ctx.totalOutputChars / 4, // 简单估算
+			},
+		}
+
+		// 发送max_tokens事件
+		if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, maxTokensEvent); err != nil {
+			logger.Error("发送max_tokens响应失败", logger.Err(err))
+			return false
+		}
+
+		// 发送message_stop事件
+		stopEvent := map[string]any{
+			"type": "message_stop",
+		}
+		if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, stopEvent); err != nil {
+			logger.Error("发送message_stop失败", logger.Err(err))
+			return false
+		}
+
+		esp.ctx.c.Writer.Flush()
+
+		return true // 已转换并发送，不转发原始exception
+	}
+
+	// 其他类型的异常，正常转发
 	return false
 }
 
