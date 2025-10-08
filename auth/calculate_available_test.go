@@ -11,13 +11,13 @@ func TestCalculateAvailableCount_WithFreeTrialActive(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  200.0,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 200.0,
 				FreeTrialInfo: &types.FreeTrialInfo{
-					FreeTrialStatus:            "ACTIVE",
-					UsageLimitWithPrecision:    500.0,
-					CurrentUsageWithPrecision:  100.0,
+					FreeTrialStatus:           "ACTIVE",
+					UsageLimitWithPrecision:   500.0,
+					CurrentUsageWithPrecision: 100.0,
 				},
 			},
 		},
@@ -35,13 +35,13 @@ func TestCalculateAvailableCount_WithFreeTrialInactive(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  200.0,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 200.0,
 				FreeTrialInfo: &types.FreeTrialInfo{
-					FreeTrialStatus:            "EXPIRED",
-					UsageLimitWithPrecision:    500.0,
-					CurrentUsageWithPrecision:  500.0,
+					FreeTrialStatus:           "EXPIRED",
+					UsageLimitWithPrecision:   500.0,
+					CurrentUsageWithPrecision: 500.0,
 				},
 			},
 		},
@@ -58,10 +58,10 @@ func TestCalculateAvailableCount_NoFreeTrialInfo(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  300.0,
-				FreeTrialInfo:              nil,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 300.0,
+				FreeTrialInfo:             nil,
 			},
 		},
 	}
@@ -76,10 +76,10 @@ func TestCalculateAvailableCount_NegativeAvailable(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  1200.0, // 超额使用
-				FreeTrialInfo:              nil,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 1200.0, // 超额使用
+				FreeTrialInfo:             nil,
 			},
 		},
 	}
@@ -94,9 +94,9 @@ func TestCalculateAvailableCount_NoCredit(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "OTHER",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  200.0,
+				ResourceType:              "OTHER",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 200.0,
 			},
 		},
 	}
@@ -122,24 +122,24 @@ func TestCalculateAvailableCount_MultipleBreakdowns(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "OTHER",
-				UsageLimitWithPrecision:    500.0,
-				CurrentUsageWithPrecision:  100.0,
+				ResourceType:              "OTHER",
+				UsageLimitWithPrecision:   500.0,
+				CurrentUsageWithPrecision: 100.0,
 			},
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  250.0,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 250.0,
 				FreeTrialInfo: &types.FreeTrialInfo{
-					FreeTrialStatus:            "ACTIVE",
-					UsageLimitWithPrecision:    300.0,
-					CurrentUsageWithPrecision:  50.0,
+					FreeTrialStatus:           "ACTIVE",
+					UsageLimitWithPrecision:   300.0,
+					CurrentUsageWithPrecision: 50.0,
 				},
 			},
 			{
-				ResourceType:               "ANOTHER",
-				UsageLimitWithPrecision:    2000.0,
-				CurrentUsageWithPrecision:  500.0,
+				ResourceType:              "ANOTHER",
+				UsageLimitWithPrecision:   2000.0,
+				CurrentUsageWithPrecision: 500.0,
 			},
 		},
 	}
@@ -157,13 +157,13 @@ func TestCalculateAvailableCount_ZeroUsage(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  0.0,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 0.0,
 				FreeTrialInfo: &types.FreeTrialInfo{
-					FreeTrialStatus:            "ACTIVE",
-					UsageLimitWithPrecision:    500.0,
-					CurrentUsageWithPrecision:  0.0,
+					FreeTrialStatus:           "ACTIVE",
+					UsageLimitWithPrecision:   500.0,
+					CurrentUsageWithPrecision: 0.0,
 				},
 			},
 		},
@@ -181,13 +181,13 @@ func TestCalculateAvailableCount_FreeTrialExhausted(t *testing.T) {
 	usage := &types.UsageLimits{
 		UsageBreakdownList: []types.UsageBreakdown{
 			{
-				ResourceType:               "CREDIT",
-				UsageLimitWithPrecision:    1000.0,
-				CurrentUsageWithPrecision:  100.0,
+				ResourceType:              "CREDIT",
+				UsageLimitWithPrecision:   1000.0,
+				CurrentUsageWithPrecision: 100.0,
 				FreeTrialInfo: &types.FreeTrialInfo{
-					FreeTrialStatus:            "ACTIVE",
-					UsageLimitWithPrecision:    500.0,
-					CurrentUsageWithPrecision:  500.0, // 已用完
+					FreeTrialStatus:           "ACTIVE",
+					UsageLimitWithPrecision:   500.0,
+					CurrentUsageWithPrecision: 500.0, // 已用完
 				},
 			},
 		},

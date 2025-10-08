@@ -281,10 +281,10 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 	server := &http.Server{
 		Addr:           ":" + port,
 		Handler:        r,
-		ReadTimeout:    readTimeout,                 // 读取超时
-		WriteTimeout:   writeTimeout,                // 写入超时
-		IdleTimeout:    config.ServerIdleTimeout,    // 空闲连接超时
-		MaxHeaderBytes: config.MaxHeaderBytes,       // 最大请求头字节数
+		ReadTimeout:    readTimeout,              // 读取超时
+		WriteTimeout:   writeTimeout,             // 写入超时
+		IdleTimeout:    config.ServerIdleTimeout, // 空闲连接超时
+		MaxHeaderBytes: config.MaxHeaderBytes,    // 最大请求头字节数
 	}
 
 	logger.Info("启动HTTP服务器",

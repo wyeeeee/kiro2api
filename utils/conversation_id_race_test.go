@@ -59,7 +59,7 @@ func TestConversationIDManagerConcurrency(t *testing.T) {
 		t.Errorf("期望收到 %d 个结果，实际收到 %d", expectedTotal, totalResults)
 	}
 
-	t.Logf("并发测试完成: %d 个goroutine × %d 个请求 = %d 个总调用", 
+	t.Logf("并发测试完成: %d 个goroutine × %d 个请求 = %d 个总调用",
 		numGoroutines, numRequests, totalResults)
 	t.Logf("生成了 %d 个唯一的会话ID", len(uniqueIDs))
 }

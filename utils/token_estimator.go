@@ -247,7 +247,7 @@ func (e *TokenEstimator) EstimateTextTokens(text string) int {
 			// 中长文本(100+字符): 密度高(更多常见词)
 			charsPerToken = 2.5
 		}
-		
+
 		nonChineseTokens = int(float64(nonChineseChars) / charsPerToken)
 		if nonChineseTokens < 1 {
 			nonChineseTokens = 1 // 至少1 token

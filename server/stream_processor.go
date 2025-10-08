@@ -191,7 +191,7 @@ func initializeSSEResponse(c *gin.Context) error {
 func (ctx *StreamProcessorContext) sendInitialEvents(eventCreator func(string, int, string) []map[string]any) error {
 	// 直接使用上下文中的 inputTokens（已经通过 TokenEstimator 精确计算）
 	initialEvents := eventCreator(ctx.messageID, ctx.inputTokens, ctx.req.Model)
-	
+
 	for _, event := range initialEvents {
 		// 使用状态管理器发送事件
 		if err := ctx.sseStateManager.SendEvent(ctx.c, ctx.sender, event); err != nil {

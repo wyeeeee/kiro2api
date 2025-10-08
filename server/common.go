@@ -311,9 +311,11 @@ func (s *OpenAIStreamSender) SendError(c *gin.Context, message string, _ error) 
 
 // RequestContext 请求处理上下文，封装通用的请求处理逻辑
 type RequestContext struct {
-	GinContext   *gin.Context
-	AuthService  interface{ GetToken() (types.TokenInfo, error) }
-	RequestType  string // "anthropic" 或 "openai"
+	GinContext  *gin.Context
+	AuthService interface {
+		GetToken() (types.TokenInfo, error)
+	}
+	RequestType string // "anthropic" 或 "openai"
 }
 
 // GetTokenAndBody 通用的token获取和请求体读取

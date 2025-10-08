@@ -13,9 +13,9 @@ func TestConvertOpenAIToAnthropic_BasicMessage(t *testing.T) {
 	stream := true
 
 	openaiReq := types.OpenAIRequest{
-		Model:      "gpt-4",
-		MaxTokens:  &maxTokens,
-		Stream:     &stream,
+		Model:     "gpt-4",
+		MaxTokens: &maxTokens,
+		Stream:    &stream,
 		Messages: []types.OpenAIMessage{
 			{
 				Role:    "user",

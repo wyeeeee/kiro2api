@@ -61,7 +61,6 @@ func handleStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, to
 	handleGenericStreamRequest(c, anthropicReq, tokenWithUsage, sender, createAnthropicStreamEvents)
 }
 
-
 // handleGenericStreamRequest 通用流式请求处理
 func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequest, token *types.TokenWithUsage, sender StreamEventSender, eventCreator func(string, int, string) []map[string]any) {
 	// 计算输入tokens

@@ -288,9 +288,9 @@ func TestConvertOpenAIToolChoiceToAnthropic_UnknownType(t *testing.T) {
 
 func TestConvertOpenAIContentToAnthropic_String(t *testing.T) {
 	content := "Hello, world!"
-	
+
 	result, err := convertOpenAIContentToAnthropic(content)
-	
+
 	assert.NoError(t, err)
 	assert.Equal(t, "Hello, world!", result)
 }
@@ -302,18 +302,18 @@ func TestConvertOpenAIContentToAnthropic_ArrayOfBlocks(t *testing.T) {
 			"text": "Hello",
 		},
 	}
-	
+
 	result, err := convertOpenAIContentToAnthropic(content)
-	
+
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
 }
 
 func TestConvertOpenAIContentToAnthropic_Default(t *testing.T) {
 	content := 12345
-	
+
 	result, err := convertOpenAIContentToAnthropic(content)
-	
+
 	assert.NoError(t, err)
 	assert.Equal(t, 12345, result)
 }

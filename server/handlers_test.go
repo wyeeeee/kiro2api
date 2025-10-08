@@ -88,7 +88,7 @@ func TestExtractRelevantHeaders(t *testing.T) {
 		{
 			name: "忽略不相关头部",
 			headers: map[string]string{
-				"Content-Type":   "application/json",
+				"Content-Type":    "application/json",
 				"X-Custom-Header": "custom-value",
 			},
 			expected: map[string]string{
