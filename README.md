@@ -228,7 +228,7 @@ go build -o kiro2api main.go
 
 # 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，设置 KIRO_AUTH_TOKEN 或 AWS_REFRESHTOKEN
+# 编辑 .env 文件，设置 KIRO_AUTH_TOKEN
 
 # 启动服务器
 ./kiro2api
@@ -300,6 +300,8 @@ LOG_CONSOLE=true
 
 # 性能调优
 REQUEST_TIMEOUT_MINUTES=15
+SIMPLE_REQUEST_TIMEOUT_MINUTES=2
+STREAM_REQUEST_TIMEOUT_MINUTES=30
 SERVER_READ_TIMEOUT_MINUTES=35
 SERVER_WRITE_TIMEOUT_MINUTES=35
 ```
@@ -336,14 +338,14 @@ docker exec -it kiro2api sh
 
 - `GET /` - 静态首页（Dashboard）
 - `GET /static/*` - 静态资源
-- `GET /api/tokens` - Token 池状态与使用信息
+- `GET /api/tokens` - Token 池状态与使用信息（无需认证）
 - `GET /v1/models` - 获取可用模型列表
 - `POST /v1/messages` - Anthropic Claude API 兼容接口（支持流/非流）
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流/非流）
 
 ### 认证方式
 
-所有 API 端点都需要在请求头中提供认证信息：
+所有 `/v1/*` 端点都需要在请求头中提供认证信息（`/api/tokens` 等管理端点无需认证）：
 
 ```bash
 # 使用 Authorization Bearer 认证
@@ -453,7 +455,7 @@ GIN_MODE=release                         # 运行模式：debug/release/test
 # 请求超时配置（分钟）
 REQUEST_TIMEOUT_MINUTES=15               # 复杂请求超时
 SIMPLE_REQUEST_TIMEOUT_MINUTES=2         # 简单请求超时
-STREAM_REQUEST_TIMEOUT_MINUTES=30        # 流式请求超时
+STREAM_REQUEST_TIMEOUT_MINUTES=30        # 流式请求超时（默认30分钟）
 
 # 服务器超时配置（分钟）
 SERVER_READ_TIMEOUT_MINUTES=35           # 服务器读取超时
@@ -487,43 +489,12 @@ LOG_FILE=/var/log/kiro2api.log          # 日志文件路径（可选）
 # === 流式处理优化 ===
 DISABLE_STREAM=false                     # 是否禁用流式响应
 
+# === 调试配置 ===
+SAVE_RAW_DATA=false                      # 是否保存原始EventStream数据用于调试
 ```
 
 
 
-### 架构图
-
-```mermaid
-graph LR
-    subgraph "客户端层"
-        A[Anthropic Client]
-        B[OpenAI Client]
-    end
-
-    subgraph "kiro2api 核心"
-        C[认证中间件]
-        D[请求分析器]
-        E[格式转换器]
-        F[Token 管理器]
-        G[流式处理器]
-    end
-
-    subgraph "后端服务"
-        H[AWS CodeWhisperer]
-        I[Social Auth]
-        J[IdC Auth]
-    end
-
-    A --> C
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-    G --> H
-    F --> I
-    F --> J
-```
 
 ## 故障排除
 

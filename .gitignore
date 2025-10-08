@@ -34,3 +34,4 @@ parser.test
 auth.json
 *.json
 .go*
+coverage.out

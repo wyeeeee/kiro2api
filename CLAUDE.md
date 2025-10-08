@@ -130,23 +130,31 @@ LOG_FORMAT=json                           # text,json
   - `openai_handlers.go` - OpenAI API处理器
   - `middleware.go` - 认证中间件
   - `common.go` - 公共响应处理
+  - `stream_processor.go` - 流式响应处理器
   - `sse_state_manager.go` - SSE状态管理器
   - `stop_reason_manager.go` - 停止原因管理器
+  - `error_mapper.go` - 错误映射器
+  - `count_tokens_handler.go` - Token计数处理器
 
-### 数据转换层  
+### 数据转换层
 - **`converter/`**: API格式转换，实现开闭原则
   - `openai.go` - OpenAI ↔ Anthropic 转换
-  - `codewhisperer.go` - CodeWhisperer ↔ Anthropic 转换  
+  - `codewhisperer.go` - CodeWhisperer ↔ Anthropic 转换
   - `content.go` - 内容格式处理
   - `tools.go` - 工具调用转换
-  - `system_prompt.go` - 系统提示处理
 
 ### 流处理核心
 - **`parser/`**: EventStream解析和工具调用处理
   - `robust_parser.go` - 主要解析器实现
   - `compliant_event_stream_parser.go` - 标准兼容解析器
   - `compliant_message_processor.go` - 消息处理
-  - `tool_*` - 工具调用状态机和生命周期管理
+  - `unified_parser.go` - 统一解析器
+  - `tool_lifecycle_manager.go` - 工具生命周期管理
+  - `tool_data_aggregator.go` - 工具数据聚合
+  - `simple_tool_aggregator.go` - 简单工具聚合器
+  - `sonic_streaming_aggregator.go` - Sonic流式聚合器
+  - `session_manager.go` - 会话管理器
+  - `message_event_handlers.go` - 消息事件处理器
 
 ### 基础设施层
 - **`auth/`**: 企业级认证和token管理系统
