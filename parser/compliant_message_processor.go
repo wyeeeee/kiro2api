@@ -10,8 +10,7 @@ import (
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
 	toolManager        *ToolLifecycleManager
-	toolAggregator     *SimpleToolAggregator   // 简化：使用简单工具聚合器替代复杂FSM
-	eventHandlers      map[string]EventHandler // 统一的事件处理器（包含标准和旧格式）
+	eventHandlers      map[string]EventHandler       // 统一的事件处理器（包含标准和旧格式）
 	completionBuffer   []string
 	legacyToolState    *toolIndexState               // 添加旧格式事件的工具状态
 	toolDataAggregator *SonicStreamingJSONAggregator // 统一的工具调用数据聚合器
@@ -30,7 +29,6 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 	processor := &CompliantMessageProcessor{
 		sessionManager:   NewSessionManager(),
 		toolManager:      NewToolLifecycleManager(),
-		toolAggregator:   NewSimpleToolAggregator(), // 简化：使用简单聚合器
 		eventHandlers:    make(map[string]EventHandler),
 		completionBuffer: make([]string, 0, 16),
 		startedTools:     make(map[string]bool),
@@ -61,7 +59,6 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 func (cmp *CompliantMessageProcessor) Reset() {
 	cmp.sessionManager.Reset()
 	cmp.toolManager.Reset()
-	cmp.toolAggregator.Reset() // 简化：重置简单聚合器
 	cmp.completionBuffer = cmp.completionBuffer[:0]
 	// 重置旧格式工具状态
 	if cmp.legacyToolState != nil {
