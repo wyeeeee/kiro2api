@@ -10,7 +10,6 @@ import (
 type StopReasonManager struct {
 	maxTokens          int
 	requestedMaxTokens int
-	stopSequences      []string
 	hasActiveToolCalls bool
 	hasCompletedTools  bool
 	actualTokensUsed   int
@@ -21,7 +20,6 @@ func NewStopReasonManager(anthropicReq types.AnthropicRequest) *StopReasonManage
 	return &StopReasonManager{
 		maxTokens:          anthropicReq.MaxTokens,
 		requestedMaxTokens: anthropicReq.MaxTokens,
-		stopSequences:      []string{}, // AnthropicRequest 当前不包含 StopSequences 字段
 		hasActiveToolCalls: false,
 		hasCompletedTools:  false,
 		actualTokensUsed:   0,
@@ -64,14 +62,7 @@ func (srm *StopReasonManager) DetermineStopReason() string {
 		return "tool_use"
 	}
 
-	// 规则4: 检查停止序列（如果实现了相关逻辑）
-	// 注意：当前实现可能需要额外的停止序列检测逻辑
-	if len(srm.stopSequences) > 0 {
-		// TODO: 实现停止序列检测
-		logger.Debug("检测停止序列", logger.Int("sequences_count", len(srm.stopSequences)))
-	}
-
-	// 规则5: 默认情况 - 自然完成响应
+	// 规则3: 默认情况 - 自然完成响应
 	logger.Debug("确定stop_reason: end_turn - 自然完成响应")
 	return "end_turn"
 }
