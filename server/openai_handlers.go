@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"kiro2api/config"
 	"kiro2api/converter"
 	"kiro2api/logger"
 	"kiro2api/parser"
@@ -83,7 +84,7 @@ func handleOpenAINonStreamRequest(c *gin.Context, anthropicReq types.AnthropicRe
 	}
 
 	// 转换为OpenAI格式
-	openaiMessageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
+	openaiMessageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format(config.MessageIDTimeFormat))
 	openaiResp := converter.ConvertAnthropicToOpenAI(anthropicResp, anthropicReq.Model, openaiMessageId)
 
 	// 下发OpenAI兼容非流式响应
@@ -102,7 +103,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no") // 禁用nginx缓冲
 
-	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format("20060102150405"))
+	messageId := fmt.Sprintf("chatcmpl-%s", time.Now().Format(config.MessageIDTimeFormat))
 	// 注入 message_id，便于统一日志会话标识
 	c.Set("message_id", messageId)
 
