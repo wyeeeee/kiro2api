@@ -421,7 +421,7 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 }
 
 // generateIntroText 根据工具类型生成合适的介绍文本
-func (tlm *ToolLifecycleManager) generateIntroText(toolName string) string {
+func (tlm *ToolLifecycleManager) generateIntroText(_ string) string {
 	//switch strings.ToLower(toolName) {
 	//case "search", "web_search":
 	//	return "让我为您搜索相关信息。"

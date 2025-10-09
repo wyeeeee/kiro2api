@@ -79,10 +79,36 @@ func NewStreamProcessorContext(
 }
 
 // Cleanup 清理资源
+// 完整清理所有状态，防止内存泄漏
 func (ctx *StreamProcessorContext) Cleanup() {
+	// 清理字符串构建器（对象池）
 	if ctx.rawDataBuffer != nil {
 		utils.PutStringBuilder(ctx.rawDataBuffer)
+		ctx.rawDataBuffer = nil
 	}
+
+	// 重置解析器状态
+	if ctx.compliantParser != nil {
+		ctx.compliantParser.Reset()
+	}
+
+	// 清理工具调用映射
+	if ctx.toolUseIdByBlockIndex != nil {
+		// 清空map，释放内存
+		for k := range ctx.toolUseIdByBlockIndex {
+			delete(ctx.toolUseIdByBlockIndex, k)
+		}
+		ctx.toolUseIdByBlockIndex = nil
+	}
+
+	// 清空文本聚合状态
+	ctx.pendingText = ""
+	ctx.lastFlushedText = ""
+
+	// 清理管理器引用，帮助GC
+	ctx.sseStateManager = nil
+	ctx.stopReasonManager = nil
+	ctx.tokenEstimator = nil
 }
 
 // TextAggregator 文本聚合器，负责文本增量的智能聚合
@@ -143,7 +169,7 @@ func (ta *TextAggregator) Flush() (map[string]any, bool) {
 
 	trimmed := strings.TrimSpace(ta.pendingText)
 	// 去重检查
-	if len([]rune(trimmed)) < 2 || trimmed == strings.TrimSpace(ta.lastFlushedText) {
+	if len([]rune(trimmed)) < config.MinTextLength || trimmed == strings.TrimSpace(ta.lastFlushedText) {
 		ta.hasPending = false
 		ta.pendingText = ""
 		return nil, false
@@ -306,10 +332,10 @@ func processToolInputDelta(dataMap map[string]any) {
 		return
 	}
 
-	// 只打印前128字符
+	// 只打印前N字符
 	preview := partialJSON
-	if len(preview) > 128 {
-		preview = preview[:128] + "..."
+	if len(preview) > config.ToolInputPreviewLength {
+		preview = preview[:config.ToolInputPreviewLength] + "..."
 	}
 
 	idx := extractIndex(dataMap)
@@ -351,13 +377,13 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())]
 	baseTokens := ctx.tokenEstimator.EstimateTextTokens(content)
 
-	// 如果包含工具调用，增加20%结构化开销
+	// 如果包含工具调用，增加结构化开销
 	outputTokens := baseTokens
 	if len(ctx.toolUseIdByBlockIndex) > 0 {
-		outputTokens = int(float64(baseTokens) * 1.2)
+		outputTokens = int(float64(baseTokens) * config.ToolCallTokenOverhead)
 	}
-	if outputTokens < 1 && len(content) > 0 {
-		outputTokens = 1
+	if outputTokens < config.MinOutputTokens && len(content) > 0 {
+		outputTokens = config.MinOutputTokens
 	}
 
 	// 设置实际使用的tokens
@@ -641,7 +667,7 @@ func (esp *EventStreamProcessor) handleExceptionEvent(dataMap map[string]any) bo
 			},
 			"usage": map[string]any{
 				"input_tokens":  esp.ctx.inputTokens,
-				"output_tokens": esp.ctx.totalOutputChars / 4, // 简单估算
+				"output_tokens": esp.ctx.totalOutputChars / config.TokenEstimationRatio, // 简单估算
 			},
 		}
 

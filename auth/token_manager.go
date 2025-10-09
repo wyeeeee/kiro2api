@@ -76,31 +76,30 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 		}
 	}
 
-	// 选择最优token
+	// 选择最优token（selectBestToken内部会加锁）
 	bestToken := tm.selectBestToken()
 	if bestToken == nil {
 		return types.TokenInfo{}, fmt.Errorf("没有可用的token")
 	}
 
-	// 更新最后使用时间
+	// 更新最后使用时间（需要加锁保护）
+	tm.mutex.Lock()
 	tm.cache.updateLastUsed(bestToken)
+	tokenCopy := bestToken.Token
+	tm.mutex.Unlock()
 
-	// logger.Debug("选择token成功",
-	// 	logger.String("token_preview", bestToken.Token.AccessToken[:20]+"..."),
-	// 	logger.Float64("available_count", bestToken.Available))
-
-	return bestToken.Token, nil
+	return tokenCopy, nil
 }
 
 // selectBestToken 按配置顺序选择下一个可用token（并发安全）
+// 修复：使用单一锁策略，避免锁嵌套导致的死锁风险
 func (tm *TokenManager) selectBestToken() *CachedToken {
-	// 持有cache读锁保护tokens map的并发访问
-	tm.cache.mutex.RLock()
-	defer tm.cache.mutex.RUnlock()
-
-	// 持有manager写锁保护exhausted和currentIndex的并发修改
+	// 单一锁保护所有状态访问，避免死锁
 	tm.mutex.Lock()
 	defer tm.mutex.Unlock()
+
+	// 安全访问cache.tokens (cache是tm的私有字段，在tm.mutex保护下安全)
+	// 注意：直接访问cache.tokens，不获取cache.mutex，避免锁嵌套
 
 	// 如果没有配置顺序，降级到按map遍历顺序
 	if len(tm.configOrder) == 0 {
@@ -227,9 +226,9 @@ func (stc *SimpleTokenCache) set(key string, token *CachedToken) {
 }
 
 // updateLastUsed 更新最后使用时间
+// 注意：此方法必须在外部已持有tm.mutex的情况下调用
 func (stc *SimpleTokenCache) updateLastUsed(token *CachedToken) {
-	stc.mutex.Lock()
-	defer stc.mutex.Unlock()
+	// 不需要额外加锁，依赖调用者持有tm.mutex
 	token.LastUsed = time.Now()
 	if token.Available > 0 {
 		token.Available--

@@ -70,3 +70,36 @@ const (
 	// StringBuilderMaxSize StringBuilder最大大小
 	StringBuilderMaxSize = 100
 )
+
+// EventStream解析器常量
+const (
+	// EventStreamMinMessageSize AWS EventStream最小消息长度（字节）
+	EventStreamMinMessageSize = 16
+
+	// EventStreamMaxMessageSize AWS EventStream最大消息长度（16MB）
+	EventStreamMaxMessageSize = 16 * 1024 * 1024
+
+	// EventStreamPreludeSize Prelude大小（totalLength + headerLength + preludeCRC）
+	EventStreamPreludeSize = 12
+)
+
+// Token计算常量
+const (
+	// ToolCallTokenOverhead 工具调用的token开销系数
+	ToolCallTokenOverhead = 1.2
+
+	// TokenEstimationRatio 字符到token的估算比例
+	TokenEstimationRatio = 4
+
+	// MinOutputTokens 最小输出token数
+	MinOutputTokens = 1
+)
+
+// 文本处理常量
+const (
+	// ToolInputPreviewLength 工具输入预览长度
+	ToolInputPreviewLength = 128
+
+	// MinTextLength 最小文本长度（用于去重）
+	MinTextLength = 2
+)

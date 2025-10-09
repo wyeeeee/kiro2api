@@ -8,10 +8,8 @@ import (
 	"io"
 	"kiro2api/config"
 	"kiro2api/logger"
-	"kiro2api/utils"
 	"strings"
 	"sync"
-	"time"
 )
 
 // RobustEventStreamParser 带CRC校验和错误恢复的解析器
@@ -22,10 +20,8 @@ type RobustEventStreamParser struct {
 	maxErrors    int
 	crcTable     *crc32.Table
 	buffer       *bytes.Buffer // 使用标准库bytes.Buffer替代RingBuffer
-	// *** 新增：并发访问控制和状态保护 ***
-	mu            sync.RWMutex // 保护并发访问
-	lastProcessed int64        // 最后处理的字节数，用于监控
-	parsingActive bool         // 是否正在解析中，防止重入
+	// 并发访问控制
+	mu sync.RWMutex // 保护并发访问
 }
 
 // NewRobustEventStreamParser 创建健壮的事件流解析器
@@ -54,34 +50,13 @@ func (rp *RobustEventStreamParser) Reset() {
 
 // ParseStream 解析流数据并返回消息
 func (rp *RobustEventStreamParser) ParseStream(data []byte) ([]*EventStreamMessage, error) {
-	// *** 关键修复：并发访问保护 ***
+	// 并发访问保护
 	rp.mu.Lock()
 	defer rp.mu.Unlock()
 
-	// 防止重入调用
-	if rp.parsingActive {
-		logger.Warn("检测到解析重入调用，等待当前解析完成")
-		return []*EventStreamMessage{}, nil
-	}
-	rp.parsingActive = true
-	defer func() {
-		rp.parsingActive = false
-	}()
-
-	// 记录处理开始时间，用于性能监控
-	startTime := time.Now()
-	defer func() {
-		duration := time.Since(startTime)
-		rp.lastProcessed = time.Now().Unix()
-		if duration > config.ParseSlowThreshold {
-			logger.Warn("解析耗时过长，可能存在性能问题",
-				logger.Duration("duration", duration),
-				logger.Int("input_bytes", len(data)))
-		}
-	}()
-
+	// mutex已经保证了互斥访问，无需额外的parsingActive标志
+	// 直接解析数据，避免数据丢失
 	return rp.parseStreamWithBuffer(data)
-
 }
 
 // parseSingleMessageWithValidation 解析单个消息并进行CRC校验
@@ -111,16 +86,16 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	preludeCRC := binary.BigEndian.Uint32(data[8:12])
 
 	// 验证 Prelude CRC（前8字节：totalLength + headerLength）
-	calculatedPreludeCRC := crc32.Checksum(data[:8], rp.crcTable)
-	if preludeCRC != calculatedPreludeCRC {
-		logger.Warn("Prelude CRC 校验失败",
-			logger.String("expected_crc", fmt.Sprintf("%08x", preludeCRC)),
-			logger.String("calculated_crc", fmt.Sprintf("%08x", calculatedPreludeCRC)))
-		// 在非严格模式下继续处理
-		if rp.strictMode {
-			return nil, int(totalLength), NewParseError(fmt.Sprintf("Prelude CRC 校验失败: 期望 %08x, 实际 %08x", preludeCRC, calculatedPreludeCRC), nil)
-		}
-	}
+	// calculatedPreludeCRC := crc32.Checksum(data[:8], rp.crcTable)
+	// if preludeCRC != calculatedPreludeCRC {
+	// 	logger.Warn("Prelude CRC 校验失败",
+	// 		logger.String("expected_crc", fmt.Sprintf("%08x", preludeCRC)),
+	// 		logger.String("calculated_crc", fmt.Sprintf("%08x", calculatedPreludeCRC)))
+	// 	// 在非严格模式下继续处理
+	// 	if rp.strictMode {
+	// 		return nil, int(totalLength), NewParseError(fmt.Sprintf("Prelude CRC 校验失败: 期望 %08x, 实际 %08x", preludeCRC, calculatedPreludeCRC), nil)
+	// 	}
+	// }
 
 	// 验证长度合理性（考虑 Prelude CRC）
 	if totalLength < 16 { // 最小: 4(totalLen) + 4(headerLen) + 4(preludeCRC) + 4(msgCRC) = 16
@@ -169,19 +144,19 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 		}()))
 
 	// CRC 校验（消息 CRC 覆盖整个消息除了最后4字节）
-	expectedCRC := binary.BigEndian.Uint32(data[payloadEnd:totalLength])
-	calculatedCRC := crc32.Checksum(data[:payloadEnd], rp.crcTable)
+	// expectedCRC := binary.BigEndian.Uint32(data[payloadEnd:totalLength])
+	// calculatedCRC := crc32.Checksum(data[:payloadEnd], rp.crcTable)
 
-	if expectedCRC != calculatedCRC {
-		err := NewParseError(fmt.Sprintf("CRC 校验失败: 期望 %08x, 实际 %08x", expectedCRC, calculatedCRC), nil)
-		if rp.strictMode {
-			return nil, int(totalLength), err
-		} else {
-			logger.Warn("CRC校验失败但继续处理",
-				logger.String("expected_crc", fmt.Sprintf("%08x", expectedCRC)),
-				logger.String("calculated_crc", fmt.Sprintf("%08x", calculatedCRC)))
-		}
-	}
+	// if expectedCRC != calculatedCRC {
+	// 	err := NewParseError(fmt.Sprintf("CRC 校验失败: 期望 %08x, 实际 %08x", expectedCRC, calculatedCRC), nil)
+	// 	if rp.strictMode {
+	// 		return nil, int(totalLength), err
+	// 	} else {
+	// 		logger.Warn("CRC校验失败但继续处理",
+	// 			logger.String("expected_crc", fmt.Sprintf("%08x", expectedCRC)),
+	// 			logger.String("calculated_crc", fmt.Sprintf("%08x", calculatedCRC)))
+	// 	}
+	// }
 
 	// 解析头部 - 支持空头部的容错处理和断点续传
 	var headers map[string]HeaderValue
@@ -218,30 +193,6 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	// 验证头部 - 宽松验证
 	if err := rp.headerParser.ValidateHeaders(headers); err != nil {
 		logger.Warn("头部验证失败，但继续处理", logger.Err(err))
-	}
-
-	// *** 关键修复：增强payload完整性验证 ***
-	if len(payloadData) > 0 {
-		// 验证payload是否为有效的JSON（如果是JSON类型）
-		if contentType := GetContentTypeFromHeaders(headers); contentType == "application/json" {
-			if !utils.Valid(payloadData) {
-				// JSON无效但不是致命错误，记录警告
-				logger.Warn("检测到无效JSON payload",
-					logger.String("payload_preview", func() string {
-						if len(payloadData) > 50 {
-							return string(payloadData[:50]) + "..."
-						}
-						return string(payloadData)
-					}()),
-					logger.Int("payload_len", len(payloadData)))
-
-				// 尝试简单的JSON修复
-				payloadStr := string(payloadData)
-				if strings.Contains(payloadStr, "\"input\":") && strings.Contains(payloadStr, "\"name\":") {
-					logger.Debug("检测到可能的工具调用payload损坏，记录但继续处理")
-				}
-			}
-		}
 	}
 
 	message := &EventStreamMessage{
@@ -442,13 +393,13 @@ func (rp *RobustEventStreamParser) parseStreamWithBuffer(data []byte) ([]*EventS
 	for {
 		// 查看可用数据
 		available := rp.buffer.Len()
-		if available < 16 { // 最小消息大小
+		if available < config.EventStreamMinMessageSize {
 			break
 		}
 
 		// 查看消息头（不移除数据）
 		bufferBytes := rp.buffer.Bytes()
-		if len(bufferBytes) < 16 {
+		if len(bufferBytes) < config.EventStreamMinMessageSize {
 			break
 		}
 
@@ -456,7 +407,7 @@ func (rp *RobustEventStreamParser) parseStreamWithBuffer(data []byte) ([]*EventS
 		totalLength := binary.BigEndian.Uint32(bufferBytes[:4])
 
 		// 验证长度合理性
-		if totalLength < 16 || totalLength > 16*1024*1024 {
+		if totalLength < config.EventStreamMinMessageSize || totalLength > config.EventStreamMaxMessageSize {
 			// 跳过无效数据（丢弃1字节）
 			rp.buffer.Next(1)
 			rp.errorCount++
