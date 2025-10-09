@@ -358,9 +358,13 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 					// 连续错误过多，停止
 					hasMoreData = false
 				} else {
-					// 短暂等待后继续
-					time.Sleep(100 * time.Millisecond)
-					continue
+					// 使用select支持context取消
+					select {
+					case <-time.After(100 * time.Millisecond):
+						continue
+					case <-c.Request.Context().Done():
+						hasMoreData = false
+					}
 				}
 			} else {
 				// 其他错误

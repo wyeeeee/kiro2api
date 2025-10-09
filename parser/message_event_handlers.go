@@ -5,7 +5,6 @@ import (
 	"kiro2api/logger"
 	"kiro2api/utils"
 	"strings"
-	"time"
 )
 
 // === 辅助函数 ===
@@ -392,15 +391,6 @@ func (h *SessionEndHandler) Handle(message *EventStreamMessage) ([]SSEEvent, err
 	var data map[string]any
 	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
 		return nil, err
-	}
-
-	// 处理测试中的持续时间字段 - 确保测试有足够的时间差
-	if duration, ok := data["duration"].(float64); ok && duration > 0 {
-		// 如果载荷中包含持续时间，我们需要模拟时间流逝
-		time.Sleep(time.Millisecond * 10) // 至少10ms的持续时间
-	} else {
-		// 默认情况下也添加一个小的延迟
-		time.Sleep(time.Millisecond * 5)
 	}
 
 	// 实际结束会话
