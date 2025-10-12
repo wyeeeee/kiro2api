@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 遵循 KISS、YAGNI、DRY 和 SOLID 原则：
 - **单一职责**: 每个包专注于特定功能域
-- **开闭原则**: 通过接口扩展而非修改核心逻辑  
+- **开闭原则**: 通过接口扩展而非修改核心逻辑
 - **依赖倒置**: 依赖抽象而非具体实现
 - **保持简单**: 避免过度工程化，优先选择简洁解决方案
 
@@ -24,38 +24,38 @@ go build -o kiro2api main.go
 ./kiro2api
 
 # 测试
-go test ./...                # 运行所有测试
-go test ./parser -v          # 运行parser包测试(详细输出)
-go test ./auth -v            # 运行auth包测试(token管理)
-go test ./utils -v           # 运行utils包测试(工具函数)
-go test ./converter -v       # 运行converter包测试(格式转换)
-go test ./... -bench=. -benchmem  # 基准测试
+go test ./...                          # 运行所有测试
+go test ./parser -v                    # 运行parser包测试(详细输出)
+go test ./auth -v                      # 运行auth包测试(token管理)
+go test ./utils -v                     # 运行utils包测试(工具函数)
+go test ./converter -v                 # 运行converter包测试(格式转换)
+go test ./... -bench=. -benchmem       # 基准测试
 
 # 代码质量检查
-go vet ./...                 # 静态代码检查
-go fmt ./...                 # 代码格式化
-go mod tidy                  # 整理依赖
-golangci-lint run            # 运行linter (如果已安装)
+go vet ./...                           # 静态代码检查
+go fmt ./...                           # 代码格式化
+go mod tidy                            # 整理依赖
+golangci-lint run                      # 运行linter (如果已安装)
 
 # 运行模式
 GIN_MODE=debug LOG_LEVEL=debug ./kiro2api  # 开发模式(详细日志)
-GIN_MODE=release ./kiro2api               # 生产模式
+GIN_MODE=release ./kiro2api                # 生产模式
 
 # 构建
 go build -ldflags="-s -w" -o kiro2api main.go  # 生产构建(压缩)
 
 # Docker部署
-docker build -t kiro2api .   # 构建镜像
-docker-compose up -d         # 启动服务
+docker build -t kiro2api .             # 构建镜像
+docker-compose up -d                   # 启动服务
 
 # 清理
-go clean                     # 清理构建缓存
-rm -f kiro2api              # 删除可执行文件
+go clean                               # 清理构建缓存
+rm -f kiro2api                         # 删除可执行文件
 ```
 
 ## 技术栈
 
-- **Web框架**: gin-gonic/gin v1.10.1  
+- **Web框架**: gin-gonic/gin v1.10.1
 - **JSON处理**: bytedance/sonic v1.14.0 (高性能JSON解析)
 - **配置管理**: github.com/joho/godotenv v1.5.1
 - **Go版本**: 1.23.3
@@ -81,8 +81,7 @@ cp .env.example .env
 # KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"token1"},{"auth":"Social","refreshToken":"token2"}]'
 #
 # 默认配置结构:
-KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"},{"auth":"IdC","refreshToken":"xxx","clientId":"xxx","clientSecret":"xxx"}]'''' 
-
+KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"xxx"},{"auth":"IdC","refreshToken":"xxx","clientId":"xxx","clientSecret":"xxx"}]'
 
 # === 基础服务配置 ===
 KIRO_CLIENT_TOKEN=123456                  # API认证密钥,默认: 123456
@@ -116,7 +115,7 @@ LOG_FORMAT=json                           # text,json
 
 ### 智能特性
 - **请求复杂度分析**: 根据MaxTokens、内容长度、工具使用等因素动态选择超时时间
-- **企业级Token管理**: 顺序token选择、原子缓存、并发控制、使用限制监控
+- **企业级Token管理**: 顺序token选择、并发控制、使用限制监控
 - **双认证方式**: Social和IdC认证支持
 - **高性能缓存**: 智能token缓存和并发控制
 - **流式优化**: 零延迟流式传输，对象池复用解析器实例
@@ -148,10 +147,7 @@ LOG_FORMAT=json                           # text,json
   - `robust_parser.go` - 主要解析器实现
   - `compliant_event_stream_parser.go` - 标准兼容解析器
   - `compliant_message_processor.go` - 消息处理
-  - `unified_parser.go` - 统一解析器
   - `tool_lifecycle_manager.go` - 工具生命周期管理
-  - `tool_data_aggregator.go` - 工具数据聚合
-  - `simple_tool_aggregator.go` - 简单工具聚合器
   - `sonic_streaming_aggregator.go` - Sonic流式聚合器
   - `session_manager.go` - 会话管理器
   - `message_event_handlers.go` - 消息事件处理器
@@ -164,8 +160,10 @@ LOG_FORMAT=json                           # text,json
   - `config.go` - 配置提供者和管理
   - `refresh.go` - token刷新逻辑
 - **`utils/`**: 高性能工具包
-  - `atomic_cache.go` - 原子操作缓存系统
   - `token_refresh_manager.go` - 并发刷新控制管理器
+  - `request_analyzer.go` - 请求复杂度分析
+  - `token_estimator.go` - Token估算器
+  - `pool.go` - 对象池管理
   - 其他工具，遵循DRY原则避免重复
 - **`types/`**: 数据结构定义，保持类型安全
 - **`logger/`**: 结构化日志系统
@@ -174,8 +172,9 @@ LOG_FORMAT=json                           # text,json
 ## API端点
 
 - `POST /v1/messages` - Anthropic Claude API 代理（流式 + 非流式）
-- `POST /v1/chat/completions` - OpenAI ChatCompletion API 代理（流式 + 非流式）  
+- `POST /v1/chat/completions` - OpenAI ChatCompletion API 代理（流式 + 非流式）
 - `GET /v1/models` - 返回可用模型列表
+- `GET /api/tokens` - Token池状态与使用信息（无需认证）
 
 ## 核心开发任务
 
@@ -200,40 +199,6 @@ LOG_FORMAT=json                           # text,json
 1. **测试覆盖**: 重点测试token管理系统
 2. **性能基准测试**: 建立性能基准
 3. **监控指标**: 完善token使用情况监控
-
-## 重要提醒
-
-### 开发规范
-- **NEVER** 提交敏感信息（API keys、tokens）到代码库
-- **ALWAYS** 在修改核心逻辑前运行完整测试套件
-- **PREFER** 编辑现有文件而非创建新文件
-- **FOLLOW** 现有代码风格和命名约定
-
-### 测试策略
-- 单元测试：`go test ./package -v`
-- 集成测试：启动服务器并使用curl测试API端点
-- 性能测试：`go test -bench=. -benchmem`
-- 在提交前运行：`go vet ./... && go fmt ./...`
-
-
-## 快速测试
-
-```bash
-# 启动服务器
-./kiro2api
-
-# 测试API
-curl -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer 123456" \
-  -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 100, "messages": [{"role": "user", "content": "你好"}]}'
-
-# 测试流式响应
-curl -N -X POST http://localhost:8080/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer 123456" \
-  -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 200, "stream": true, "messages": [{"role": "user", "content": "讲个故事"}]}'
-```
 
 ## 故障排除
 

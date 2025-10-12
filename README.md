@@ -1,6 +1,4 @@
-# 🚀 kiro2api
-
-<div align="center">
+# kiro2api
 
 **高性能 AI API 代理服务器**
 
@@ -10,12 +8,9 @@
 [![Gin](https://img.shields.io/badge/Gin-1.10.1-green.svg)](https://github.com/gin-gonic/gin)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 
-</div>
+## 核心特性
 
-## 🎯 为什么选择 kiro2api？
-### 💡 四大核心优势
-
-#### 1. 🤖 Claude Code 原生集成
+### 1. Claude Code 原生集成
 
 ```bash
 # 一行配置，立即享受本地代理
@@ -27,12 +22,12 @@ claude-code --model claude-sonnet-4 "帮我重构这段代码"
 ```
 
 **支持功能**:
-- ✅ 完整 Anthropic API 兼容
-- ✅ 流式响应零延迟
-- ✅ 工具调用完整支持
-- ✅ 多模态图片处理
+- 完整 Anthropic API 兼容
+- 流式响应零延迟
+- 工具调用完整支持
+- 多模态图片处理
 
-#### 2. 🎛️ 多账号池管理
+### 2. 多账号池管理
 
 ```json
 {
@@ -46,17 +41,17 @@ claude-code --model claude-sonnet-4 "帮我重构这段代码"
 ```
 
 **核心特性**:
-- 🔄 **顺序选择**: 按配置顺序依次使用账号
-- 🔄 **故障转移**: 账号用完自动切换到下一个
-- 📊 **使用监控**: 实时监控每个账号的使用情况
+- **顺序选择**: 按配置顺序依次使用账号
+- **故障转移**: 账号用完自动切换到下一个
+- **使用监控**: 实时监控每个账号的使用情况
 
-#### 3. 🏢 双认证方式支持
+### 3. 双认证方式支持
 
 ```bash
-# Social 认证 
+# Social 认证
 KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"your-social-token"}]'
 
-# IdC 认证 
+# IdC 认证
 KIRO_AUTH_TOKEN='[{
   "auth":"IdC",
   "refreshToken":"enterprise-token",
@@ -71,7 +66,7 @@ KIRO_AUTH_TOKEN='[
 ]'
 ```
 
-#### 4. 📸 图片输入支持（data URL）
+### 4. 图片输入支持（data URL）
 
 ```bash
 # Claude Code 中直接使用图片
@@ -86,43 +81,7 @@ claude-code "分析这张图片的内容" --image screenshot.png
 - Claude Code 传入本地图片时会转为 `data:` URL，服务端按照 `Anthropic`/`OpenAI` 规范解析并转发。
 - 不做额外图片压缩或远程下载处理，避免引入不必要复杂度（KISS/YAGNI）。
 
-### 🎯 典型使用场景
-
-#### 场景 1: 
-
-```bash
-# 解决：本地 kiro2api 代理
-
-# 1. 启动 kiro2api
-docker run -d -p 8080:8080 \
-  -e KIRO_AUTH_TOKEN='[{"auth":"Social","refreshToken":"your-token"}]' \
-  ghcr.io/caidaoli/kiro2api:latest
-
-# 2. 配置 Claude Code
-export ANTHROPIC_BASE_URL="http://localhost:8080/v1"
-
-# 3. 享受稳定的 AI 编程体验
-claude-code "重构这个函数，提高性能" --file main.go
-```
-
-#### 场景 2:
-
-```bash
-# 解决：多账号池 
-
-# 3 个 Social 账号轮换使用
-KIRO_AUTH_TOKEN='[
-  {"auth":"Social","refreshToken":"dev-account-1"},
-  {"auth":"Social","refreshToken":"dev-account-2"},
-  {"auth":"Social","refreshToken":"dev-account-3"}
-]'
-
-# 可用性提升：单账号故障不影响团队工作
-```
-
-
-
-## 🏗️ 系统架构
+## 系统架构
 
 ```mermaid
 graph TB
@@ -170,48 +129,44 @@ graph TB
     F --> I3
 
     G --> J
-    G --> K
-    G --> L
 
     style B fill:#e1f5fe
     style F fill:#f3e5f5
     style G fill:#e8f5e8
 ```
 
-## ✨ 核心特性矩阵
-
-### 🎯 核心功能
+## 核心功能矩阵
 
 | 特性分类 | 功能 | 支持状态 | 描述 |
 |----------|------|----------|------|
-| 🔄 **API 兼容** | Anthropic API | ✅ | 完整的 Claude API 支持 |
+| **API 兼容** | Anthropic API | ✅ | 完整的 Claude API 支持 |
 | | OpenAI API | ✅ | ChatCompletion 格式兼容 |
-| 🎛️ **负载管理** | 单账号 | ✅ | 基础 Token 管理 |
+| **负载管理** | 单账号 | ✅ | 基础 Token 管理 |
 | | 多账号池 | ✅ | 顺序负载均衡 |
 | | 故障转移 | ✅ | 自动切换机制 |
-| 🔐 **认证方式** | Social 认证 | ✅ | AWS SSO 认证 |
+| **认证方式** | Social 认证 | ✅ | AWS SSO 认证 |
 | | IdC 认证 | ✅ | 身份中心认证 |
 | | 混合认证 | ✅ | 多认证方式并存 |
-| 📊 **监控运维** | 基础日志 | ✅ | 标准日志输出 |
+| **监控运维** | 基础日志 | ✅ | 标准日志输出 |
 | | 使用监控 | ✅ | 实时使用量统计 |
-| ⚡ **性能优化** | 流式响应 | ✅ | SSE 实时传输 |
+| **性能优化** | 流式响应 | ✅ | SSE 实时传输 |
 | | 智能缓存 | ✅ | Token 缓存（无响应缓存） |
 | | 并发控制 | ✅ | Token 刷新并发控制 |
 
-### 🚀 高级特性
+### 高级特性
 
 | 特性 | 描述 | 技术实现 |
 |------|------|----------|
-| 📸 **多模态支持** | data URL 的 PNG/JPEG 图片 | Base64 编码 + 格式转换 |
-| 🛠️ **工具调用** | 完整 Anthropic 工具使用支持 | 状态机 + 生命周期管理 |
-| 🔄 **格式转换** | Anthropic ↔ OpenAI ↔ CodeWhisperer | 智能协议转换器 |
-| ⚡ **零延迟流式** | 实时流式传输优化 | EventStream 解析 + 对象池 |
-| 🎯 **顺序选择** | 按配置顺序使用 Token | 顺序轮换 + 故障转移 |
+| **多模态支持** | data URL 的 PNG/JPEG 图片 | Base64 编码 + 格式转换 |
+| **工具调用** | 完整 Anthropic 工具使用支持 | 状态机 + 生命周期管理 |
+| **格式转换** | Anthropic ↔ OpenAI ↔ CodeWhisperer | 智能协议转换器 |
+| **零延迟流式** | 实时流式传输优化 | EventStream 解析 + 对象池 |
+| **顺序选择** | 按配置顺序使用 Token | 顺序轮换 + 故障转移 |
 
 ## 技术栈
 
 - **Web框架**: gin-gonic/gin v1.10.1
-- **JSON处理**: bytedance/sonic v1.14.0  
+- **JSON处理**: bytedance/sonic v1.14.0
 - **配置管理**: github.com/joho/godotenv v1.5.1
 - **Go版本**: 1.23.3
 - **容器化**: Docker & Docker Compose 支持
@@ -240,13 +195,14 @@ curl -X POST http://localhost:8080/v1/messages \
   -d '{"model": "claude-sonnet-4-20250514", "max_tokens": 100, "messages": [{"role": "user", "content": "你好"}]}'
 ```
 
-### 🐳 Docker 部署
+### Docker 部署
 
 #### 快速开始
 
 Token获取方式：
- - Social tokens: 通常在 ~/.aws/sso/cache/kiro-auth-token.json
- - IdC tokens: 在 ~/.aws/sso/cache/ 目录下的相关JSON文件中
+- Social tokens: 通常在 ~/.aws/sso/cache/kiro-auth-token.json
+- IdC tokens: 在 ~/.aws/sso/cache/ 目录下的相关JSON文件中
+
 ```bash
 # 方式一：使用 docker-compose（推荐）
 docker-compose up -d
@@ -268,8 +224,7 @@ docker run -d \
   kiro2api
 ```
 
-
-#### 🔧 配置管理
+#### 配置管理
 
 ##### 环境变量文件
 ```bash
@@ -301,7 +256,6 @@ LOG_CONSOLE=true
 # 性能调优
 REQUEST_TIMEOUT_MINUTES=15
 SIMPLE_REQUEST_TIMEOUT_MINUTES=2
-STREAM_REQUEST_TIMEOUT_MINUTES=30
 SERVER_READ_TIMEOUT_MINUTES=35
 SERVER_WRITE_TIMEOUT_MINUTES=35
 ```
@@ -311,12 +265,11 @@ SERVER_WRITE_TIMEOUT_MINUTES=35
 # 若使用 Docker Secrets，请将 `KIRO_AUTH_TOKEN` 设置为 secrets 文件路径：
 # 例如：/run/secrets/kiro_auth_token
 #
-# 说明：代码支持将 `KIRO_AUTH_TOKEN` 当作“文件路径”读取；
+# 说明：代码支持将 `KIRO_AUTH_TOKEN` 当作"文件路径"读取；
 #      但不支持 `*_FILE` 环境变量约定，也不读取 `KIRO_CLIENT_TOKEN_FILE`。
 ```
 
-
-#### 📊 健康检查和监控
+#### 健康检查和监控
 
 ```bash
 # 健康检查
@@ -402,16 +355,16 @@ curl -N -X POST http://localhost:8080/v1/messages \
 | `claude-3-7-sonnet-20250219` | `CLAUDE_3_7_SONNET_20250219_V1_0` |
 | `claude-3-5-haiku-20241022` | `auto` |
 
-## 🔧 环境配置指南
+## 环境配置指南
 
-### 🏢 多账号池配置
+### 多账号池配置
 
 #### 配置方式对比
 
 | 配置方式 | 适用场景 | 优势 | 限制 |
 |----------|----------|------|------|
-| 🔑 **JSON 配置** | 生产级部署 | 多认证方式、顺序负载均衡 | 配置相对复杂 |
-| 📝 **环境变量** | 快速测试 | 简单直接、向后兼容 | 功能有限 |
+| **JSON 配置** | 生产级部署 | 多认证方式、顺序负载均衡 | 配置相对复杂 |
+| **环境变量** | 快速测试 | 简单直接、向后兼容 | 功能有限 |
 
 #### JSON 格式配置（推荐）
 
@@ -440,8 +393,7 @@ export KIRO_AUTH_TOKEN='[
 ]'
 ```
 
-
-### ⚙️ 系统配置
+### 系统配置
 
 #### 基础服务配置
 
@@ -455,12 +407,10 @@ GIN_MODE=release                         # 运行模式：debug/release/test
 # 请求超时配置（分钟）
 REQUEST_TIMEOUT_MINUTES=15               # 复杂请求超时
 SIMPLE_REQUEST_TIMEOUT_MINUTES=2         # 简单请求超时
-STREAM_REQUEST_TIMEOUT_MINUTES=30        # 流式请求超时（默认30分钟）
 
 # 服务器超时配置（分钟）
 SERVER_READ_TIMEOUT_MINUTES=35           # 服务器读取超时
 SERVER_WRITE_TIMEOUT_MINUTES=35          # 服务器写入超时
-
 ```
 
 #### 生产级日志配置
@@ -493,12 +443,9 @@ DISABLE_STREAM=false                     # 是否禁用流式响应
 SAVE_RAW_DATA=false                      # 是否保存原始EventStream数据用于调试
 ```
 
-
-
-
 ## 故障排除
 
-### 🔍 故障诊断
+### 故障诊断
 
 #### Token 认证问题
 
@@ -512,10 +459,10 @@ LOG_LEVEL=debug ./kiro2api
 
 | 错误类型 | 解决方案 |
 |----------|----------|
-| 🚨 JSON 格式错误 | 使用 JSON 验证器检查格式 |
-| 🔐 认证方式错误 | 确认 `auth` 字段为 "Social" 或 "IdC" |
-| 📋 参数缺失 | IdC 认证需要 `clientId` 和 `clientSecret` |
-| ⏰ Token 过期 | 查看日志中的刷新状态 |
+| JSON 格式错误 | 使用 JSON 验证器检查格式 |
+| 认证方式错误 | 确认 `auth` 字段为 "Social" 或 "IdC" |
+| 参数缺失 | IdC 认证需要 `clientId` 和 `clientSecret` |
+| Token 过期 | 查看日志中的刷新状态 |
 
 #### API 连接问题
 
@@ -536,10 +483,10 @@ curl -N --max-time 60 -X POST \
 
 | 问题类型 | 症状 | 解决方案 |
 |----------|------|----------|
-| 🐳 **容器启动失败** | 容器立即退出 | 检查环境变量配置，查看容器日志 |
-| 🔌 **端口冲突** | 端口已被占用 | 修改 docker-compose.yml 中的端口映射 |
-| 💾 **数据卷权限** | AWS SSO 缓存失败 | 确保容器用户有权限访问数据卷 |
-| 🌐 **网络连接** | 无法访问外部 API | 检查 Docker 网络配置和防火墙设置 |
+| **容器启动失败** | 容器立即退出 | 检查环境变量配置，查看容器日志 |
+| **端口冲突** | 端口已被占用 | 修改 docker-compose.yml 中的端口映射 |
+| **数据卷权限** | AWS SSO 缓存失败 | 确保容器用户有权限访问数据卷 |
+| **网络连接** | 无法访问外部 API | 检查 Docker 网络配置和防火墙设置 |
 
 ```bash
 # Docker 故障排除命令
@@ -571,9 +518,9 @@ docker stats kiro2api
 
 | 问题类型 | 症状 | 解决方案 |
 |----------|------|----------|
-| 🔗 **代理连接失败** | Claude Code 无法连接到 kiro2api | 检查 baseURL 和网络连通性 |
-| 🔑 **认证失败** | 401 Unauthorized 错误 | 验证 apiKey 配置和 KIRO_CLIENT_TOKEN |
-| 📡 **流式响应中断** | 流式输出不完整 | 检查网络稳定性和超时配置 |
+| **代理连接失败** | Claude Code 无法连接到 kiro2api | 检查 baseURL 和网络连通性 |
+| **认证失败** | 401 Unauthorized 错误 | 验证 apiKey 配置和 KIRO_CLIENT_TOKEN |
+| **流式响应中断** | 流式输出不完整 | 检查网络稳定性和超时配置 |
 
 ```bash
 # Claude Code 集成调试
@@ -586,23 +533,18 @@ curl -N -H "Authorization: Bearer $KIRO_CLIENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"model":"claude-sonnet-4-20250514","stream":true,"messages":[{"role":"user","content":"test"}]}' \
   http://localhost:8080/v1/messages
-
 ```
 
+## 更多资源
 
+- **详细开发指南**: [CLAUDE.md](./CLAUDE.md)
+- **包结构说明**: 分层架构设计，遵循 SOLID 原则
+- **性能优化**: 缓存策略、并发控制、内存管理
+- **核心开发任务**: 扩展功能、性能调优、高级特性
+- **Claude Code 官方文档**: [claude.ai/code](https://claude.ai/code)
+- **Docker 最佳实践**: 容器化部署指南
 
-
-
-## 📚 更多资源
-
-- 📖 **详细开发指南**: [CLAUDE.md](./CLAUDE.md)
-- 🏗️ **包结构说明**: 分层架构设计，遵循 SOLID 原则
-- ⚡ **性能优化**: 缓存策略、并发控制、内存管理
-- 🔧 **核心开发任务**: 扩展功能、性能调优、高级特性
-- 🤖 **Claude Code 官方文档**: [claude.ai/code](https://claude.ai/code)
-- 🐳 **Docker 最佳实践**: 容器化部署指南
-
-## 🤝 贡献指南
+## 贡献指南
 
 我们欢迎社区贡献！直接提交 Issue 或 Pull Request 即可。
 
@@ -613,4 +555,3 @@ curl -N -H "Authorization: Bearer $KIRO_CLIENT_TOKEN" \
 3. 提交更改 (`git commit -m 'Add amazing feature'`)
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 创建 Pull Request
-
