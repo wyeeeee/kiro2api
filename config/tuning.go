@@ -8,8 +8,9 @@ const (
 	// ========== 文本流式传输调优 ==========
 
 	// MinTextFlushChars 文本聚合的最小冲刷字符数
-	// 避免极短片段导致颗粒化，默认10字符
-	MinTextFlushChars = 10
+	// 避免极短片段导致颗粒化，降低到6字节（约2个中文字符）
+	// 权衡：短文本及时性 vs 网络开销
+	MinTextFlushChars = 6
 
 	// TextFlushMaxChars 文本聚合的最大缓冲字符数
 	// 达到此阈值即使未遇到标点也强制冲刷

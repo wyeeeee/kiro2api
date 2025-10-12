@@ -146,8 +146,9 @@ func (ta *TextAggregator) ShouldFlush() bool {
 		return true
 	}
 
-	// 遇到中文标点或换行
-	if strings.ContainsAny(ta.pendingText, "。！？；\n") {
+	// 遇到中文或英文标点、换行时立即冲刷
+	// 包含：句号、感叹号、问号、分号、冒号、逗号、顿号、换行
+	if strings.ContainsAny(ta.pendingText, "。！？；：，、\n.!?;:,") {
 		return true
 	}
 
@@ -551,6 +552,10 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 	// 处理不同类型的事件
 	switch eventType {
 	case "content_block_start":
+		// 在启动新块前，先冲刷待处理文本（防止自动关闭文本块时丢失文本）
+		if err := esp.flushPendingText(); err != nil {
+			return err
+		}
 		esp.ctx.processToolUseStart(dataMap)
 
 	case "content_block_delta":
