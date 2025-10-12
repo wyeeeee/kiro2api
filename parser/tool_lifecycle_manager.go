@@ -345,11 +345,6 @@ func (tlm *ToolLifecycleManager) GetCompletedTools() map[string]*ToolExecution {
 	return result
 }
 
-// allToolsCompleted 检查是否所有工具都已完成
-func (tlm *ToolLifecycleManager) allToolsCompleted() bool {
-	return len(tlm.activeTools) == 0
-}
-
 // getOrAssignBlockIndex 获取或分配块索引
 func (tlm *ToolLifecycleManager) getOrAssignBlockIndex(toolID string) int {
 	if index, exists := tlm.blockIndexMap[toolID]; exists {
@@ -379,7 +374,7 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 	// 修复：删除重复的content_block_start和content_block_stop
 	// 原因：block[0]已在sendInitialEvents()中启动（handlers.go:148-156），会在sendFinalEvents()中关闭
 	// 这里只需要发送content_block_delta来添加介绍文本即可
-	// 
+	//
 	// 之前的问题：
 	// 1. sendInitialEvents发送content_block_start(index:0) → SSEStateManager标记block[0].Started=true
 	// 2. generateTextIntroduction再次发送content_block_start(index:0) → 违规！block已started但未stopped

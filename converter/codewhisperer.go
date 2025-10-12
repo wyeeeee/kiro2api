@@ -387,7 +387,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 			if msg.Role == "user" {
 				// 收集user消息到缓冲区
 				userMessagesBuffer = append(userMessagesBuffer, msg)
-			} else if msg.Role == "assistant" {
+				continue
+			}
+			if msg.Role == "assistant" {
 				// 遇到assistant，处理之前累积的user消息
 				if len(userMessagesBuffer) > 0 {
 					// 合并所有累积的user消息

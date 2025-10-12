@@ -123,8 +123,15 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件
 func createAnthropicStreamEvents(messageId string, inputTokens int, model string) []map[string]any {
-	// 创建完整的初始事件序列，包括content_block_start
-	// 这确保符合Claude API规范的完整SSE事件序列
+	// 创建基础初始事件序列，不包含content_block_start
+	// 
+	// 关键修复：移除预先发送的空文本块
+	// 问题：如果预先发送content_block_start(text)，但上游只返回tool_use没有文本，
+	//      会导致空文本块（start -> stop 之间没有delta），违反Claude API规范
+	// 
+	// 解决方案：依赖sse_state_manager.handleContentBlockDelta()中的自动启动机制
+	//          只有在实际收到内容（文本或工具）时才动态生成content_block_start
+	//          这确保每个content_block都有实际内容
 	events := []map[string]any{
 		{
 			"type": "message_start",
@@ -144,14 +151,6 @@ func createAnthropicStreamEvents(messageId string, inputTokens int, model string
 		},
 		{
 			"type": "ping",
-		},
-		{
-			"type":  "content_block_start",
-			"index": 0,
-			"content_block": map[string]any{
-				"type": "text",
-				"text": "",
-			},
 		},
 	}
 	return events

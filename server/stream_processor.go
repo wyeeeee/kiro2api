@@ -46,6 +46,7 @@ type StreamProcessorContext struct {
 
 	// 工具调用跟踪
 	toolUseIdByBlockIndex map[int]string
+	completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
 
 	// 原始数据缓冲
 	rawDataBuffer *strings.Builder
@@ -72,6 +73,7 @@ func NewStreamProcessorContext(
 		tokenEstimator:        utils.NewTokenEstimator(),
 		compliantParser:       parser.NewCompliantEventStreamParser(false),
 		toolUseIdByBlockIndex: make(map[int]string),
+		completedToolUseIds:   make(map[string]bool),
 		rawDataBuffer:         utils.GetStringBuilder(),
 	}
 }
@@ -97,6 +99,14 @@ func (ctx *StreamProcessorContext) Cleanup() {
 			delete(ctx.toolUseIdByBlockIndex, k)
 		}
 		ctx.toolUseIdByBlockIndex = nil
+	}
+
+	// 清理已完成工具集合
+	if ctx.completedToolUseIds != nil {
+		for k := range ctx.completedToolUseIds {
+			delete(ctx.completedToolUseIds, k)
+		}
+		ctx.completedToolUseIds = nil
 	}
 
 	// 清空文本聚合状态
@@ -217,6 +227,9 @@ func (ctx *StreamProcessorContext) sendInitialEvents(eventCreator func(string, i
 	// 直接使用上下文中的 inputTokens（已经通过 TokenEstimator 精确计算）
 	initialEvents := eventCreator(ctx.messageID, ctx.inputTokens, ctx.req.Model)
 
+	// 注意：初始事件现在只包含 message_start 和 ping
+	// content_block_start 会在收到实际内容时由 sse_state_manager 自动生成
+	// 这避免了发送空内容块（如果上游只返回 tool_use 而没有文本）
 	for _, event := range initialEvents {
 		// 使用状态管理器发送事件
 		if err := ctx.sseStateManager.SendEvent(ctx.c, ctx.sender, event); err != nil {
@@ -269,6 +282,12 @@ func (ctx *StreamProcessorContext) processToolUseStop(dataMap map[string]any) {
 	}
 
 	if toolId, exists := ctx.toolUseIdByBlockIndex[idx]; exists && toolId != "" {
+		// *** 关键修复：在删除前先记录到已完成工具集合 ***
+		// 问题：直接删除导致sendFinalEvents()中len(toolUseIdByBlockIndex)==0
+		// 结果：stop_reason错误判断为end_turn而非tool_use
+		// 解决：先添加到completedToolUseIds，保持工具调用的证据
+		ctx.completedToolUseIds[toolId] = true
+
 		logger.Debug("工具执行完成",
 			logger.String("tool_id", toolId),
 			logger.Int("block_index", idx))
@@ -367,10 +386,17 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 	}
 
 	// 更新工具调用状态
-	ctx.stopReasonManager.UpdateToolCallStatus(
-		len(ctx.toolUseIdByBlockIndex) > 0,
-		len(ctx.toolUseIdByBlockIndex) > 0,
-	)
+	// 使用已完成工具集合来判断，因为toolUseIdByBlockIndex在stop时已被清空
+	hasActiveTools := len(ctx.toolUseIdByBlockIndex) > 0
+	hasCompletedTools := len(ctx.completedToolUseIds) > 0
+
+	logger.Debug("更新工具调用状态",
+		logger.Bool("has_active_tools", hasActiveTools),
+		logger.Bool("has_completed_tools", hasCompletedTools),
+		logger.Int("active_count", len(ctx.toolUseIdByBlockIndex)),
+		logger.Int("completed_count", len(ctx.completedToolUseIds)))
+
+	ctx.stopReasonManager.UpdateToolCallStatus(hasActiveTools, hasCompletedTools)
 
 	// 计算输出tokens（使用TokenEstimator统一算法）
 	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())]

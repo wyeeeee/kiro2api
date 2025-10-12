@@ -55,10 +55,23 @@ func (srm *StopReasonManager) DetermineStopReason() string {
 		return "max_tokens"
 	}
 
-	// 规则2: 检查是否有活跃的工具调用等待执行
-	// 根据Claude规范：只有当Claude主动调用工具且期待工具执行时才使用tool_use
-	if srm.hasActiveToolCalls {
-		logger.Debug("确定stop_reason: tool_use - 检测到活跃工具调用")
+	// 规则2: 检查是否有工具调用（活跃或已完成）
+	// *** 关键修复：根据Claude规范，只要消息包含tool_use块，stop_reason就应该是tool_use ***
+	// 根据 Anthropic API 文档 (https://docs.anthropic.com/en/api/messages-streaming):
+	//   stop_reason: "tool_use" - The model wants to use a tool
+	// 
+	// 只要消息中包含任何 tool_use 内容块（无论是正在流式传输还是已完成），
+	// stop_reason 就应该是 "tool_use"。这与工具的"生命周期状态"无关。
+	//
+	// 之前的BUG: 只检查 hasActiveToolCalls（正在流式传输的工具）
+	// 问题场景: 工具块关闭后被移到 completedTools，导致 hasActiveToolCalls=false，
+	//          错误返回 "end_turn" 而非 "tool_use"
+	//
+	// 修复: 检查 hasActiveToolCalls OR hasCompletedTools
+	if srm.hasActiveToolCalls || srm.hasCompletedTools {
+		logger.Debug("确定stop_reason: tool_use - 消息包含工具调用",
+			logger.Bool("has_active", srm.hasActiveToolCalls),
+			logger.Bool("has_completed", srm.hasCompletedTools))
 		return "tool_use"
 	}
 
