@@ -384,20 +384,21 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 	// 根据工具类型生成合适的介绍文本
 	introText := tlm.generateIntroText(firstTool.Function.Name)
 
+	// 修复：删除重复的content_block_start和content_block_stop
+	// 原因：block[0]已在sendInitialEvents()中启动（handlers.go:148-156），会在sendFinalEvents()中关闭
+	// 这里只需要发送content_block_delta来添加介绍文本即可
+	// 
+	// 之前的问题：
+	// 1. sendInitialEvents发送content_block_start(index:0) → SSEStateManager标记block[0].Started=true
+	// 2. generateTextIntroduction再次发送content_block_start(index:0) → 违规！block已started但未stopped
+	// 3. generateTextIntroduction发送content_block_stop(index:0) → 过早关闭，与后续工具调用冲突
+	//
+	// 修复后的事件序列：
+	// 1. sendInitialEvents: content_block_start(index:0) ← 初始化文本块
+	// 2. generateTextIntroduction: content_block_delta(index:0) ← 添加介绍文本
+	// 3. [工具调用处理]: content_block_start(index:1), content_block_stop(index:1), ...
+	// 4. sendFinalEvents: content_block_stop(index:0) ← 关闭文本块
 	return []SSEEvent{
-		// 1. content_block_start for text (index:0)
-		{
-			Event: "content_block_start",
-			Data: map[string]any{
-				"type":  "content_block_start",
-				"index": 0,
-				"content_block": map[string]any{
-					"type": "text",
-					"text": "",
-				},
-			},
-		},
-		// 2. content_block_delta for text introduction
 		{
 			Event: "content_block_delta",
 			Data: map[string]any{
@@ -407,14 +408,6 @@ func (tlm *ToolLifecycleManager) generateTextIntroduction(firstTool ToolCall) []
 					"type": "text_delta",
 					"text": introText,
 				},
-			},
-		},
-		// 3. content_block_stop for text (index:0)
-		{
-			Event: "content_block_stop",
-			Data: map[string]any{
-				"type":  "content_block_stop",
-				"index": 0,
 			},
 		},
 	}
