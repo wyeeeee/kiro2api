@@ -165,16 +165,15 @@ func createAnthropicFinalEvents(outputTokens, inputTokens int, stopReason string
 		"input_tokens":  inputTokens,
 	}
 
-	// 根据Claude规范，message_delta中的usage应包含完整的token统计
-	// 包括输入tokens和可能的缓存相关tokens
-
-	// 根据Claude API规范，确保包含必要的content_block_stop事件
-	// 这是为了处理可能缺失的content_block_stop事件
+	// 删除硬编码的content_block_stop，依赖sendFinalEvents的动态保护机制
+	// sendFinalEvents在调用本函数前已经自动关闭所有未关闭的content_block（stream_processor.go:353-365）
+	// 这样避免了重复发送content_block_stop导致的违规错误
+	//
+	// 三重保护机制确保不会缺失content_block_stop：
+	// 1. ProcessEventStream正常转发上游的stop事件（99%场景）
+	// 2. sendFinalEvents遍历所有activeBlocks并补发缺失的stop（容错机制，100%覆盖）
+	// 3. handleMessageDelta在发送message_delta前的最后检查（最后保险）
 	events := []map[string]any{
-		{
-			"type":  "content_block_stop",
-			"index": 0,
-		},
 		{
 			"type": "message_delta",
 			"delta": map[string]any{
