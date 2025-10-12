@@ -190,7 +190,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 
 // HandleToolCallResult 处理工具调用结果
 func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []SSEEvent {
-	events := make([]SSEEvent, 0, 3) // 增加预分配容量以支持更多事件
+	events := make([]SSEEvent, 0, 1) // 调整预分配容量（只需要content_block_stop）
 
 	execution, exists := tlm.activeTools[result.ToolCallID]
 	if !exists {
@@ -215,8 +215,7 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 		logger.String("tool_name", execution.Name),
 		logger.Int64("execution_time", executionTime))
 
-	// 1. 生成标准的 content_block_stop 事件（符合Anthropic规范）
-	// 这替代了原来的 TOOL_CALL_RESULT 和 TOOL_EXECUTION_END 非标准事件
+	// 生成标准的 content_block_stop 事件（符合Anthropic规范）
 	events = append(events, SSEEvent{
 		Event: "content_block_stop",
 		Data: map[string]any{
@@ -229,33 +228,27 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 	tlm.completedTools[result.ToolCallID] = execution
 	delete(tlm.activeTools, result.ToolCallID)
 
-	// 2. 如果所有工具都完成了，生成 message_delta 事件（符合Anthropic规范）
-	// 这提供了工具执行完成的状态信息，替代了 TOOL_EXECUTION_END 的功能
-	if tlm.allToolsCompleted() {
-		events = append(events, SSEEvent{
-			Event: "message_delta",
-			Data: map[string]any{
-				"type": "message_delta",
-				"delta": map[string]any{
-					"stop_reason":   "tool_use",
-					"stop_sequence": nil,
-				},
-				"usage": map[string]any{
-					"output_tokens": 0,
-				},
-			},
-		})
-
-		// 注意：不在此处生成 message_stop 事件，避免与主流式处理的结束事件重复
-		// message_stop 事件由 handlers.go 中的主流式处理逻辑统一管理
-	}
+	// 修复：删除message_delta事件，由sendFinalEvents统一管理
+	// 原因：
+	// 1. message_delta在一次消息中只能出现一次（Claude API规范）
+	// 2. sendFinalEvents会在流的最后发送message_delta，包含正确的stop_reason和完整的usage
+	// 3. ToolLifecycleManager的职责是管理工具生命周期，不应该发送message级别的事件
+	//
+	// 之前的问题：
+	// - ToolLifecycleManager.HandleToolCallResult发送message_delta (stop_reason: tool_use)
+	// - sendFinalEvents再次发送message_delta (stop_reason: end_turn)
+	// - 导致"违规：message_delta只能出现一次"错误
+	//
+	// 修复后的正确流程：
+	// 1. ToolLifecycleManager: content_block_stop ← 关闭工具块
+	// 2. sendFinalEvents: message_delta + message_stop ← 统一的消息结束
 
 	return events
 }
 
 // HandleToolCallError 处理工具调用错误
 func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []SSEEvent {
-	events := make([]SSEEvent, 0, 3) // 增加预分配容量
+	events := make([]SSEEvent, 0, 2) // 调整预分配容量（error + content_block_stop）
 
 	execution, exists := tlm.activeTools[errorInfo.ToolCallID]
 	if !exists {
@@ -301,21 +294,20 @@ func (tlm *ToolLifecycleManager) HandleToolCallError(errorInfo ToolCallError) []
 		},
 	})
 
-	// 3. 生成 message_delta 事件表示消息因错误而停止
-	// 这替代了 TOOL_EXECUTION_END 的功能，提供错误状态信息
-	events = append(events, SSEEvent{
-		Event: "message_delta",
-		Data: map[string]any{
-			"type": "message_delta",
-			"delta": map[string]any{
-				"stop_reason":   "tool_error",
-				"stop_sequence": nil,
-			},
-			"usage": map[string]any{
-				"output_tokens": 0,
-			},
-		},
-	})
+	// 修复：删除message_delta事件，由sendFinalEvents统一管理
+	// 原因：
+	// 1. message_delta在一次消息中只能出现一次（Claude API规范）
+	// 2. sendFinalEvents会在流的最后发送message_delta，包含正确的stop_reason和完整的usage
+	// 3. ToolLifecycleManager的职责是管理工具生命周期，不应该发送message级别的事件
+	//
+	// 之前的问题：
+	// - ToolLifecycleManager.HandleToolCallError发送message_delta (stop_reason: tool_error)
+	// - sendFinalEvents再次发送message_delta (stop_reason: end_turn)
+	// - 导致"违规：message_delta只能出现一次"错误
+	//
+	// 修复后的正确流程：
+	// 1. ToolLifecycleManager: error event + content_block_stop ← 关闭工具块并报告错误
+	// 2. sendFinalEvents: message_delta + message_stop ← 统一的消息结束
 
 	// 移动到已完成工具列表
 	tlm.completedTools[errorInfo.ToolCallID] = execution

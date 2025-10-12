@@ -140,6 +140,42 @@ func (ssm *SSEStateManager) handleContentBlockStart(c *gin.Context, sender Strea
 		}
 	}
 
+	// *** 关键修复：在启动新工具块前，自动关闭文本块 ***
+	// 问题场景：AWS上游在工具调用(index:1+)期间仍发送文本内容给index:0
+	// 如果不在此时关闭index:0，会导致事件序列混乱：
+	// - index:0 started
+	// - index:1 started (工具块)
+	// - index:0 delta (违规！index:0未关闭)
+	// - index:1 stop
+	// - index:0 stop (延迟关闭)
+	//
+	// 修复策略：当检测到新工具块启动时，自动关闭所有未关闭的文本块
+	if blockType == "tool_use" {
+		// 遍历所有活跃块，找到未关闭的文本块
+		for blockIndex, block := range ssm.activeBlocks {
+			if block.Type == "text" && block.Started && !block.Stopped {
+				// 自动发送content_block_stop来关闭文本块
+				stopEvent := map[string]any{
+					"type":  "content_block_stop",
+					"index": blockIndex,
+				}
+				logger.Debug("工具块启动前自动关闭文本块",
+					logger.Int("text_block_index", blockIndex),
+					logger.Int("new_tool_block_index", index),
+					logger.String("reason", "prevent_event_interleaving"))
+
+				// 立即发送stop事件（在工具块start之前）
+				if err := sender.SendEvent(c, stopEvent); err != nil {
+					logger.Error("自动关闭文本块失败", logger.Err(err), logger.Int("index", blockIndex))
+				} else {
+					// 标记文本块已关闭
+					block.Stopped = true
+					logger.Debug("文本块已自动关闭", logger.Int("index", blockIndex))
+				}
+			}
+		}
+	}
+
 	// 创建或更新块状态
 	toolUseID := ""
 	if blockType == "tool_use" {
