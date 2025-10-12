@@ -268,7 +268,7 @@ func (ssm *SSEStateManager) handleContentBlockDelta(c *gin.Context, sender Strea
 
 	if block != nil && block.Stopped {
 		errMsg := fmt.Sprintf("违规：索引%d的content_block已停止，不能发送delta", index)
-		logger.Error(errMsg, logger.Int("block_index", index))
+		logger.Error(errMsg, logger.Int("block_index", index), logger.Any("eventData", eventData))
 		if ssm.strictMode {
 			return errors.New(errMsg)
 		}

@@ -42,8 +42,6 @@ type StreamProcessorContext struct {
 
 	// 文本聚合状态
 	pendingText     string
-	pendingIndex    int
-	hasPending      bool
 	lastFlushedText string
 
 	// 工具调用跟踪
