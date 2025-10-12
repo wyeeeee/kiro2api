@@ -30,9 +30,10 @@ func TestTokenManager_ConcurrentAccess(t *testing.T) {
 	tm := NewTokenManager(configs)
 
 	// 预填充缓存（模拟已刷新的token）
+	tm.mutex.Lock()
 	for i := range configs {
 		cacheKey := fmt.Sprintf("token_%d", i)
-		tm.cache.set(cacheKey, &CachedToken{
+		tm.cache.tokens[cacheKey] = &CachedToken{
 			Token: types.TokenInfo{
 				AccessToken: fmt.Sprintf("access_token_%d", i),
 				ExpiresAt:   time.Now().Add(1 * time.Hour),
@@ -40,8 +41,9 @@ func TestTokenManager_ConcurrentAccess(t *testing.T) {
 			UsageInfo: nil,
 			CachedAt:  time.Now(),
 			Available: 100.0,
-		})
+		}
 	}
+	tm.mutex.Unlock()
 
 	// 并发测试参数
 	numGoroutines := 50
@@ -57,9 +59,10 @@ func TestTokenManager_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < numIterations; j++ {
-				token := tm.selectBestToken()
-				if token == nil {
-					errorsChan <- fmt.Errorf("goroutine %d iteration %d: selectBestToken returned nil", id, j)
+				// 使用公共API getBestToken而不是内部方法
+				_, err := tm.getBestToken()
+				if err != nil {
+					errorsChan <- fmt.Errorf("goroutine %d iteration %d: getBestToken failed: %v", id, j, err)
 				}
 				// 模拟一些工作
 				time.Sleep(1 * time.Microsecond)
@@ -102,14 +105,16 @@ func TestTokenManager_ConcurrentRefresh(t *testing.T) {
 	tm := NewTokenManager(configs)
 
 	// 预填充缓存
-	tm.cache.set("token_0", &CachedToken{
+	tm.mutex.Lock()
+	tm.cache.tokens["token_0"] = &CachedToken{
 		Token: types.TokenInfo{
 			AccessToken: "access_token_0",
 			ExpiresAt:   time.Now().Add(1 * time.Hour),
 		},
 		CachedAt:  time.Now(),
 		Available: 100.0,
-	})
+	}
+	tm.mutex.Unlock()
 
 	numGoroutines := 20
 	var wg sync.WaitGroup
@@ -121,9 +126,9 @@ func TestTokenManager_ConcurrentRefresh(t *testing.T) {
 			defer wg.Done()
 
 			for j := 0; j < 50; j++ {
-				token := tm.selectBestToken()
-				if token == nil {
-					t.Errorf("goroutine %d: selectBestToken returned nil", id)
+				_, err := tm.getBestToken()
+				if err != nil {
+					t.Errorf("goroutine %d: getBestToken failed: %v", id, err)
 				}
 				time.Sleep(1 * time.Microsecond)
 			}
@@ -145,16 +150,18 @@ func TestTokenManager_RaceCondition(t *testing.T) {
 	tm := NewTokenManager(configs)
 
 	// 预填充缓存
+	tm.mutex.Lock()
 	for i := range configs {
-		tm.cache.set(fmt.Sprintf("token_%d", i), &CachedToken{
+		tm.cache.tokens[fmt.Sprintf("token_%d", i)] = &CachedToken{
 			Token: types.TokenInfo{
 				AccessToken: fmt.Sprintf("access_%d", i),
 				ExpiresAt:   time.Now().Add(1 * time.Hour),
 			},
 			CachedAt:  time.Now(),
 			Available: 50.0,
-		})
+		}
 	}
+	tm.mutex.Unlock()
 
 	var wg sync.WaitGroup
 	numGoroutines := 10
@@ -165,7 +172,7 @@ func TestTokenManager_RaceCondition(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 100; j++ {
-				_ = tm.selectBestToken()
+				_, _ = tm.getBestToken()
 			}
 		}()
 	}
@@ -185,16 +192,18 @@ func TestTokenManager_SequentialSelection(t *testing.T) {
 	tm := NewTokenManager(configs)
 
 	// 预填充缓存 - 每个token只有少量可用次数
+	tm.mutex.Lock()
 	for i := range configs {
-		tm.cache.set(fmt.Sprintf("token_%d", i), &CachedToken{
+		tm.cache.tokens[fmt.Sprintf("token_%d", i)] = &CachedToken{
 			Token: types.TokenInfo{
 				AccessToken: fmt.Sprintf("access_%d", i),
 				ExpiresAt:   time.Now().Add(1 * time.Hour),
 			},
 			CachedAt:  time.Now(),
 			Available: 5.0, // 每个token只有5次使用机会
-		})
+		}
 	}
+	tm.mutex.Unlock()
 
 	// 验证顺序选择：使用getBestToken会递减Available
 	selectedTokens := make(map[string]int)

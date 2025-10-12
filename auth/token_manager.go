@@ -20,10 +20,10 @@ type TokenManager struct {
 	exhausted    map[string]bool // 已耗尽的token记录
 }
 
-// SimpleTokenCache 简化的token缓存
+// SimpleTokenCache 简化的token缓存（纯数据结构，无锁）
+// 所有并发访问由 TokenManager.mutex 统一管理
 type SimpleTokenCache struct {
 	tokens map[string]*CachedToken
-	mutex  sync.RWMutex
 	ttl    time.Duration
 }
 
@@ -63,43 +63,38 @@ func NewTokenManager(configs []AuthConfig) *TokenManager {
 }
 
 // getBestToken 获取最优可用token
+// 统一锁管理：所有操作在单一锁保护下完成，避免多次加锁/解锁
 func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
-	tm.mutex.RLock()
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
 
-	// 检查是否需要刷新缓存
-	needRefresh := time.Since(tm.lastRefresh) > config.TokenCacheTTL
-	tm.mutex.RUnlock()
-
-	if needRefresh {
-		if err := tm.refreshCache(); err != nil {
+	// 检查是否需要刷新缓存（在锁内）
+	if time.Since(tm.lastRefresh) > config.TokenCacheTTL {
+		if err := tm.refreshCacheUnlocked(); err != nil {
 			logger.Warn("刷新token缓存失败", logger.Err(err))
 		}
 	}
 
-	// 选择最优token（selectBestToken内部会加锁）
-	bestToken := tm.selectBestToken()
+	// 选择最优token（内部方法，不加锁）
+	bestToken := tm.selectBestTokenUnlocked()
 	if bestToken == nil {
 		return types.TokenInfo{}, fmt.Errorf("没有可用的token")
 	}
 
-	// 更新最后使用时间（需要加锁保护）
-	tm.mutex.Lock()
-	tm.cache.updateLastUsed(bestToken)
-	tokenCopy := bestToken.Token
-	tm.mutex.Unlock()
+	// 更新最后使用时间（在锁内，安全）
+	bestToken.LastUsed = time.Now()
+	if bestToken.Available > 0 {
+		bestToken.Available--
+	}
 
-	return tokenCopy, nil
+	return bestToken.Token, nil
 }
 
-// selectBestToken 按配置顺序选择下一个可用token（并发安全）
-// 修复：使用单一锁策略，避免锁嵌套导致的死锁风险
-func (tm *TokenManager) selectBestToken() *CachedToken {
-	// 单一锁保护所有状态访问，避免死锁
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-
-	// 安全访问cache.tokens (cache是tm的私有字段，在tm.mutex保护下安全)
-	// 注意：直接访问cache.tokens，不获取cache.mutex，避免锁嵌套
+// selectBestTokenUnlocked 按配置顺序选择下一个可用token
+// 内部方法：调用者必须持有 tm.mutex
+// 重构说明：从selectBestToken改为Unlocked后缀，明确锁约定
+func (tm *TokenManager) selectBestTokenUnlocked() *CachedToken {
+	// 调用者已持有 tm.mutex，无需额外加锁
 
 	// 如果没有配置顺序，降级到按map遍历顺序
 	if len(tm.configOrder) == 0 {
@@ -154,11 +149,9 @@ func (tm *TokenManager) selectBestToken() *CachedToken {
 	return nil
 }
 
-// refreshCache 刷新token缓存
-func (tm *TokenManager) refreshCache() error {
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-
+// refreshCacheUnlocked 刷新token缓存
+// 内部方法：调用者必须持有 tm.mutex
+func (tm *TokenManager) refreshCacheUnlocked() error {
 	logger.Debug("开始刷新token缓存")
 
 	for i, config := range tm.configs {
@@ -189,14 +182,14 @@ func (tm *TokenManager) refreshCache() error {
 			available = 100.0 // 默认值 - 保留硬编码避免与变量名冲突
 		}
 
-		// 更新缓存
+		// 更新缓存（直接访问，已在tm.mutex保护下）
 		cacheKey := fmt.Sprintf("token_%d", i)
-		tm.cache.set(cacheKey, &CachedToken{
+		tm.cache.tokens[cacheKey] = &CachedToken{
 			Token:     token,
 			UsageInfo: usageInfo,
 			CachedAt:  time.Now(),
 			Available: available,
-		})
+		}
 
 		logger.Debug("token缓存更新",
 			logger.String("cache_key", cacheKey),
@@ -218,22 +211,10 @@ func (ct *CachedToken) IsUsable() bool {
 	return ct.Available > 0
 }
 
-// set 设置缓存项
-func (stc *SimpleTokenCache) set(key string, token *CachedToken) {
-	stc.mutex.Lock()
-	defer stc.mutex.Unlock()
-	stc.tokens[key] = token
-}
-
-// updateLastUsed 更新最后使用时间
-// 注意：此方法必须在外部已持有tm.mutex的情况下调用
-func (stc *SimpleTokenCache) updateLastUsed(token *CachedToken) {
-	// 不需要额外加锁，依赖调用者持有tm.mutex
-	token.LastUsed = time.Now()
-	if token.Available > 0 {
-		token.Available--
-	}
-}
+// *** 已删除 set 和 updateLastUsed 方法 ***
+// SimpleTokenCache 现在是纯数据结构，所有访问由 TokenManager.mutex 保护
+// set 操作：直接通过 tm.cache.tokens[key] = value 完成
+// updateLastUsed 操作：已合并到 getBestToken 方法中
 
 // CalculateAvailableCount 计算可用次数 (基于CREDIT资源类型，返回浮点精度)
 func CalculateAvailableCount(usage *types.UsageLimits) float64 {
