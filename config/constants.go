@@ -4,9 +4,6 @@ import "time"
 
 // Token管理常量
 const (
-	// DefaultTokenAvailableCount 默认token可用次数
-	DefaultTokenAvailableCount = 100.0
-
 	// TokenCacheKeyFormat token缓存key格式
 	TokenCacheKeyFormat = "token_%d"
 

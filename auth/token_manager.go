@@ -179,7 +179,6 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 			available = CalculateAvailableCount(usage)
 		} else {
 			logger.Warn("检查使用限制失败", logger.Err(checkErr))
-			available = config.DefaultTokenAvailableCount
 		}
 
 		// 更新缓存（直接访问，已在tm.mutex保护下）
