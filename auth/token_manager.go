@@ -154,17 +154,17 @@ func (tm *TokenManager) selectBestTokenUnlocked() *CachedToken {
 func (tm *TokenManager) refreshCacheUnlocked() error {
 	logger.Debug("开始刷新token缓存")
 
-	for i, config := range tm.configs {
-		if config.Disabled {
+	for i, cfg := range tm.configs {
+		if cfg.Disabled {
 			continue
 		}
 
 		// 刷新token
-		token, err := tm.refreshSingleToken(config)
+		token, err := tm.refreshSingleToken(cfg)
 		if err != nil {
 			logger.Warn("刷新单个token失败",
 				logger.Int("config_index", i),
-				logger.String("auth_type", config.AuthType),
+				logger.String("auth_type", cfg.AuthType),
 				logger.Err(err))
 			continue
 		}
@@ -179,11 +179,11 @@ func (tm *TokenManager) refreshCacheUnlocked() error {
 			available = CalculateAvailableCount(usage)
 		} else {
 			logger.Warn("检查使用限制失败", logger.Err(checkErr))
-			available = 100.0 // 默认值 - 保留硬编码避免与变量名冲突
+			available = config.DefaultTokenAvailableCount
 		}
 
 		// 更新缓存（直接访问，已在tm.mutex保护下）
-		cacheKey := fmt.Sprintf("token_%d", i)
+		cacheKey := fmt.Sprintf(config.TokenCacheKeyFormat, i)
 		tm.cache.tokens[cacheKey] = &CachedToken{
 			Token:     token,
 			UsageInfo: usageInfo,
@@ -247,7 +247,7 @@ func generateConfigOrder(configs []AuthConfig) []string {
 
 	for i := range configs {
 		// 使用索引生成cache key，与refreshCache中的逻辑保持一致
-		cacheKey := fmt.Sprintf("token_%d", i)
+		cacheKey := fmt.Sprintf(config.TokenCacheKeyFormat, i)
 		order = append(order, cacheKey)
 	}
 

@@ -9,6 +9,9 @@ const (
 
 	// TokenCacheKeyFormat token缓存key格式
 	TokenCacheKeyFormat = "token_%d"
+
+	// TokenRefreshCleanupDelay token刷新完成后的清理延迟
+	TokenRefreshCleanupDelay = 5 * time.Second
 )
 
 // 消息处理常量

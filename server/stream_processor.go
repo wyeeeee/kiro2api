@@ -399,7 +399,7 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 	ctx.stopReasonManager.UpdateToolCallStatus(hasActiveTools, hasCompletedTools)
 
 	// 计算输出tokens（使用TokenEstimator统一算法）
-	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*4, ctx.rawDataBuffer.Len())]
+	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*config.TokenEstimationRatio, ctx.rawDataBuffer.Len())]
 	baseTokens := ctx.tokenEstimator.EstimateTextTokens(content)
 
 	// 如果包含工具调用，增加结构化开销

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"kiro2api/config"
 	"kiro2api/types"
 	"sync"
 	"testing"
@@ -32,7 +33,7 @@ func TestTokenManager_ConcurrentAccess(t *testing.T) {
 	// 预填充缓存（模拟已刷新的token）
 	tm.mutex.Lock()
 	for i := range configs {
-		cacheKey := fmt.Sprintf("token_%d", i)
+		cacheKey := fmt.Sprintf(config.TokenCacheKeyFormat, i)
 		tm.cache.tokens[cacheKey] = &CachedToken{
 			Token: types.TokenInfo{
 				AccessToken: fmt.Sprintf("access_token_%d", i),
@@ -152,7 +153,7 @@ func TestTokenManager_RaceCondition(t *testing.T) {
 	// 预填充缓存
 	tm.mutex.Lock()
 	for i := range configs {
-		tm.cache.tokens[fmt.Sprintf("token_%d", i)] = &CachedToken{
+		tm.cache.tokens[fmt.Sprintf(config.TokenCacheKeyFormat, i)] = &CachedToken{
 			Token: types.TokenInfo{
 				AccessToken: fmt.Sprintf("access_%d", i),
 				ExpiresAt:   time.Now().Add(1 * time.Hour),
@@ -194,7 +195,7 @@ func TestTokenManager_SequentialSelection(t *testing.T) {
 	// 预填充缓存 - 每个token只有少量可用次数
 	tm.mutex.Lock()
 	for i := range configs {
-		tm.cache.tokens[fmt.Sprintf("token_%d", i)] = &CachedToken{
+		tm.cache.tokens[fmt.Sprintf(config.TokenCacheKeyFormat, i)] = &CachedToken{
 			Token: types.TokenInfo{
 				AccessToken: fmt.Sprintf("access_%d", i),
 				ExpiresAt:   time.Now().Add(1 * time.Hour),

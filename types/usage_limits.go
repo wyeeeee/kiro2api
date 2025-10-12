@@ -1,6 +1,7 @@
 package types
 
 import (
+	"kiro2api/config"
 	"strings"
 	"time"
 )
@@ -133,8 +134,8 @@ func (t *TokenWithUsage) NeedsUsageRefresh() bool {
 		return true
 	}
 
-	// 如果上次检查超过5分钟
-	if time.Since(t.LastUsageCheck) > 5*time.Minute {
+	// 如果上次检查超过TokenCacheTTL
+	if time.Since(t.LastUsageCheck) > config.TokenCacheTTL {
 		return true
 	}
 

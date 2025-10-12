@@ -82,7 +82,7 @@ func init() {
 
 	// 长时间请求客户端
 	longTransport := createBaseTransport()
-	longTransport.ResponseHeaderTimeout = 5 * time.Minute // 响应头超时延长到5分钟
+	longTransport.ResponseHeaderTimeout = config.ResponseHeaderTimeout
 	LongRequestClient = &http.Client{
 		Timeout:   defaultTimeout,
 		Transport: longTransport,

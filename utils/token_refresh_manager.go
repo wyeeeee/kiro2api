@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"kiro2api/config"
 	"kiro2api/logger"
 	"kiro2api/types"
 )
@@ -138,7 +139,7 @@ func (trm *TokenRefreshManager) CompleteRefresh(tokenIdx int, tokenInfo *types.T
 
 	// 设置延迟清理，避免立即删除状态（给其他goroutine一些时间获取结果）
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(config.TokenRefreshCleanupDelay)
 		trm.refreshing.Delete(tokenIdx)
 		logger.Debug("清理已完成的刷新任务状态", logger.Int("token_index", tokenIdx))
 	}()

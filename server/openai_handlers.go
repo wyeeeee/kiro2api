@@ -360,7 +360,7 @@ func handleOpenAIStreamRequest(c *gin.Context, anthropicReq types.AnthropicReque
 				} else {
 					// 使用select支持context取消
 					select {
-					case <-time.After(100 * time.Millisecond):
+					case <-time.After(config.RetryDelay):
 						continue
 					case <-c.Request.Context().Done():
 						hasMoreData = false
