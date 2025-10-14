@@ -97,9 +97,6 @@ const (
 
 // 文本处理常量
 const (
-	// ToolInputPreviewLength 工具输入预览长度
-	ToolInputPreviewLength = 128
-
-	// MinTextLength 最小文本长度（用于去重）
-	MinTextLength = 2
+    // MinTextLength 最小文本长度（用于去重）
+    MinTextLength = 2
 )

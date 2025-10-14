@@ -682,25 +682,17 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			// 获取工具的块索引
 			toolIndex := h.toolManager.GetBlockIndex(evt.ToolUseId)
 			if toolIndex >= 0 {
-				// 验证输入片段的基本格式（智能处理大片段）
-				if len(inputStr) > 50000 { // 提高阈值到50KB，避免正常大型内容被截断
-					logger.Warn("工具调用输入片段非常大，跳过增量事件发送（但保留完整数据用于聚合）",
-						logger.String("toolUseId", evt.ToolUseId),
-						logger.Int("originalLength", len(inputStr)))
-					// 不截断数据，只是跳过增量事件发送，让聚合器处理完整数据
-					return []SSEEvent{}, nil
-				}
 
-				logger.Debug("发送工具参数增量事件",
-					logger.String("toolUseId", evt.ToolUseId),
-					logger.Int("blockIndex", toolIndex),
-					logger.String("inputFragment", func() string {
-						if len(inputStr) > 100 {
-							return inputStr[:100] + "..."
-						}
-						return inputStr
-					}()),
-					logger.Bool("incremental_enabled", true))
+				// logger.Debug("发送工具参数增量事件",
+				// 	logger.String("toolUseId", evt.ToolUseId),
+				// 	logger.Int("blockIndex", toolIndex),
+				// 	logger.String("inputFragment", func() string {
+				// 		if len(inputStr) > 100 {
+				// 			return inputStr[:100] + "..."
+				// 		}
+				// 		return inputStr
+				// 	}()),
+				// 	logger.Bool("incremental_enabled", true))
 
 				return []SSEEvent{{
 					Event: "content_block_delta",

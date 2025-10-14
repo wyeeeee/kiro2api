@@ -7,14 +7,7 @@ import "time"
 const (
 	// ========== 文本流式传输调优 ==========
 
-	// MinTextFlushChars 文本聚合的最小冲刷字符数
-	// 避免极短片段导致颗粒化，降低到6字节（约2个中文字符）
-	// 权衡：短文本及时性 vs 网络开销
-	MinTextFlushChars = 6
-
-	// TextFlushMaxChars 文本聚合的最大缓冲字符数
-	// 达到此阈值即使未遇到标点也强制冲刷
-	TextFlushMaxChars = 64
+    // 文本聚合已移除（直传SSE），相关阈值删除
 
 	// ========== 解析器配置 ==========
 

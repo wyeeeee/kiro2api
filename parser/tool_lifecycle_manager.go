@@ -86,9 +86,9 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 		events = append(events, textIntroEvents...)
 		tlm.textIntroGenerated = true
 
-		logger.Debug("自动生成工具调用文本介绍",
-			logger.Int("intro_events", len(textIntroEvents)),
-			logger.String("first_tool", request.ToolCalls[0].Function.Name))
+		// logger.Debug("自动生成工具调用文本介绍",
+		// 	logger.Int("intro_events", len(textIntroEvents)),
+		// 	logger.String("first_tool", request.ToolCalls[0].Function.Name))
 	}
 
 	for _, toolCall := range request.ToolCalls {

@@ -270,8 +270,8 @@ func (rp *RobustEventStreamParser) validateToolUseIdIntegrity(message *EventStre
 					logger.String("message_type", message.MessageType),
 					logger.String("event_type", message.EventType))
 			} else {
-				logger.Debug("tool_use_id格式验证通过",
-					logger.String("tool_use_id", toolUseId))
+				// logger.Debug("tool_use_id格式验证通过",
+				// 	logger.String("tool_use_id", toolUseId))
 			}
 		}
 	}
@@ -323,10 +323,10 @@ func (rp *RobustEventStreamParser) extractToolUseIds(payload string) []string {
 			// 验证格式有效性
 			if rp.isValidToolUseIdFormat(toolUseId) {
 				toolUseIds = append(toolUseIds, toolUseId)
-				logger.Debug("提取到tool_use_id",
-					logger.String("tool_use_id", toolUseId),
-					logger.Int("start_pos", actualStart),
-					logger.Int("end_pos", end))
+				// logger.Debug("提取到tool_use_id",
+				// 	logger.String("tool_use_id", toolUseId),
+				// 	logger.Int("start_pos", actualStart),
+				// 	logger.Int("end_pos", end))
 			} else {
 				logger.Warn("跳过格式无效的tool_use_id",
 					logger.String("invalid_id", toolUseId))

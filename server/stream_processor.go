@@ -40,13 +40,9 @@ type StreamProcessorContext struct {
 	totalProcessedEvents int
 	lastParseErr         error
 
-	// 文本聚合状态
-	pendingText     string
-	lastFlushedText string
-
-	// 工具调用跟踪
-	toolUseIdByBlockIndex map[int]string
-	completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
+    // 工具调用跟踪
+    toolUseIdByBlockIndex map[int]string
+    completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
 
 	// 原始数据缓冲
 	rawDataBuffer *strings.Builder
@@ -109,101 +105,12 @@ func (ctx *StreamProcessorContext) Cleanup() {
 		ctx.completedToolUseIds = nil
 	}
 
-	// 清空文本聚合状态
-	ctx.pendingText = ""
-	ctx.lastFlushedText = ""
-
-	// 清理管理器引用，帮助GC
-	ctx.sseStateManager = nil
-	ctx.stopReasonManager = nil
-	ctx.tokenEstimator = nil
+    // 清理管理器引用，帮助GC
+    ctx.sseStateManager = nil
+    ctx.stopReasonManager = nil
+    ctx.tokenEstimator = nil
 }
 
-// TextAggregator 文本聚合器，负责文本增量的智能聚合
-// 遵循 KISS 原则：简单高效的聚合逻辑
-type TextAggregator struct {
-	pendingText     string
-	pendingIndex    int
-	hasPending      bool
-	lastFlushedText string
-	minFlushChars   int
-	maxFlushChars   int
-}
-
-// NewTextAggregator 创建文本聚合器
-func NewTextAggregator() *TextAggregator {
-	return &TextAggregator{
-		minFlushChars: config.MinTextFlushChars,
-		maxFlushChars: config.TextFlushMaxChars,
-	}
-}
-
-// AddText 添加文本片段
-func (ta *TextAggregator) AddText(index int, text string) {
-	ta.pendingIndex = index
-	ta.pendingText += text
-	ta.hasPending = true
-}
-
-// ShouldFlush 判断是否应该冲刷文本
-func (ta *TextAggregator) ShouldFlush() bool {
-	if !ta.hasPending {
-		return false
-	}
-
-	// 达到基本长度阈值
-	if len(ta.pendingText) >= ta.minFlushChars {
-		return true
-	}
-
-	// 遇到中文或英文标点、换行时立即冲刷
-	// 包含：句号、感叹号、问号、分号、冒号、逗号、顿号、换行
-	if strings.ContainsAny(ta.pendingText, "。！？；：，、\n.!?;:,") {
-		return true
-	}
-
-	// 达到最大长度
-	if len(ta.pendingText) >= ta.maxFlushChars {
-		return true
-	}
-
-	return false
-}
-
-// Flush 冲刷待处理文本，返回要发送的事件
-func (ta *TextAggregator) Flush() (map[string]any, bool) {
-	if !ta.hasPending {
-		return nil, false
-	}
-
-	trimmed := strings.TrimSpace(ta.pendingText)
-	// 去重检查
-	if len([]rune(trimmed)) < config.MinTextLength || trimmed == strings.TrimSpace(ta.lastFlushedText) {
-		ta.hasPending = false
-		ta.pendingText = ""
-		return nil, false
-	}
-
-	event := map[string]any{
-		"type":  "content_block_delta",
-		"index": ta.pendingIndex,
-		"delta": map[string]any{
-			"type": "text_delta",
-			"text": ta.pendingText,
-		},
-	}
-
-	ta.lastFlushedText = ta.pendingText
-	ta.hasPending = false
-	ta.pendingText = ""
-
-	return event, true
-}
-
-// GetPendingTextLength 获取待处理文本长度
-func (ta *TextAggregator) GetPendingTextLength() int {
-	return len(ta.pendingText)
-}
 
 // initializeSSEResponse 初始化SSE响应头
 func initializeSSEResponse(c *gin.Context) error {
@@ -298,75 +205,8 @@ func (ctx *StreamProcessorContext) processToolUseStop(dataMap map[string]any) {
 	}
 }
 
-// processTextDelta 处理文本增量事件
-func (ctx *StreamProcessorContext) processTextDelta(dataMap map[string]any, aggregator *TextAggregator) bool {
-	delta, ok := dataMap["delta"].(map[string]any)
-	if !ok {
-		return false
-	}
+// 直传模式：不再进行文本聚合
 
-	dType, _ := delta["type"].(string)
-	if dType != "text_delta" {
-		return false
-	}
-
-	txt, ok := delta["text"].(string)
-	if !ok {
-		return false
-	}
-
-	idx := extractIndex(dataMap)
-	aggregator.AddText(idx, txt)
-
-	// 调试日志
-	preview := txt
-	if len(preview) > config.DebugPayloadPreviewLength {
-		preview = preview[:config.DebugPayloadPreviewLength] + "..."
-	}
-	logger.Debug("转发文本增量",
-		addReqFields(ctx.c,
-			logger.Int("len", len(txt)),
-			logger.String("preview", preview),
-			logger.String("direction", "downstream_send"),
-		)...)
-
-	return true // 返回true表示已处理，不需要转发原始事件
-}
-
-// processToolInputDelta 处理工具参数增量
-func processToolInputDelta(dataMap map[string]any) {
-	delta, ok := dataMap["delta"].(map[string]any)
-	if !ok {
-		return
-	}
-
-	dType, _ := delta["type"].(string)
-	if dType != "input_json_delta" {
-		return
-	}
-
-	partialJSON := getStringField(delta, "partial_json")
-	if partialJSON == "" {
-		return
-	}
-
-	// 只打印前N字符
-	preview := partialJSON
-	if len(preview) > config.ToolInputPreviewLength {
-		preview = preview[:config.ToolInputPreviewLength] + "..."
-	}
-
-	idx := extractIndex(dataMap)
-	logger.Debug("转发tool_use参数增量",
-		logger.Int("index", idx),
-		logger.Int("partial_len", len(preview)),
-		logger.String("partial_preview", preview))
-
-	// 额外：尝试解析出file_path与content长度
-	if strings.Contains(partialJSON, "file_path") || strings.Contains(partialJSON, "content") {
-		logger.Debug("Write参数预览", logger.String("raw", preview))
-	}
-}
 
 // sendFinalEvents 发送结束事件
 func (ctx *StreamProcessorContext) sendFinalEvents() error {
@@ -487,16 +327,14 @@ func getStringField(m map[string]any, key string) string {
 // EventStreamProcessor 事件流处理器
 // 遵循单一职责原则：专注于处理事件流
 type EventStreamProcessor struct {
-	ctx        *StreamProcessorContext
-	aggregator *TextAggregator
+    ctx *StreamProcessorContext
 }
 
 // NewEventStreamProcessor 创建事件流处理器
 func NewEventStreamProcessor(ctx *StreamProcessorContext) *EventStreamProcessor {
-	return &EventStreamProcessor{
-		ctx:        ctx,
-		aggregator: NewTextAggregator(),
-	}
+    return &EventStreamProcessor{
+        ctx: ctx,
+    }
 }
 
 // ProcessEventStream 处理事件流的主循环
@@ -561,8 +399,8 @@ func (esp *EventStreamProcessor) ProcessEventStream(reader io.Reader) error {
 		}
 	}
 
-	// 冲刷剩余文本
-	return esp.flushRemainingText()
+    // 直传模式：无需冲刷剩余文本
+    return nil
 }
 
 // processEvent 处理单个事件
@@ -576,27 +414,16 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 	eventType, _ := dataMap["type"].(string)
 
 	// 处理不同类型的事件
-	switch eventType {
-	case "content_block_start":
-		// 在启动新块前，先冲刷待处理文本（防止自动关闭文本块时丢失文本）
-		if err := esp.flushPendingText(); err != nil {
-			return err
-		}
-		esp.ctx.processToolUseStart(dataMap)
+    switch eventType {
+    case "content_block_start":
+        esp.ctx.processToolUseStart(dataMap)
 
-	case "content_block_delta":
-		// 处理文本增量（聚合发送）
-		if esp.processContentBlockDelta(dataMap) {
-			return nil // 已聚合，不转发原始事件
-		}
+    case "content_block_delta":
+        // 直传：不做聚合
 
-	case "content_block_stop":
-		// 冲刷待处理文本
-		if err := esp.flushPendingText(); err != nil {
-			return err
-		}
-		esp.ctx.processToolUseStop(dataMap)
-		logger.Debug("转发内容块结束", logger.Int("index", extractIndex(dataMap)))
+    case "content_block_stop":
+        esp.ctx.processToolUseStop(dataMap)
+        logger.Debug("转发内容块结束", logger.Int("index", extractIndex(dataMap)))
 
 	case "message_delta":
 		if delta, ok := dataMap["delta"].(map[string]any); ok {
@@ -612,17 +439,22 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 		}
 	}
 
-	// 使用状态管理器发送事件
-	if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, dataMap); err != nil {
-		logger.Error("SSE事件发送违规", logger.Err(err))
-		// 非严格模式下，违规事件被跳过但不中断流
-	}
+    // 使用状态管理器发送事件（直传）
+    if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, dataMap); err != nil {
+        logger.Error("SSE事件发送违规", logger.Err(err))
+        // 非严格模式下，违规事件被跳过但不中断流
+    }
 
-	// 更新输出字符统计
-	if event.Event == "content_block_delta" {
-		content, _ := utils.GetMessageContent(event.Data)
-		esp.ctx.totalOutputChars += len(content)
-	}
+    // 更新输出字符统计
+    if event.Event == "content_block_delta" {
+        if delta, ok := dataMap["delta"].(map[string]any); ok {
+            if dType, _ := delta["type"].(string); dType == "text_delta" {
+                if txt, ok := delta["text"].(string); ok {
+                    esp.ctx.totalOutputChars += len(txt)
+                }
+            }
+        }
+    }
 
 	esp.ctx.c.Writer.Flush()
 	return nil
@@ -630,32 +462,7 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 
 // processContentBlockDelta 处理content_block_delta事件
 // 返回true表示已处理（聚合），不需要转发原始事件
-func (esp *EventStreamProcessor) processContentBlockDelta(dataMap map[string]any) bool {
-	delta, ok := dataMap["delta"].(map[string]any)
-	if !ok {
-		return false
-	}
-
-	deltaType, _ := delta["type"].(string)
-
-	switch deltaType {
-	case "text_delta":
-		// 文本增量：聚合处理
-		if esp.ctx.processTextDelta(dataMap, esp.aggregator) {
-			// 检查是否需要冲刷
-			if esp.aggregator.ShouldFlush() {
-				_ = esp.flushPendingText()
-			}
-			return true // 已聚合，跳过原始事件
-		}
-
-	case "input_json_delta":
-		// 工具参数增量：直接记录日志
-		processToolInputDelta(dataMap)
-	}
-
-	return false
-}
+// processContentBlockDelta 已废弃（直传模式不再需要）
 
 // handleExceptionEvent 处理上游异常事件，检查是否需要映射为max_tokens
 // 返回true表示已处理并转换，不需要转发原始exception事件
@@ -672,10 +479,7 @@ func (esp *EventStreamProcessor) handleExceptionEvent(dataMap map[string]any) bo
 				logger.String("exception_type", exceptionType),
 				logger.String("claude_stop_reason", "max_tokens"))...)
 
-		// 先冲刷待处理文本
-		_ = esp.flushPendingText()
-
-		// 关闭所有活跃的content_block
+        // 关闭所有活跃的content_block
 		activeBlocks := esp.ctx.sseStateManager.GetActiveBlocks()
 		for index, block := range activeBlocks {
 			if block.Started && !block.Stopped {
@@ -724,32 +528,4 @@ func (esp *EventStreamProcessor) handleExceptionEvent(dataMap map[string]any) bo
 	return false
 }
 
-// flushPendingText 冲刷待处理文本
-func (esp *EventStreamProcessor) flushPendingText() error {
-	event, ok := esp.aggregator.Flush()
-	if !ok {
-		return nil
-	}
-
-	if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, event); err != nil {
-		logger.Error("flushPending事件发送违规", logger.Err(err))
-		return err
-	}
-
-	// 更新统计
-	if delta, ok := event["delta"].(map[string]any); ok {
-		if text, ok := delta["text"].(string); ok {
-			esp.ctx.totalOutputChars += len(text)
-		}
-	}
-
-	return nil
-}
-
-// flushRemainingText 冲刷剩余文本
-func (esp *EventStreamProcessor) flushRemainingText() error {
-	if esp.aggregator.GetPendingTextLength() > 0 {
-		return esp.flushPendingText()
-	}
-	return nil
-}
+// 直传模式：无flush逻辑
