@@ -363,13 +363,13 @@ func (esp *EventStreamProcessor) ProcessEventStream(reader io.Reader) error {
 			}
 
 			esp.ctx.totalProcessedEvents += len(events)
-			logger.Debug("解析到符合规范的CW事件批次",
-				addReqFields(esp.ctx.c,
-					logger.String("direction", "upstream_response"),
-					logger.Int("batch_events", len(events)),
-					logger.Int("read_bytes", n),
-					logger.Bool("has_parse_error", parseErr != nil),
-				)...)
+			// logger.Debug("解析到符合规范的CW事件批次",
+			// 	addReqFields(esp.ctx.c,
+			// 		logger.String("direction", "upstream_response"),
+			// 		logger.Int("batch_events", len(events)),
+			// 		logger.Int("read_bytes", n),
+			// 		logger.Bool("has_parse_error", parseErr != nil),
+			// 	)...)
 
 			// 处理每个事件
 			for _, event := range events {

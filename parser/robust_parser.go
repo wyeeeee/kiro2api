@@ -123,7 +123,7 @@ func (rp *RobustEventStreamParser) parseSingleMessageWithValidation(data []byte)
 	payloadData := data[payloadStart:payloadEnd]
 
 	// 添加详细的payload调试信息
-	logger.Debug("Payload调试信息（修复后）",
+	logger.Debug("Payload调试信息",
 		logger.Int("total_length", int(totalLength)),
 		logger.Int("header_length", int(headerLength)),
 		logger.String("prelude_crc", fmt.Sprintf("%08x", preludeCRC)),
