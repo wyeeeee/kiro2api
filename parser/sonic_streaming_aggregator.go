@@ -91,113 +91,93 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 
 	// AWS EventStream按字节边界分片传输，导致UTF-8中文字符截断问题
 	// 只有在收到停止信号时才进行最终解析，避免中途解析损坏的JSON片段
-	shouldParse := stop
-
-	var parseResult string
-	if shouldParse {
-		// 使用Sonic尝试解析当前缓冲区
-		parseResult = streamer.tryParseWithSonic()
-
-		logger.Debug("Sonic流式JSON解析进度",
-			logger.String("toolUseId", toolUseId),
-			logger.String("fragment", input),
-			logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
-			logger.Bool("isPartialJSON", streamer.state.isPartialJSON),
-			logger.Bool("stop", stop),
-			logger.String("parseStatus", parseResult),
-			logger.Int("fragmentCount", streamer.fragmentCount),
-			logger.Int("totalBytes", streamer.totalBytes))
-	} else {
-		// AWS EventStream分片传输：仅累积数据，避免解析截断的UTF-8字符
-		logger.Debug("EventStream分片累积数据",
-			logger.String("toolUseId", toolUseId),
-			logger.String("fragment", input),
-			logger.Int("bufferSize", streamer.buffer.Len()),
-			logger.Int("fragmentCount", streamer.fragmentCount),
-			logger.Int("totalBytes", streamer.totalBytes),
-			logger.String("reason", "awaiting_stop_signal_for_complete_json"))
-
-		parseResult = "streaming_accumulation"
+	if !stop {
+		return false, ""
 	}
 
-	// 如果收到停止信号
-	if stop {
-		streamer.isComplete = true
+	// 收到停止信号，使用Sonic尝试解析当前缓冲区
+	parseResult := streamer.tryParseWithSonic()
 
-		// *** 关键修复：区分无参数工具和真正的JSON不完整 ***
-		// 检查是否真的有数据但JSON不完整
-		hasActualData := streamer.fragmentCount > 0 || streamer.totalBytes > 0
+	logger.Debug("Sonic流式JSON解析完成",
+		logger.String("toolUseId", toolUseId),
+		logger.String("parseStatus", parseResult),
+		logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
+		logger.Int("fragmentCount", streamer.fragmentCount),
+		logger.Int("totalBytes", streamer.totalBytes))
 
-		// 最终尝试解析或生成基础JSON
-		if !streamer.state.hasValidJSON {
-			if hasActualData {
-				// 只有真正收到数据但解析失败时才记录"未完整"日志
-				logger.Debug("停止时JSON未完整",
-					logger.String("toolUseId", toolUseId),
-					logger.Int("bufferSize", streamer.buffer.Len()),
-					logger.Int("fragmentCount", streamer.fragmentCount),
-					logger.Int("totalBytes", streamer.totalBytes))
+	streamer.isComplete = true
 
-			} else {
-				// 无参数工具的正常情况，直接生成默认JSON，不记录误导性日志
-				logger.Debug("工具无参数，使用默认参数格式",
-					logger.String("toolUseId", toolUseId),
-					logger.String("toolName", name))
-			}
-		}
+	// *** 关键修复：区分无参数工具和真正的JSON不完整 ***
+	// 检查是否真的有数据但JSON不完整
+	hasActualData := streamer.fragmentCount > 0 || streamer.totalBytes > 0
 
-		if streamer.state.hasValidJSON && streamer.result != nil {
-			// 使用Sonic序列化结果
-			if jsonBytes, err := utils.FastMarshal(streamer.result); err == nil {
-				fullInput = string(jsonBytes)
-			} else {
-				logger.Error("Sonic序列化失败，无法生成工具输入",
-					logger.Err(err),
-					logger.String("toolName", streamer.toolName))
-				// 使用空JSON对象，让工具调用失败
-				fullInput = "{}"
-			}
+	// 最终尝试解析或生成基础JSON
+	if !streamer.state.hasValidJSON {
+		if hasActualData {
+			// 只有真正收到数据但解析失败时才记录"未完整"日志
+			logger.Debug("停止时JSON未完整",
+				logger.String("toolUseId", toolUseId),
+				logger.Int("bufferSize", streamer.buffer.Len()),
+				logger.Int("fragmentCount", streamer.fragmentCount),
+				logger.Int("totalBytes", streamer.totalBytes))
+
 		} else {
-			// 🔥 核心修复：区分真正的错误和无参数工具
-			if streamer.fragmentCount == 0 && streamer.totalBytes == 0 {
-				// 无参数工具，使用 Debug 级别（正常情况）
-				logger.Debug("工具无参数，使用默认空对象",
-					logger.String("toolName", streamer.toolName))
-			} else {
-				// 真正的解析失败，使用 Error 级别
-				logger.Error("流式解析失败，无有效JSON结果",
-					logger.String("toolName", streamer.toolName),
-					logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
-					logger.Int("fragmentCount", streamer.fragmentCount),
-					logger.Int("totalBytes", streamer.totalBytes))
-			}
-			// 使用空JSON对象
+			// 无参数工具的正常情况，直接生成默认JSON，不记录误导性日志
+			logger.Debug("工具无参数，使用默认参数格式",
+				logger.String("toolUseId", toolUseId),
+				logger.String("toolName", name))
+		}
+	}
+
+	if streamer.state.hasValidJSON && streamer.result != nil {
+		// 使用Sonic序列化结果
+		if jsonBytes, err := utils.FastMarshal(streamer.result); err == nil {
+			fullInput = string(jsonBytes)
+		} else {
+			logger.Error("Sonic序列化失败，无法生成工具输入",
+				logger.Err(err),
+				logger.String("toolName", streamer.toolName))
+			// 使用空JSON对象，让工具调用失败
 			fullInput = "{}"
 		}
-
-		// 清理完成的流式解析器，归还对象到池中
-		ssja.cleanupStreamer(streamer)
-		delete(ssja.activeStreamers, toolUseId)
-
-		// 触发回调
-		ssja.onAggregationComplete(toolUseId, fullInput)
-
-		logger.Debug("Sonic流式JSON聚合完成",
-			logger.String("toolUseId", toolUseId),
-			logger.String("toolName", name),
-			logger.String("result", func() string {
-				if len(fullInput) > 100 {
-					return fullInput[:100] + "..."
-				}
-				return fullInput
-			}()),
-			logger.Int("totalFragments", streamer.fragmentCount),
-			logger.Int("totalBytes", streamer.totalBytes))
-
-		return true, fullInput
+	} else {
+		// 🔥 核心修复：区分真正的错误和无参数工具
+		if streamer.fragmentCount == 0 && streamer.totalBytes == 0 {
+			// 无参数工具，使用 Debug 级别（正常情况）
+			logger.Debug("工具无参数，使用默认空对象",
+				logger.String("toolName", streamer.toolName))
+		} else {
+			// 真正的解析失败，使用 Error 级别
+			logger.Error("流式解析失败，无有效JSON结果",
+				logger.String("toolName", streamer.toolName),
+				logger.Bool("hasValidJSON", streamer.state.hasValidJSON),
+				logger.Int("fragmentCount", streamer.fragmentCount),
+				logger.Int("totalBytes", streamer.totalBytes))
+		}
+		// 使用空JSON对象
+		fullInput = "{}"
 	}
 
-	return false, ""
+	// 清理完成的流式解析器，归还对象到池中
+	ssja.cleanupStreamer(streamer)
+	delete(ssja.activeStreamers, toolUseId)
+
+	// 触发回调
+	ssja.onAggregationComplete(toolUseId, fullInput)
+
+	logger.Debug("Sonic流式JSON聚合完成",
+		logger.String("toolUseId", toolUseId),
+		logger.String("toolName", name),
+		logger.String("result", func() string {
+			if len(fullInput) > 100 {
+				return fullInput[:100] + "..."
+			}
+			return fullInput
+		}()),
+		logger.Int("totalFragments", streamer.fragmentCount),
+		logger.Int("totalBytes", streamer.totalBytes))
+
+	return true, fullInput
 }
 
 // createSonicJSONStreamer 创建Sonic JSON流式解析器（使用对象池优化）
