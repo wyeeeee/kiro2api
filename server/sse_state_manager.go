@@ -52,11 +52,11 @@ func (ssm *SSEStateManager) SendEvent(c *gin.Context, sender StreamEventSender, 
 	}
 
 	// 记录事件发送
-	logger.Debug("发送SSE事件",
-		logger.String("event", eventType),
-		logger.Bool("message_started", ssm.messageStarted),
-		logger.Bool("message_ended", ssm.messageEnded),
-		logger.Int("active_blocks", len(ssm.activeBlocks)))
+	// logger.Debug("发送SSE事件",
+	// 	logger.String("event", eventType),
+	// 	logger.Bool("message_started", ssm.messageStarted),
+	// 	logger.Bool("message_ended", ssm.messageEnded),
+	// 	logger.Int("active_blocks", len(ssm.activeBlocks)))
 
 	// 状态验证和处理
 	switch eventType {
