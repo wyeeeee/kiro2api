@@ -585,10 +585,10 @@ func (h *LegacyToolUseEventHandler) Handle(message *EventStreamMessage) ([]SSEEv
 
 // handleToolCallEvent 在LegacyToolUseEventHandler中处理工具调用事件
 func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMessage) ([]SSEEvent, error) {
-	logger.Debug("LegacyToolUseEventHandler处理工具调用事件",
-		logger.Int("payload_len", len(message.Payload)),
-		logger.String("event_type", message.GetEventType()),
-		logger.String("message_type", message.GetMessageType()))
+	// logger.Debug("LegacyToolUseEventHandler处理工具调用事件",
+	// 	logger.Int("payload_len", len(message.Payload)),
+	// 	logger.String("event_type", message.GetEventType()),
+	// 	logger.String("message_type", message.GetMessageType()))
 
 	// 尝试解析为工具使用事件
 	var evt toolUseEvent
@@ -599,17 +599,17 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 
 	}
 
-	logger.Debug("成功解析工具调用事件",
-		logger.String("toolUseId", evt.ToolUseId),
-		logger.String("name", evt.Name),
-		logger.String("input_preview", func() string {
-			inputStr := convertInputToString(evt.Input)
-			if len(inputStr) > 50 {
-				return inputStr[:50] + "..."
-			}
-			return inputStr
-		}()),
-		logger.Bool("stop", evt.Stop))
+	// logger.Debug("成功解析工具调用事件",
+	// 	logger.String("toolUseId", evt.ToolUseId),
+	// 	logger.String("name", evt.Name),
+	// 	logger.String("input_preview", func() string {
+	// 		inputStr := convertInputToString(evt.Input)
+	// 		if len(inputStr) > 50 {
+	// 			return inputStr[:50] + "..."
+	// 		}
+	// 		return inputStr
+	// 	}()),
+	// 	logger.Bool("stop", evt.Stop))
 
 	// 验证必要字段
 	if evt.Name == "" || evt.ToolUseId == "" {
@@ -740,15 +740,15 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		return []SSEEvent{}, nil
 	}
 
-	logger.Debug("工具调用数据聚合完成",
-		logger.String("toolUseId", evt.ToolUseId),
-		logger.String("name", evt.Name),
-		logger.String("fullInput", func() string {
-			if len(fullInput) > 100 {
-				return fullInput[:100] + "..."
-			}
-			return fullInput
-		}()))
+	// logger.Debug("工具调用数据聚合完成",
+	// 	logger.String("toolUseId", evt.ToolUseId),
+	// 	logger.String("name", evt.Name),
+	// 	logger.String("fullInput", func() string {
+	// 		if len(fullInput) > 100 {
+	// 			return fullInput[:100] + "..."
+	// 		}
+	// 		return fullInput
+	// 	}()))
 
 	// 第三步：验证和更新工具参数
 	if fullInput != "" {
@@ -777,16 +777,16 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		resultEvents := h.toolManager.HandleToolCallResult(result)
 		events = append(events, resultEvents...)
 
-		logger.Debug("工具调用完成事件已处理",
-			logger.String("toolUseId", evt.ToolUseId),
-			logger.Int("result_events", len(resultEvents)))
+		// logger.Debug("工具调用完成事件已处理",
+		// 	logger.String("toolUseId", evt.ToolUseId),
+		// 	logger.Int("result_events", len(resultEvents)))
 	}
 
-	logger.Debug("工具调用事件处理完成",
-		logger.String("toolUseId", evt.ToolUseId),
-		logger.String("name", evt.Name),
-		logger.Int("generated_events", len(events)),
-		logger.Bool("is_complete", evt.Stop))
+	// logger.Debug("工具调用事件处理完成",
+	// 	logger.String("toolUseId", evt.ToolUseId),
+	// 	logger.String("name", evt.Name),
+	// 	logger.Int("generated_events", len(events)),
+	// 	logger.Bool("is_complete", evt.Stop))
 
 	return events, nil
 }

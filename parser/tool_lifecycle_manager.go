@@ -3,7 +3,6 @@ package parser
 import (
 	"kiro2api/logger"
 	"kiro2api/utils"
-	"strings"
 	"time"
 )
 
@@ -14,45 +13,6 @@ type ToolLifecycleManager struct {
 	blockIndexMap      map[string]int
 	nextBlockIndex     int
 	textIntroGenerated bool // 跟踪是否已生成文本介绍
-}
-
-// validateRequiredArguments 针对常见工具进行必填参数校验
-// 支持各种工具名称格式，避免空参数触发 CLI 报错
-func validateRequiredArguments(toolName string, args map[string]any) (bool, string) {
-	toolNameLower := strings.ToLower(toolName)
-	switch toolNameLower {
-	case "bash":
-		if v, ok := args["command"].(string); !ok || strings.TrimSpace(v) == "" {
-			return false, "Bash 缺少必填参数: command"
-		}
-	case "write":
-		fp, fpo := args["file_path"].(string)
-		ct, cto := args["content"].(string)
-		if !fpo || strings.TrimSpace(fp) == "" {
-			return false, "Write 缺少必填参数: file_path"
-		}
-		if !cto || strings.TrimSpace(ct) == "" {
-			return false, "Write 缺少必填参数: content"
-		}
-	case "read":
-		if fp, ok := args["file_path"].(string); !ok || strings.TrimSpace(fp) == "" {
-			return false, "Read 缺少必填参数: file_path"
-		}
-	case "edit":
-		fp, fpo := args["file_path"].(string)
-		os, oso := args["old_string"].(string)
-		_, nso := args["new_string"].(string)
-		if !fpo || strings.TrimSpace(fp) == "" {
-			return false, "Edit 缺少必填参数: file_path"
-		}
-		if !oso || strings.TrimSpace(os) == "" {
-			return false, "Edit 缺少必填参数: old_string"
-		}
-		if !nso {
-			return false, "Edit 缺少必填参数: new_string"
-		}
-	}
-	return true, ""
 }
 
 // NewToolLifecycleManager 创建工具生命周期管理器
@@ -124,14 +84,6 @@ func (tlm *ToolLifecycleManager) HandleToolCallRequest(request ToolCallRequest) 
 				logger.String("tool_name", toolCall.Function.Name),
 				logger.Err(err))
 			arguments = make(map[string]any)
-		}
-
-		// 针对常见工具做必填参数校验：仅记录告警，不阻断工具起始事件，遵循 Anthropic 流式协议
-		if ok, msg := validateRequiredArguments(toolCall.Function.Name, arguments); !ok {
-			logger.Warn("工具调用参数可能不完整（仅记录，不阻断）",
-				logger.String("tool_id", toolCall.ID),
-				logger.String("tool_name", toolCall.Function.Name),
-				logger.String("reason", msg))
 		}
 
 		execution := &ToolExecution{
