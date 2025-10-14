@@ -301,9 +301,9 @@ func (sjs *SonicJSONStreamer) tryParseWithSonic() string {
 		}
 		sjs.result = emptyResult
 		sjs.state.hasValidJSON = true
-		logger.Debug("检测到空参数工具",
-			logger.String("toolUseId", sjs.toolUseId),
-			logger.String("content", contentStr))
+		// logger.Debug("检测到空参数工具",
+		// 	logger.String("toolUseId", sjs.toolUseId),
+		// 	logger.String("content", contentStr))
 		return "complete"
 	}
 
@@ -389,14 +389,14 @@ func (sjs *SonicJSONStreamer) looksLikeValueFragment(content string) bool {
 // onAggregationComplete 聚合完成回调
 func (ssja *SonicStreamingJSONAggregator) onAggregationComplete(toolUseId string, fullInput string) {
 	if ssja.updateCallback != nil {
-		logger.Debug("触发Sonic流式JSON聚合回调",
-			logger.String("toolUseId", toolUseId),
-			logger.String("inputPreview", func() string {
-				if len(fullInput) > 50 {
-					return fullInput[:50] + "..."
-				}
-				return fullInput
-			}()))
+		// logger.Debug("触发Sonic流式JSON聚合回调",
+		// 	logger.String("toolUseId", toolUseId),
+		// 	logger.String("inputPreview", func() string {
+		// 		if len(fullInput) > 50 {
+		// 			return fullInput[:50] + "..."
+		// 		}
+		// 		return fullInput
+		// 	}()))
 		ssja.updateCallback(toolUseId, fullInput)
 	} else {
 		logger.Debug("Sonic聚合回调函数为空",

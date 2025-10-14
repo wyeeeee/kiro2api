@@ -157,15 +157,15 @@ func (tlm *ToolLifecycleManager) HandleToolCallResult(result ToolCallResult) []S
 	execution.Status = ToolStatusCompleted
 
 	// 计算执行时间
-	executionTime := now.Sub(execution.StartTime).Milliseconds()
-	if result.ExecutionTime > 0 {
-		executionTime = result.ExecutionTime
-	}
+	// executionTime := now.Sub(execution.StartTime).Milliseconds()
+	// if result.ExecutionTime > 0 {
+	// executionTime = result.ExecutionTime
+	// }
 
-	logger.Debug("工具调用完成",
-		logger.String("tool_id", result.ToolCallID),
-		logger.String("tool_name", execution.Name),
-		logger.Int64("execution_time", executionTime))
+	// logger.Debug("工具调用完成",
+	// 	logger.String("tool_id", result.ToolCallID),
+	// 	logger.String("tool_name", execution.Name),
+	// 	logger.Int64("execution_time", executionTime))
 
 	// 生成标准的 content_block_stop 事件（符合Anthropic规范）
 	events = append(events, SSEEvent{
@@ -475,25 +475,25 @@ func (tlm *ToolLifecycleManager) ParseToolCallFromLegacyEvent(evt assistantRespo
 
 // UpdateToolArguments 更新工具调用的参数
 func (tlm *ToolLifecycleManager) UpdateToolArguments(toolID string, arguments map[string]any) {
-	logger.Debug("更新工具调用参数",
-		logger.String("tool_id", toolID),
-		logger.Any("arguments", arguments))
+	// logger.Debug("更新工具调用参数",
+	// 	logger.String("tool_id", toolID),
+	// 	logger.Any("arguments", arguments))
 
 	// 检查活跃工具
 	if execution, exists := tlm.activeTools[toolID]; exists {
 		execution.Arguments = arguments
-		logger.Debug("已更新活跃工具的参数",
-			logger.String("tool_id", toolID),
-			logger.String("tool_name", execution.Name))
+		// logger.Debug("已更新活跃工具的参数",
+		// 	logger.String("tool_id", toolID),
+		// 	logger.String("tool_name", execution.Name))
 		return
 	}
 
 	// 检查已完成工具
 	if execution, exists := tlm.completedTools[toolID]; exists {
 		execution.Arguments = arguments
-		logger.Debug("已更新已完成工具的参数",
-			logger.String("tool_id", toolID),
-			logger.String("tool_name", execution.Name))
+		// logger.Debug("已更新已完成工具的参数",
+		// 	logger.String("tool_id", toolID),
+		// 	logger.String("tool_name", execution.Name))
 		return
 	}
 

@@ -10,7 +10,7 @@ import (
 type CompliantMessageProcessor struct {
 	sessionManager     *SessionManager
 	toolManager        *ToolLifecycleManager
-	eventHandlers      map[string]EventHandler       // 统一的事件处理器（包含标准和旧格式）
+	eventHandlers      map[string]EventHandler // 统一的事件处理器（包含标准和旧格式）
 	completionBuffer   []string
 	legacyToolState    *toolIndexState               // 添加旧格式事件的工具状态
 	toolDataAggregator *SonicStreamingJSONAggregator // 统一的工具调用数据聚合器
@@ -38,14 +38,14 @@ func NewCompliantMessageProcessor() *CompliantMessageProcessor {
 	// 创建Sonic聚合器，并设置参数更新回调
 	processor.toolDataAggregator = NewSonicStreamingJSONAggregatorWithCallback(
 		func(toolUseId string, fullParams string) {
-			logger.Debug("Sonic聚合器回调：更新工具参数",
-				logger.String("toolUseId", toolUseId),
-				logger.String("fullParams", func() string {
-					if len(fullParams) > 100 {
-						return fullParams[:100] + "..."
-					}
-					return fullParams
-				}()))
+			// logger.Debug("Sonic聚合器回调：更新工具参数",
+			// 	logger.String("toolUseId", toolUseId),
+			// 	logger.String("fullParams", func() string {
+			// 		if len(fullParams) > 100 {
+			// 			return fullParams[:100] + "..."
+			// 		}
+			// 		return fullParams
+			// 	}()))
 
 			// 调用工具管理器更新参数
 			processor.toolManager.UpdateToolArgumentsFromJSON(toolUseId, fullParams)

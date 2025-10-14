@@ -317,9 +317,9 @@ func (ssm *SSEStateManager) handleContentBlockStop(c *gin.Context, sender Stream
 	// 标记为已停止
 	block.Stopped = true
 
-	logger.Debug("内容块已停止",
-		logger.Int("index", index),
-		logger.String("type", block.Type))
+	// logger.Debug("内容块已停止",
+	// 	logger.Int("index", index),
+	// 	logger.String("type", block.Type))
 
 	return sender.SendEvent(c, eventData)
 }

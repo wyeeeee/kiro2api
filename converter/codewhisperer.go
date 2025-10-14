@@ -144,10 +144,10 @@ func extractToolResultsFromMessage(content any) []types.ToolResult {
 
 						toolResults = append(toolResults, toolResult)
 
-						logger.Debug("提取到工具结果",
-							logger.String("tool_use_id", toolResult.ToolUseId),
-							logger.String("status", toolResult.Status),
-							logger.Int("content_items", len(toolResult.Content)))
+						// logger.Debug("提取到工具结果",
+						// 	logger.String("tool_use_id", toolResult.ToolUseId),
+						// 	logger.String("status", toolResult.Status),
+						// 	logger.Int("content_items", len(toolResult.Content)))
 					}
 				}
 			}
@@ -424,9 +424,9 @@ func BuildCodeWhispererRequest(anthropicReq types.AnthropicRequest, ctx *gin.Con
 						mergedUserMsg.UserInputMessage.UserInputMessageContext.ToolResults = allToolResults
 						// 如果历史用户消息包含工具结果，也将 content 设置为空字符串
 						mergedUserMsg.UserInputMessage.Content = ""
-						logger.Debug("历史用户消息包含工具结果",
-							logger.Int("merged_messages", len(userMessagesBuffer)),
-							logger.Int("tool_results_count", len(allToolResults)))
+						// logger.Debug("历史用户消息包含工具结果",
+						// 	logger.Int("merged_messages", len(userMessagesBuffer)),
+						// 	logger.Int("tool_results_count", len(allToolResults)))
 					}
 
 					mergedUserMsg.UserInputMessage.ModelId = modelId

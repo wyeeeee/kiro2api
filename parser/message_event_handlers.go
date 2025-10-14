@@ -762,8 +762,8 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		} else {
 			// 聚合后的JSON格式正确，更新工具参数
 			h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
-			logger.Debug("聚合后JSON格式验证通过，已更新工具参数",
-				logger.String("toolUseId", evt.ToolUseId))
+			// logger.Debug("聚合后JSON格式验证通过，已更新工具参数",
+			// 	logger.String("toolUseId", evt.ToolUseId))
 		}
 	}
 

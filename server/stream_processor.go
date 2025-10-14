@@ -40,9 +40,9 @@ type StreamProcessorContext struct {
 	totalProcessedEvents int
 	lastParseErr         error
 
-    // 工具调用跟踪
-    toolUseIdByBlockIndex map[int]string
-    completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
+	// 工具调用跟踪
+	toolUseIdByBlockIndex map[int]string
+	completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
 
 	// 原始数据缓冲
 	rawDataBuffer *strings.Builder
@@ -105,12 +105,11 @@ func (ctx *StreamProcessorContext) Cleanup() {
 		ctx.completedToolUseIds = nil
 	}
 
-    // 清理管理器引用，帮助GC
-    ctx.sseStateManager = nil
-    ctx.stopReasonManager = nil
-    ctx.tokenEstimator = nil
+	// 清理管理器引用，帮助GC
+	ctx.sseStateManager = nil
+	ctx.stopReasonManager = nil
+	ctx.tokenEstimator = nil
 }
-
 
 // initializeSSEResponse 初始化SSE响应头
 func initializeSSEResponse(c *gin.Context) error {
@@ -195,9 +194,9 @@ func (ctx *StreamProcessorContext) processToolUseStop(dataMap map[string]any) {
 		// 解决：先添加到completedToolUseIds，保持工具调用的证据
 		ctx.completedToolUseIds[toolId] = true
 
-		logger.Debug("工具执行完成",
-			logger.String("tool_id", toolId),
-			logger.Int("block_index", idx))
+		// logger.Debug("工具执行完成",
+		// 	logger.String("tool_id", toolId),
+		// 	logger.Int("block_index", idx))
 		delete(ctx.toolUseIdByBlockIndex, idx)
 	} else {
 		logger.Debug("非tool_use或未知索引的内容块结束",
@@ -206,7 +205,6 @@ func (ctx *StreamProcessorContext) processToolUseStop(dataMap map[string]any) {
 }
 
 // 直传模式：不再进行文本聚合
-
 
 // sendFinalEvents 发送结束事件
 func (ctx *StreamProcessorContext) sendFinalEvents() error {
@@ -327,14 +325,14 @@ func getStringField(m map[string]any, key string) string {
 // EventStreamProcessor 事件流处理器
 // 遵循单一职责原则：专注于处理事件流
 type EventStreamProcessor struct {
-    ctx *StreamProcessorContext
+	ctx *StreamProcessorContext
 }
 
 // NewEventStreamProcessor 创建事件流处理器
 func NewEventStreamProcessor(ctx *StreamProcessorContext) *EventStreamProcessor {
-    return &EventStreamProcessor{
-        ctx: ctx,
-    }
+	return &EventStreamProcessor{
+		ctx: ctx,
+	}
 }
 
 // ProcessEventStream 处理事件流的主循环
@@ -399,38 +397,39 @@ func (esp *EventStreamProcessor) ProcessEventStream(reader io.Reader) error {
 		}
 	}
 
-    // 直传模式：无需冲刷剩余文本
-    return nil
+	// 直传模式：无需冲刷剩余文本
+	return nil
 }
 
 // processEvent 处理单个事件
 func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 	dataMap, ok := event.Data.(map[string]any)
 	if !ok {
-		logger.Warn("事件数据类型不匹配，跳过", logger.String("event_type", event.Event))
+		logger.Warn("事件数据类型不匹配,跳过", logger.String("event_type", event.Event))
 		return nil
 	}
 
 	eventType, _ := dataMap["type"].(string)
 
 	// 处理不同类型的事件
-    switch eventType {
-    case "content_block_start":
-        esp.ctx.processToolUseStart(dataMap)
+	switch eventType {
+	case "content_block_start":
+		esp.ctx.processToolUseStart(dataMap)
 
-    case "content_block_delta":
-        // 直传：不做聚合
+	case "content_block_delta":
+		// 直传：不做聚合
+		// 但需要统计输出字符数（在后面统一处理）
 
-    case "content_block_stop":
-        esp.ctx.processToolUseStop(dataMap)
-        logger.Debug("转发内容块结束", logger.Int("index", extractIndex(dataMap)))
+	case "content_block_stop":
+		esp.ctx.processToolUseStop(dataMap)
+		// logger.Debug("转发内容块结束", logger.Int("index", extractIndex(dataMap)))
 
 	case "message_delta":
-		if delta, ok := dataMap["delta"].(map[string]any); ok {
-			if sr, _ := delta["stop_reason"].(string); sr != "" {
-				logger.Debug("转发消息增量", logger.String("stop_reason", sr))
-			}
-		}
+		// if delta, ok := dataMap["delta"].(map[string]any); ok {
+		// 	if sr, _ := delta["stop_reason"].(string); sr != "" {
+		// 		logger.Debug("转发消息增量", logger.String("stop_reason", sr))
+		// 	}
+		// }
 
 	case "exception":
 		// 处理上游异常事件，检查是否需要映射为max_tokens
@@ -439,22 +438,31 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 		}
 	}
 
-    // 使用状态管理器发送事件（直传）
-    if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, dataMap); err != nil {
-        logger.Error("SSE事件发送违规", logger.Err(err))
-        // 非严格模式下，违规事件被跳过但不中断流
-    }
+	// 使用状态管理器发送事件（直传）
+	if err := esp.ctx.sseStateManager.SendEvent(esp.ctx.c, esp.ctx.sender, dataMap); err != nil {
+		logger.Error("SSE事件发送违规", logger.Err(err))
+		// 非严格模式下，违规事件被跳过但不中断流
+	}
 
-    // 更新输出字符统计
-    if event.Event == "content_block_delta" {
-        if delta, ok := dataMap["delta"].(map[string]any); ok {
-            if dType, _ := delta["type"].(string); dType == "text_delta" {
-                if txt, ok := delta["text"].(string); ok {
-                    esp.ctx.totalOutputChars += len(txt)
-                }
-            }
-        }
-    }
+	// 更新输出字符统计 - 统计所有类型的输出内容
+	// 注意：只有 content_block_delta 事件包含实际的增量内容
+	if eventType == "content_block_delta" {
+		if delta, ok := dataMap["delta"].(map[string]any); ok {
+			dType, _ := delta["type"].(string)
+			switch dType {
+			case "text_delta":
+				// 统计文本内容
+				if txt, ok := delta["text"].(string); ok {
+					esp.ctx.totalOutputChars += len(txt)
+				}
+			case "input_json_delta":
+				// 统计工具调用的 JSON 参数
+				if partialJSON, ok := delta["partial_json"].(string); ok {
+					esp.ctx.totalOutputChars += len(partialJSON)
+				}
+			}
+		}
+	}
 
 	esp.ctx.c.Writer.Flush()
 	return nil
@@ -479,7 +487,7 @@ func (esp *EventStreamProcessor) handleExceptionEvent(dataMap map[string]any) bo
 				logger.String("exception_type", exceptionType),
 				logger.String("claude_stop_reason", "max_tokens"))...)
 
-        // 关闭所有活跃的content_block
+		// 关闭所有活跃的content_block
 		activeBlocks := esp.ctx.sseStateManager.GetActiveBlocks()
 		for index, block := range activeBlocks {
 			if block.Started && !block.Stopped {

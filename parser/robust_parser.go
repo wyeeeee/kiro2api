@@ -251,15 +251,15 @@ func (rp *RobustEventStreamParser) validateToolUseIdIntegrity(message *EventStre
 
 	// 检查是否包含工具调用相关内容
 	if strings.Contains(payloadStr, "tool_use_id") || strings.Contains(payloadStr, "toolUseId") {
-		logger.Debug("检测到工具调用消息，验证完整性",
-			logger.String("message_type", message.MessageType),
-			logger.String("event_type", message.EventType),
-			logger.String("payload_preview", func() string {
-				if len(payloadStr) > 200 {
-					return payloadStr[:200] + "..."
-				}
-				return payloadStr
-			}()))
+		// logger.Debug("检测到工具调用消息，验证完整性",
+		// 	logger.String("message_type", message.MessageType),
+		// 	logger.String("event_type", message.EventType),
+		// 	logger.String("payload_preview", func() string {
+		// 		if len(payloadStr) > 200 {
+		// 			return payloadStr[:200] + "..."
+		// 		}
+		// 		return payloadStr
+		// 	}()))
 
 		// 提取所有可能的tool_use_id
 		toolUseIds := rp.extractToolUseIds(payloadStr)
