@@ -655,10 +655,16 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		if !evt.Stop {
 			return events, nil
 		}
-		// 如果是stop事件，继续处理聚合逻辑
+
+		// 🔥 关键修复：如果是stop事件且是首次注册，说明这是一次性完整数据
+		// 已经在注册时使用了完整参数，无需再通过聚合器处理，直接返回
+		logger.Debug("首次注册即收到stop信号，使用完整参数，跳过聚合器",
+			logger.String("toolUseId", evt.ToolUseId),
+			logger.String("arguments", inputStr))
+		return events, nil
 	}
 
-	// 第二步：使用聚合器处理工具调用数据
+	// 第二步：使用聚合器处理工具调用数据（仅用于多片段流式传输）
 	inputStr := convertInputToString(evt.Input)
 	complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, inputStr, evt.Stop, -1)
 
