@@ -135,20 +135,6 @@ func (op *ObjectPool) PutMap(m map[string]any) {
 	op.mapPool.Put(m)
 }
 
-// GetStringSlice 从池中获取字符串数组
-func (op *ObjectPool) GetStringSlice() []string {
-	slice := op.stringSlicePool.Get().([]string)
-	return slice[:0] // 重置长度但保持容量
-}
-
-// PutStringSlice 将字符串数组归还到池中
-func (op *ObjectPool) PutStringSlice(slice []string) {
-	if slice == nil || cap(slice) > config.StringSliceMaxSize {
-		return
-	}
-	slice = slice[:0]
-	op.stringSlicePool.Put(slice)
-}
 
 // 便捷的全局函数，直接使用全局池
 
@@ -192,15 +178,6 @@ func PutMap(m map[string]any) {
 	GlobalPool.PutMap(m)
 }
 
-// GetStringSlice 获取字符串数组 (全局池)
-func GetStringSlice() []string {
-	return GlobalPool.GetStringSlice()
-}
-
-// PutStringSlice 归还字符串数组 (全局池)
-func PutStringSlice(slice []string) {
-	GlobalPool.PutStringSlice(slice)
-}
 
 // PoolStats 对象池统计信息
 type PoolStats struct {

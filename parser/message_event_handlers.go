@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"fmt"
 	"kiro2api/logger"
 	"kiro2api/utils"
 	"strings"
@@ -222,54 +221,6 @@ func (h *ToolCallRequestHandler) Handle(message *EventStreamMessage) ([]SSEEvent
 	return h.toolManager.HandleToolCallRequest(request), nil
 }
 
-// ToolCallResultHandler 处理工具调用结果
-type ToolCallResultHandler struct {
-	toolManager *ToolLifecycleManager
-}
-
-func (h *ToolCallResultHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]any
-	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
-		return nil, err
-	}
-
-	// 从标准AWS事件格式解析工具调用结果
-	toolCallID, _ := data["toolCallId"].(string)
-	result, _ := data["result"].(string)
-	success, _ := data["success"].(bool)
-
-	// 如果没有结果字符串，尝试整个data作为结果
-	if result == "" {
-		if resultData, exists := data["result"]; exists {
-			result = fmt.Sprintf("%v", resultData)
-		} else {
-			result = "Tool execution completed"
-		}
-	}
-
-	// 创建标准格式的工具调用结果
-	toolResult := ToolCallResult{
-		ToolCallID: toolCallID,
-		Result:     result,
-	}
-
-	if !success {
-		// 如果工具执行失败，转换为错误处理
-		errorInfo := ToolCallError{
-			ToolCallID: toolCallID,
-			Error:      result,
-		}
-		return h.toolManager.HandleToolCallError(errorInfo), nil
-	}
-
-	logger.Debug("标准工具调用结果处理",
-		logger.String("tool_id", toolCallID),
-		logger.String("result", result),
-		logger.Bool("success", success))
-
-	return h.toolManager.HandleToolCallResult(toolResult), nil
-}
-
 // ToolCallErrorHandler 处理工具调用错误
 type ToolCallErrorHandler struct {
 	toolManager *ToolLifecycleManager
@@ -282,71 +233,6 @@ func (h *ToolCallErrorHandler) Handle(message *EventStreamMessage) ([]SSEEvent, 
 	}
 
 	return h.toolManager.HandleToolCallError(errorInfo), nil
-}
-
-// ToolExecutionStartHandler 处理工具执行开始事件
-type ToolExecutionStartHandler struct {
-	toolManager *ToolLifecycleManager
-}
-
-func (h *ToolExecutionStartHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]any
-	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
-		return nil, err
-	}
-
-	// 从执行开始事件中提取工具信息并创建执行记录
-	toolCallID, _ := data["toolCallId"].(string)
-	toolName, _ := data["toolName"].(string)
-	executionID, _ := data["executionId"].(string)
-
-	if toolCallID != "" && toolName != "" {
-		// 创建工具执行记录
-		toolCall := ToolCall{
-			ID:   toolCallID,
-			Type: "function",
-			Function: ToolCallFunction{
-				Name:      toolName,
-				Arguments: "{}",
-			},
-		}
-
-		request := ToolCallRequest{
-			ToolCalls: []ToolCall{toolCall},
-		}
-
-		logger.Debug("工具执行开始，创建执行记录",
-			logger.String("tool_id", toolCallID),
-			logger.String("tool_name", toolName),
-			logger.String("execution_id", executionID))
-
-		// 在工具管理器中开始执行
-		h.toolManager.HandleToolCallRequest(request)
-	}
-
-	return []SSEEvent{
-		{
-			Event: EventTypes.TOOL_EXECUTION_START,
-			Data:  data,
-		},
-	}, nil
-}
-
-// ToolExecutionEndHandler 处理工具执行结束事件
-type ToolExecutionEndHandler struct{}
-
-func (h *ToolExecutionEndHandler) Handle(message *EventStreamMessage) ([]SSEEvent, error) {
-	var data map[string]any
-	if err := utils.FastUnmarshal(message.Payload, &data); err != nil {
-		return nil, err
-	}
-
-	return []SSEEvent{
-		{
-			Event: EventTypes.TOOL_EXECUTION_END,
-			Data:  data,
-		},
-	}, nil
 }
 
 // SessionStartHandler 处理会话开始事件
