@@ -408,19 +408,9 @@ func (ssm *SSEStateManager) handleMessageStop(c *gin.Context, sender StreamEvent
 	return sender.SendEvent(c, eventData)
 }
 
-// GetBlockState 获取指定索引的块状态
-func (ssm *SSEStateManager) GetBlockState(index int) *BlockState {
-	return ssm.activeBlocks[index]
-}
-
 // GetActiveBlocks 获取所有活跃块
 func (ssm *SSEStateManager) GetActiveBlocks() map[int]*BlockState {
 	return ssm.activeBlocks
-}
-
-// GetNextBlockIndex 获取下一个可用的块索引
-func (ssm *SSEStateManager) GetNextBlockIndex() int {
-	return ssm.nextBlockIndex
 }
 
 // IsMessageStarted 检查消息是否已开始

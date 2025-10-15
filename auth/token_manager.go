@@ -256,16 +256,3 @@ func generateConfigOrder(configs []AuthConfig) []string {
 
 	return order
 }
-
-// GetSelectionStrategyStatus 获取选择策略状态（用于监控和调试）
-func (tm *TokenManager) GetSelectionStrategyStatus() map[string]interface{} {
-	tm.mutex.RLock()
-	defer tm.mutex.RUnlock()
-
-	return map[string]interface{}{
-		"strategy_name":  "sequential",
-		"config_order":   tm.configOrder,
-		"current_index":  tm.currentIndex,
-		"exhausted_keys": tm.exhausted,
-	}
-}

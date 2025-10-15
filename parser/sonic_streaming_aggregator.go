@@ -56,13 +56,6 @@ func NewSonicStreamingJSONAggregatorWithCallback(callback ToolParamsUpdateCallba
 	}
 }
 
-// SetUpdateCallback 设置更新回调
-func (ssja *SonicStreamingJSONAggregator) SetUpdateCallback(callback ToolParamsUpdateCallback) {
-	ssja.mu.Lock()
-	defer ssja.mu.Unlock()
-	ssja.updateCallback = callback
-}
-
 // ProcessToolData 处理工具调用数据片段（Sonic版本）
 func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input string, stop bool, fragmentIndex int) (complete bool, fullInput string) {
 	ssja.mu.Lock()
@@ -400,65 +393,5 @@ func (ssja *SonicStreamingJSONAggregator) cleanupStreamer(streamer *SonicJSONStr
 	if streamer.result != nil {
 		utils.PutMap(streamer.result)
 		streamer.result = nil
-	}
-}
-
-// CleanupExpiredBuffers 清理过期的缓冲区
-func (ssja *SonicStreamingJSONAggregator) CleanupExpiredBuffers(timeout time.Duration) {
-	ssja.mu.Lock()
-	defer ssja.mu.Unlock()
-
-	now := time.Now()
-	cleanedCount := 0
-	for toolUseId, streamer := range ssja.activeStreamers {
-		if now.Sub(streamer.lastUpdate) > timeout {
-			logger.Warn("清理过期的Sonic JSON流式解析器",
-				logger.String("toolUseId", toolUseId),
-				logger.Duration("age", now.Sub(streamer.lastUpdate)),
-				logger.Int("fragments", streamer.fragmentCount),
-				logger.Int("totalBytes", streamer.totalBytes))
-
-			// 归还对象到池中
-			ssja.cleanupStreamer(streamer)
-			delete(ssja.activeStreamers, toolUseId)
-			cleanedCount++
-		}
-	}
-
-	if cleanedCount > 0 {
-		logger.Debug("Sonic聚合器清理完成",
-			logger.Int("cleanedCount", cleanedCount),
-			logger.Int("remainingCount", len(ssja.activeStreamers)))
-	}
-}
-
-// GetStats 获取聚合器统计信息
-func (ssja *SonicStreamingJSONAggregator) GetStats() map[string]any {
-	ssja.mu.RLock()
-	defer ssja.mu.RUnlock()
-
-	totalFragments := 0
-	totalBytes := 0
-	for _, streamer := range ssja.activeStreamers {
-		totalFragments += streamer.fragmentCount
-		totalBytes += streamer.totalBytes
-	}
-
-	// 统计pending状态的工具数量
-	pendingCount := 0
-	for _, streamer := range ssja.activeStreamers {
-		if !streamer.state.hasValidJSON && !streamer.isComplete {
-			pendingCount++
-		}
-	}
-
-	return map[string]any{
-		"active_streamers":    len(ssja.activeStreamers),
-		"streaming_streamers": pendingCount,
-		"total_fragments":     totalFragments,
-		"total_bytes":         totalBytes,
-		"engine":              "sonic",
-		"strategy":            "stop_signal_only",
-		"utf8_safe":           true,
 	}
 }

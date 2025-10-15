@@ -277,21 +277,6 @@ func sanitizeFilename(filename string) string {
 	return result
 }
 
-// LoadRawDataForReplay 加载保存的原始数据用于回放测试
-func LoadRawDataForReplay(filepath string) (*RawDataRecord, error) {
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("读取文件失败: %w", err)
-	}
-
-	var record RawDataRecord
-	if err := FastUnmarshal(data, &record); err != nil {
-		return nil, fmt.Errorf("解析JSON失败: %w", err)
-	}
-
-	return &record, nil
-}
-
 // GetRawDataBytes 从记录中获取原始字节数据
 func (r *RawDataRecord) GetRawDataBytes() ([]byte, error) {
 	if r.HexData == "" {
@@ -309,41 +294,4 @@ func (r *RawDataRecord) GetRawDataBytes() ([]byte, error) {
 	}
 
 	return data, nil
-}
-
-// ListSavedRawData 列出所有保存的原始数据文件
-func ListSavedRawData() ([]string, error) {
-	// 尝试多个可能的路径
-	possiblePaths := []string{
-		"test/raw_data_replay",    // 从项目根目录运行时
-		"raw_data_replay",         // 从test目录运行时
-		"../test/raw_data_replay", // 从其他子目录运行时
-	}
-
-	var saveDir string
-	var entries []os.DirEntry
-	var err error
-
-	// 找到第一个存在的目录
-	for _, path := range possiblePaths {
-		entries, err = os.ReadDir(path)
-		if err == nil {
-			saveDir = path
-			break
-		}
-	}
-
-	// 如果所有路径都不存在
-	if saveDir == "" {
-		return []string{}, nil // 返回空列表
-	}
-
-	var files []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-			files = append(files, filepath.Join(saveDir, entry.Name()))
-		}
-	}
-
-	return files, nil
 }

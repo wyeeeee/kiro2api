@@ -3,7 +3,6 @@ package server
 import (
 	"kiro2api/logger"
 	"kiro2api/types"
-	"slices"
 )
 
 // StopReasonManager 管理符合Claude规范的stop_reason决策
@@ -59,7 +58,7 @@ func (srm *StopReasonManager) DetermineStopReason() string {
 	// *** 关键修复：根据Claude规范，只要消息包含tool_use块，stop_reason就应该是tool_use ***
 	// 根据 Anthropic API 文档 (https://docs.anthropic.com/en/api/messages-streaming):
 	//   stop_reason: "tool_use" - The model wants to use a tool
-	// 
+	//
 	// 只要消息中包含任何 tool_use 内容块（无论是正在流式传输还是已完成），
 	// stop_reason 就应该是 "tool_use"。这与工具的"生命周期状态"无关。
 	//
@@ -106,25 +105,6 @@ func (srm *StopReasonManager) DetermineStopReasonFromUpstream(upstreamStopReason
 	logger.Debug("使用上游stop_reason",
 		logger.String("upstream_stop_reason", upstreamStopReason))
 	return upstreamStopReason
-}
-
-// ValidateStopReason 验证stop_reason是否符合Claude规范
-func ValidateStopReason(stopReason string) bool {
-	validStopReasons := []string{
-		"end_turn",
-		"max_tokens",
-		"stop_sequence",
-		"tool_use",
-		"pause_turn",
-		"refusal",
-	}
-
-	if slices.Contains(validStopReasons, stopReason) {
-		return true
-	}
-
-	logger.Warn("检测到无效的stop_reason", logger.String("stop_reason", stopReason))
-	return false
 }
 
 // GetStopReasonDescription 获取stop_reason的描述（用于调试）
