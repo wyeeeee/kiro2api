@@ -28,9 +28,8 @@ func ParseToolResultContent(content any) string {
 			return "Tool executed with empty result list"
 		}
 
-		// 使用对象池获取StringBuilder，优化内存分配
-		result := GetStringBuilder()
-		defer PutStringBuilder(result)
+		// 直接使用strings.Builder，Go编译器会优化栈分配
+		var result strings.Builder
 		for _, item := range v {
 			switch itemVal := item.(type) {
 			case map[string]any:

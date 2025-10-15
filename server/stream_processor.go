@@ -71,18 +71,15 @@ func NewStreamProcessorContext(
 		compliantParser:       parser.NewCompliantEventStreamParser(false),
 		toolUseIdByBlockIndex: make(map[int]string),
 		completedToolUseIds:   make(map[string]bool),
-		rawDataBuffer:         utils.GetStringBuilder(),
+		rawDataBuffer:         &strings.Builder{},
 	}
 }
 
 // Cleanup 清理资源
 // 完整清理所有状态，防止内存泄漏
 func (ctx *StreamProcessorContext) Cleanup() {
-	// 清理字符串构建器（对象池）
-	if ctx.rawDataBuffer != nil {
-		utils.PutStringBuilder(ctx.rawDataBuffer)
-		ctx.rawDataBuffer = nil
-	}
+	// rawDataBuffer 由 GC 自动回收，无需手动清理
+	ctx.rawDataBuffer = nil
 
 	// 重置解析器状态
 	if ctx.compliantParser != nil {
@@ -338,9 +335,7 @@ func NewEventStreamProcessor(ctx *StreamProcessorContext) *EventStreamProcessor 
 
 // ProcessEventStream 处理事件流的主循环
 func (esp *EventStreamProcessor) ProcessEventStream(reader io.Reader) error {
-	buf := utils.GetByteSlice()
-	defer utils.PutByteSlice(buf)
-	buf = buf[:1024] // 限制为1024字节
+	buf := make([]byte, 1024)
 
 	for {
 		n, err := reader.Read(buf)

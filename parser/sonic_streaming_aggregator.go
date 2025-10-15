@@ -155,8 +155,8 @@ func (ssja *SonicStreamingJSONAggregator) ProcessToolData(toolUseId, name, input
 
 // createSonicJSONStreamer 创建Sonic JSON流式解析器（使用对象池优化）
 func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, toolName string) *SonicJSONStreamer {
-	// 使用对象池获取Buffer，避免频繁内存分配
-	buffer := utils.GetBuffer()
+	// 直接分配Buffer，Go GC会自动管理
+	buffer := bytes.NewBuffer(nil)
 
 	return &SonicJSONStreamer{
 		toolUseId:  toolUseId,
@@ -166,7 +166,7 @@ func (ssja *SonicStreamingJSONAggregator) createSonicJSONStreamer(toolUseId, too
 		state: SonicParseState{
 			expectingValue: true,
 		},
-		result: utils.GetMap(), // 使用对象池获取Map
+		result: make(map[string]any),
 	}
 }
 
@@ -383,15 +383,7 @@ func (ssja *SonicStreamingJSONAggregator) cleanupStreamer(streamer *SonicJSONStr
 		return
 	}
 
-	// 归还Buffer到对象池
-	if streamer.buffer != nil {
-		utils.PutBuffer(streamer.buffer)
-		streamer.buffer = nil
-	}
-
-	// 归还Map到对象池
-	if streamer.result != nil {
-		utils.PutMap(streamer.result)
-		streamer.result = nil
-	}
+	// Buffer 和 Map 由 GC 自动回收，无需手动清理
+	streamer.buffer = nil
+	streamer.result = nil
 }

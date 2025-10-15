@@ -17,4 +17,3 @@ func IntMax(a, b int) int {
 	}
 	return b
 }
-

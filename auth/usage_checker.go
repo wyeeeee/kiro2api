@@ -149,4 +149,3 @@ func (c *UsageLimitsChecker) logUsageLimits(limits *types.UsageLimits) {
 func generateInvocationID() string {
 	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), "kiro2api")
 }
-

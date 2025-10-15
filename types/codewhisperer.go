@@ -591,4 +591,3 @@ func (are *AssistantResponseEvent) UnmarshalJSON(data []byte) error {
 
 	return are.FromDict(dict)
 }
-

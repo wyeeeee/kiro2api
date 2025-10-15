@@ -1,17 +1,15 @@
 package utils
 
-import "io"
+import (
+	"bytes"
+	"io"
+)
 
 // ReadHTTPResponse 通用的HTTP响应体读取函数（使用对象池优化）
 func ReadHTTPResponse(body io.Reader) ([]byte, error) {
-	// 使用对象池获取缓冲区，避免频繁内存分配
-	buffer := GetBuffer()
-	defer PutBuffer(buffer)
-
-	// 使用对象池获取读取缓冲区
-	buf := GetByteSlice()
-	defer PutByteSlice(buf)
-	buf = buf[:1024] // 限制为1024字节
+	// 直接分配缓冲区，Go GC会自动管理
+	buffer := bytes.NewBuffer(nil)
+	buf := make([]byte, 1024)
 
 	for {
 		n, err := body.Read(buf)
@@ -19,15 +17,14 @@ func ReadHTTPResponse(body io.Reader) ([]byte, error) {
 			buffer.Write(buf[:n])
 		}
 		if err != nil {
+			result := buffer.Bytes()
+			// 确保空body返回空切片而不是nil，保持向后兼容
+			if result == nil {
+				result = []byte{}
+			}
 			if err == io.EOF {
-				// 复制结果并返回，因为buffer会被回收
-				result := make([]byte, buffer.Len())
-				copy(result, buffer.Bytes())
 				return result, nil
 			}
-			// 复制结果并返回，因为buffer会被回收
-			result := make([]byte, buffer.Len())
-			copy(result, buffer.Bytes())
 			return result, err
 		}
 	}
