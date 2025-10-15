@@ -17,11 +17,11 @@ func TestHandleCountTokens_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name              string
-		request           types.CountTokensRequest
-		wantMinTokens     int
-		wantMaxTokens     int
-		description       string
+		name          string
+		request       types.CountTokensRequest
+		wantMinTokens int
+		wantMaxTokens int
+		description   string
 	}{
 		{
 			name: "简单文本消息",
@@ -214,32 +214,32 @@ func TestHandleCountTokens_InvalidModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	tests := []struct {
-		name           string
-		model          string
-		wantStatus     int
+		name            string
+		model           string
+		wantStatus      int
 		wantErrContains string
-		description    string
+		description     string
 	}{
 		{
-			name:           "无效的模型名称",
-			model:          "invalid-model",
-			wantStatus:     http.StatusBadRequest,
+			name:            "无效的模型名称",
+			model:           "invalid-model",
+			wantStatus:      http.StatusBadRequest,
 			wantErrContains: "Invalid model",
-			description:    "无效模型应该返回错误",
+			description:     "无效模型应该返回错误",
 		},
 		{
-			name:           "空模型名称",
-			model:          "",
-			wantStatus:     http.StatusBadRequest,
+			name:            "空模型名称",
+			model:           "",
+			wantStatus:      http.StatusBadRequest,
 			wantErrContains: "required",
-			description:    "空模型名称应该返回验证错误",
+			description:     "空模型名称应该返回验证错误",
 		},
 		{
-			name:           "不支持的模型前缀",
-			model:          "llama-2",
-			wantStatus:     http.StatusBadRequest,
+			name:            "不支持的模型前缀",
+			model:           "llama-2",
+			wantStatus:      http.StatusBadRequest,
 			wantErrContains: "Invalid model",
-			description:    "不支持的模型前缀应该返回错误",
+			description:     "不支持的模型前缀应该返回错误",
 		},
 	}
 
@@ -318,9 +318,9 @@ func TestHandleCountTokens_ComplexContent(t *testing.T) {
 						{
 							"type": "image",
 							"source": map[string]any{
-								"type": "base64",
+								"type":       "base64",
 								"media_type": "image/jpeg",
-								"data": "base64data...",
+								"data":       "base64data...",
 							},
 						},
 					},

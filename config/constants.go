@@ -97,6 +97,6 @@ const (
 
 // 文本处理常量
 const (
-    // MinTextLength 最小文本长度（用于去重）
-    MinTextLength = 2
+	// MinTextLength 最小文本长度（用于去重）
+	MinTextLength = 2
 )

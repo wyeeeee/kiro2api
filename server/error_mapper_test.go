@@ -15,12 +15,12 @@ func TestContentLengthExceedsStrategy_MapError(t *testing.T) {
 	strategy := &ContentLengthExceedsStrategy{}
 
 	tests := []struct {
-		name           string
-		statusCode     int
-		responseBody   []byte
-		wantResponse   *ClaudeErrorResponse
-		wantHandled    bool
-		description    string
+		name         string
+		statusCode   int
+		responseBody []byte
+		wantResponse *ClaudeErrorResponse
+		wantHandled  bool
+		description  string
 	}{
 		{
 			name:       "内容长度超限错误",
@@ -168,40 +168,40 @@ func TestErrorMapper_MapCodeWhispererError(t *testing.T) {
 	mapper := NewErrorMapper()
 
 	tests := []struct {
-		name           string
-		statusCode     int
-		responseBody   []byte
-		wantType       string
-		wantStopReason string
+		name                string
+		statusCode          int
+		responseBody        []byte
+		wantType            string
+		wantStopReason      string
 		wantMessageContains string
-		description    string
+		description         string
 	}{
 		{
-			name:           "内容长度超限错误",
-			statusCode:     http.StatusBadRequest,
-			responseBody:   []byte(`{"message": "error", "reason": "CONTENT_LENGTH_EXCEEDS_THRESHOLD"}`),
-			wantType:       "message_delta",
-			wantStopReason: "max_tokens",
+			name:                "内容长度超限错误",
+			statusCode:          http.StatusBadRequest,
+			responseBody:        []byte(`{"message": "error", "reason": "CONTENT_LENGTH_EXCEEDS_THRESHOLD"}`),
+			wantType:            "message_delta",
+			wantStopReason:      "max_tokens",
 			wantMessageContains: "Content length exceeds",
-			description:    "应该映射为max_tokens",
+			description:         "应该映射为max_tokens",
 		},
 		{
-			name:           "普通错误",
-			statusCode:     http.StatusInternalServerError,
-			responseBody:   []byte(`{"error": "server error"}`),
-			wantType:       "error",
-			wantStopReason: "",
+			name:                "普通错误",
+			statusCode:          http.StatusInternalServerError,
+			responseBody:        []byte(`{"error": "server error"}`),
+			wantType:            "error",
+			wantStopReason:      "",
 			wantMessageContains: "Upstream error",
-			description:    "应该使用默认策略",
+			description:         "应该使用默认策略",
 		},
 		{
-			name:           "未知错误",
-			statusCode:     http.StatusBadRequest,
-			responseBody:   []byte(`{"reason": "UNKNOWN"}`),
-			wantType:       "error",
-			wantStopReason: "",
+			name:                "未知错误",
+			statusCode:          http.StatusBadRequest,
+			responseBody:        []byte(`{"reason": "UNKNOWN"}`),
+			wantType:            "error",
+			wantStopReason:      "",
 			wantMessageContains: "Upstream error",
-			description:    "未知错误应该使用默认策略",
+			description:         "未知错误应该使用默认策略",
 		},
 	}
 
