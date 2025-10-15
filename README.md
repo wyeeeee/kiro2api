@@ -4,8 +4,8 @@
 
 *统一 Anthropic Claude、OpenAI 和 AWS CodeWhisperer 的智能网关*
 
-[![Go](https://img.shields.io/badge/Go-1.23.3-blue.svg)](https://golang.org/)
-[![Gin](https://img.shields.io/badge/Gin-1.10.1-green.svg)](https://github.com/gin-gonic/gin)
+[![Go](https://img.shields.io/badge/Go-1.24.0-blue.svg)](https://golang.org/)
+[![Gin](https://img.shields.io/badge/Gin-1.11.0-green.svg)](https://github.com/gin-gonic/gin)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://www.docker.com/)
 
 ## 核心特性
@@ -165,10 +165,10 @@ graph TB
 
 ## 技术栈
 
-- **Web框架**: gin-gonic/gin v1.10.1
-- **JSON处理**: bytedance/sonic v1.14.0
+- **Web框架**: gin-gonic/gin v1.11.0
+- **JSON处理**: bytedance/sonic v1.14.1
 - **配置管理**: github.com/joho/godotenv v1.5.1
-- **Go版本**: 1.23.3
+- **Go版本**: 1.24.0
 - **容器化**: Docker & Docker Compose 支持
 
 ## 快速开始
@@ -256,8 +256,8 @@ LOG_CONSOLE=true
 # 性能调优
 REQUEST_TIMEOUT_MINUTES=15
 SIMPLE_REQUEST_TIMEOUT_MINUTES=2
-SERVER_READ_TIMEOUT_MINUTES=35
-SERVER_WRITE_TIMEOUT_MINUTES=35
+SERVER_READ_TIMEOUT_MINUTES=16
+SERVER_WRITE_TIMEOUT_MINUTES=16
 ```
 
 ##### Docker Secrets（注意事项）
@@ -294,6 +294,7 @@ docker exec -it kiro2api sh
 - `GET /api/tokens` - Token 池状态与使用信息（无需认证）
 - `GET /v1/models` - 获取可用模型列表
 - `POST /v1/messages` - Anthropic Claude API 兼容接口（支持流/非流）
+- `POST /v1/messages/count_tokens` - Token 计数接口
 - `POST /v1/chat/completions` - OpenAI ChatCompletion API 兼容接口（支持流/非流）
 
 ### 认证方式
@@ -409,8 +410,8 @@ REQUEST_TIMEOUT_MINUTES=15               # 复杂请求超时
 SIMPLE_REQUEST_TIMEOUT_MINUTES=2         # 简单请求超时
 
 # 服务器超时配置（分钟）
-SERVER_READ_TIMEOUT_MINUTES=35           # 服务器读取超时
-SERVER_WRITE_TIMEOUT_MINUTES=35          # 服务器写入超时
+SERVER_READ_TIMEOUT_MINUTES=16           # 服务器读取超时
+SERVER_WRITE_TIMEOUT_MINUTES=16          # 服务器写入超时
 ```
 
 #### 生产级日志配置
