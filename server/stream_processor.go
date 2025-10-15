@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -444,25 +445,14 @@ func (esp *EventStreamProcessor) processEvent(event parser.SSEEvent) error {
 		// 非严格模式下，违规事件被跳过但不中断流
 	}
 
-	// 更新输出字符统计 - 统计所有类型的输出内容
-	// 注意：只有 content_block_delta 事件包含实际的增量内容
-	if eventType == "content_block_delta" {
-		if delta, ok := dataMap["delta"].(map[string]any); ok {
-			dType, _ := delta["type"].(string)
-			switch dType {
-			case "text_delta":
-				// 统计文本内容
-				if txt, ok := delta["text"].(string); ok {
-					esp.ctx.totalOutputChars += len(txt)
-				}
-			case "input_json_delta":
-				// 统计工具调用的 JSON 参数
-				if partialJSON, ok := delta["partial_json"].(string); ok {
-					esp.ctx.totalOutputChars += len(partialJSON)
-				}
-			}
-		}
-	}
+    // 更新输出字符统计 - 统计 dataMap 全量内容（符合“统计输出所有内容”的要求）
+    // 通过 JSON 序列化计算输出负载的字节长度，更贴近实际传输内容
+    if b, err := json.Marshal(dataMap); err == nil {
+        esp.ctx.totalOutputChars += len(b)
+    } else {
+        // 序列化失败时保底：不影响主流程，仅跳过统计
+        logger.Debug("数据序列化用于统计失败，跳过该事件", logger.Err(err))
+    }
 
 	esp.ctx.c.Writer.Flush()
 	return nil

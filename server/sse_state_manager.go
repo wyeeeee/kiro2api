@@ -377,7 +377,7 @@ func (ssm *SSEStateManager) handleMessageDelta(c *gin.Context, sender StreamEven
 
 	// 标记message_delta已发送，防止后续重复发送
 	ssm.messageDeltaSent = true
-	logger.Debug("message_delta事件已发送", logger.Bool("message_delta_sent", ssm.messageDeltaSent))
+	// logger.Debug("message_delta事件已发送", logger.Bool("message_delta_sent", ssm.messageDeltaSent))
 
 	return sender.SendEvent(c, eventData)
 }
