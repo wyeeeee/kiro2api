@@ -471,31 +471,14 @@ func (h *LegacyToolUseEventHandler) Handle(message *EventStreamMessage) ([]SSEEv
 
 // handleToolCallEvent 在LegacyToolUseEventHandler中处理工具调用事件
 func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMessage) ([]SSEEvent, error) {
-	// logger.Debug("LegacyToolUseEventHandler处理工具调用事件",
-	// 	logger.Int("payload_len", len(message.Payload)),
-	// 	logger.String("event_type", message.GetEventType()),
-	// 	logger.String("message_type", message.GetMessageType()))
-
 	// 尝试解析为工具使用事件
 	var evt toolUseEvent
 	if err := utils.FastUnmarshal(message.Payload, &evt); err != nil {
 		logger.Warn("解析工具调用事件失败",
 			logger.Err(err),
 			logger.String("payload", string(message.Payload)))
-
+		return []SSEEvent{}, nil
 	}
-
-	// logger.Debug("成功解析工具调用事件",
-	// 	logger.String("toolUseId", evt.ToolUseId),
-	// 	logger.String("name", evt.Name),
-	// 	logger.String("input_preview", func() string {
-	// 		inputStr := convertInputToString(evt.Input)
-	// 		if len(inputStr) > 50 {
-	// 			return inputStr[:50] + "..."
-	// 		}
-	// 		return inputStr
-	// 	}()),
-	// 	logger.Bool("stop", evt.Stop))
 
 	// 验证必要字段
 	if evt.Name == "" || evt.ToolUseId == "" {
@@ -509,15 +492,18 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		}
 	}
 
-	// *** 关键修复：先注册工具，再使用聚合器收集流式数据片段 ***
+	// *** 核心修复：区分一次性完整数据和流式分片数据 ***
 
-	// 第一步：检查工具是否已经注册，如果没有则注册
-	if _, exists := h.toolManager.GetActiveTools()[evt.ToolUseId]; !exists {
+	// 第一步：检查工具是否已经注册
+	_, toolExists := h.toolManager.GetActiveTools()[evt.ToolUseId]
+
+	if !toolExists {
+		// 首次收到工具调用，注册工具
 		logger.Debug("首次收到工具调用片段，先注册工具",
 			logger.String("toolUseId", evt.ToolUseId),
 			logger.String("name", evt.Name))
 
-		// 🔥 核心修复：直接使用上游数据中的完整input参数
+		// 🔥 关键修复：直接使用上游数据中的完整input参数
 		inputStr := convertInputToString(evt.Input)
 
 		// 创建初始工具调用请求（使用完整参数）
@@ -526,7 +512,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			Type: "function",
 			Function: ToolCallFunction{
 				Name:      evt.Name,
-				Arguments: inputStr, // 修复：使用完整的input参数
+				Arguments: inputStr, // 使用完整的input参数
 			},
 		}
 
@@ -537,32 +523,54 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		// 先注册工具到管理器
 		events := h.toolManager.HandleToolCallRequest(request)
 
-		// 如果这不是stop事件，返回注册事件，等待后续片段
-		if !evt.Stop {
+		// 🔥 核心修复：如果是stop事件且是首次注册，说明这是一次性完整数据
+		// 已经在注册时使用了完整参数，无需再通过聚合器处理，直接返回
+		if evt.Stop {
+			logger.Debug("首次注册即收到stop信号，使用完整参数，跳过聚合器",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.String("arguments", inputStr))
 			return events, nil
 		}
 
-		// 🔥 关键修复：如果是stop事件且是首次注册，说明这是一次性完整数据
-		// 已经在注册时使用了完整参数，无需再通过聚合器处理，直接返回
-		logger.Debug("首次注册即收到stop信号，使用完整参数，跳过聚合器",
-			logger.String("toolUseId", evt.ToolUseId),
-			logger.String("arguments", inputStr))
+		// 如果不是stop事件，说明后续还有数据片段，返回注册事件，等待后续片段
 		return events, nil
 	}
 
-	// 第二步：使用聚合器处理工具调用数据（仅用于多片段流式传输）
+	// 第二步：工具已存在，使用聚合器处理流式分片数据
+	// 🔥 关键修复：只有在工具已注册且不是首次的情况下，才使用聚合器
+	// 这避免了对已经完整的一次性数据进行二次处理
+
+	// 将input转换为字符串（可能是JSON对象或已经是字符串）
 	inputStr := convertInputToString(evt.Input)
+
+	// 🔥 新增：检测输入是否为空或仅为空对象
+	// 某些工具调用可能只发送stop信号而不带新数据
+	if inputStr == "" || inputStr == "{}" {
+		// 仅处理stop信号，不涉及数据聚合
+		if evt.Stop {
+			logger.Debug("收到无参数的stop信号，直接完成工具调用",
+				logger.String("toolUseId", evt.ToolUseId),
+				logger.String("name", evt.Name))
+
+			// 处理工具完成
+			result := ToolCallResult{
+				ToolCallID: evt.ToolUseId,
+				Result:     "Tool execution completed via toolUseEvent",
+			}
+			return h.toolManager.HandleToolCallResult(result), nil
+		}
+		// 无数据且非stop，返回空事件
+		return []SSEEvent{}, nil
+	}
+
+	// 🔥 关键修复：使用聚合器处理流式JSON片段
+	// 注意：convertInputToString已经处理了类型转换，但聚合器期望原始input对象
+	// 因此我们传递evt.Input的原始字符串形式供聚合器拼接
 	complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, inputStr, evt.Stop, -1)
 
-	// 🔥 核心修复：处理未完整数据时发送增量事件而不是空事件
+	// 处理未完整数据时发送增量事件
 	if !complete {
-		//logger.Debug("工具调用数据未完整，发送增量事件",
-		//	logger.String("toolUseId", evt.ToolUseId),
-		//	logger.String("name", evt.Name),
-		//	logger.String("inputFragment", inputStr),
-		//	logger.Bool("stop", evt.Stop))
-
-		// 如果有新的输入片段，检查配置后发送参数增量事件
+		// 如果有新的输入片段，发送参数增量事件
 		if inputStr != "" && inputStr != "{}" {
 			// 边界情况检查：确保工具ID有效
 			if evt.ToolUseId == "" {
@@ -574,18 +582,6 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			// 获取工具的块索引
 			toolIndex := h.toolManager.GetBlockIndex(evt.ToolUseId)
 			if toolIndex >= 0 {
-
-				// logger.Debug("发送工具参数增量事件",
-				// 	logger.String("toolUseId", evt.ToolUseId),
-				// 	logger.Int("blockIndex", toolIndex),
-				// 	logger.String("inputFragment", func() string {
-				// 		if len(inputStr) > 100 {
-				// 			return inputStr[:100] + "..."
-				// 		}
-				// 		return inputStr
-				// 	}()),
-				// 	logger.Bool("incremental_enabled", true))
-
 				return []SSEEvent{{
 					Event: "content_block_delta",
 					Data: map[string]any{
@@ -598,53 +594,21 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 					},
 				}}, nil
 			} else {
-				// 工具未注册的边界情况
+				// 工具未注册的边界情况（理论上不应该发生，因为上面已经检查过）
 				logger.Warn("尝试发送增量事件但工具未注册，可能存在时序问题",
 					logger.String("toolUseId", evt.ToolUseId),
 					logger.String("name", evt.Name),
 					logger.String("inputFragment", inputStr))
-
-				// 尝试紧急注册工具（容错机制）
-				if evt.Name != "" {
-					logger.Debug("紧急注册未注册的工具",
-						logger.String("toolUseId", evt.ToolUseId),
-						logger.String("name", evt.Name))
-
-					toolCall := ToolCall{
-						ID:   evt.ToolUseId,
-						Type: "function",
-						Function: ToolCallFunction{
-							Name:      evt.Name,
-							Arguments: "{}",
-						},
-					}
-
-					request := ToolCallRequest{ToolCalls: []ToolCall{toolCall}}
-					emergencyEvents := h.toolManager.HandleToolCallRequest(request)
-
-					// 返回紧急注册事件，下次会正常处理增量
-					return emergencyEvents, nil
-				}
 			}
 		}
 
-		// 如果没有新的输入或无法获取索引，返回空事件（保持向后兼容）
+		// 无新数据或无法获取索引，返回空事件
 		return []SSEEvent{}, nil
 	}
 
-	// logger.Debug("工具调用数据聚合完成",
-	// 	logger.String("toolUseId", evt.ToolUseId),
-	// 	logger.String("name", evt.Name),
-	// 	logger.String("fullInput", func() string {
-	// 		if len(fullInput) > 100 {
-	// 			return fullInput[:100] + "..."
-	// 		}
-	// 		return fullInput
-	// 	}()))
-
-	// 第三步：验证和更新工具参数
+	// 第三步：聚合完成，验证和更新工具参数
 	if fullInput != "" {
-		// 现在验证聚合后的完整JSON格式
+		// 验证聚合后的完整JSON格式
 		var testArgs map[string]any
 		if err := utils.FastUnmarshal([]byte(fullInput), &testArgs); err != nil {
 			logger.Warn("聚合后的工具调用参数JSON格式仍然无效",
@@ -654,8 +618,6 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		} else {
 			// 聚合后的JSON格式正确，更新工具参数
 			h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
-			// logger.Debug("聚合后JSON格式验证通过，已更新工具参数",
-			// 	logger.String("toolUseId", evt.ToolUseId))
 		}
 	}
 
@@ -668,17 +630,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		}
 		resultEvents := h.toolManager.HandleToolCallResult(result)
 		events = append(events, resultEvents...)
-
-		// logger.Debug("工具调用完成事件已处理",
-		// 	logger.String("toolUseId", evt.ToolUseId),
-		// 	logger.Int("result_events", len(resultEvents)))
 	}
-
-	// logger.Debug("工具调用事件处理完成",
-	// 	logger.String("toolUseId", evt.ToolUseId),
-	// 	logger.String("name", evt.Name),
-	// 	logger.Int("generated_events", len(events)),
-	// 	logger.Bool("is_complete", evt.Stop))
 
 	return events, nil
 }
