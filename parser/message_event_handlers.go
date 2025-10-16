@@ -492,19 +492,19 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		}
 	}
 
+	// 🔥 统一转换input，避免重复调用
+	inputStr := convertInputToString(evt.Input)
+
 	// *** 核心修复：区分一次性完整数据和流式分片数据 ***
 
 	// 第一步：检查工具是否已经注册
 	_, toolExists := h.toolManager.GetActiveTools()[evt.ToolUseId]
 
 	if !toolExists {
-		// 首次收到工具调用，注册工具
+		// 首次收到工具调用，先注册工具
 		logger.Debug("首次收到工具调用片段，先注册工具",
 			logger.String("toolUseId", evt.ToolUseId),
 			logger.String("name", evt.Name))
-
-		// 🔥 关键修复：直接使用上游数据中的完整input参数
-		inputStr := convertInputToString(evt.Input)
 
 		// 创建初始工具调用请求（使用完整参数）
 		toolCall := ToolCall{
@@ -512,7 +512,7 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			Type: "function",
 			Function: ToolCallFunction{
 				Name:      evt.Name,
-				Arguments: inputStr, // 使用完整的input参数
+				Arguments: inputStr, // 使用已转换的input参数
 			},
 		}
 
@@ -532,6 +532,10 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			return events, nil
 		}
 
+		// 🔥 关键修复：如果不是stop事件，说明后续还有数据片段
+		// 但首次注册时的数据已经是完整的JSON对象（来自evt.Input），不是片段
+		// 因此不应该通过聚合器处理，聚合器只处理后续的字符串片段
+
 		// 如果不是stop事件，说明后续还有数据片段，返回注册事件，等待后续片段
 		return events, nil
 	}
@@ -540,17 +544,28 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 	// 🔥 关键修复：只有在工具已注册且不是首次的情况下，才使用聚合器
 	// 这避免了对已经完整的一次性数据进行二次处理
 
-	// 将input转换为字符串（可能是JSON对象或已经是字符串）
-	inputStr := convertInputToString(evt.Input)
+	// 🔥 核心修复：区分"无参数工具"和"stop信号无新数据"
+	// 场景1：无参数工具 - 从头到尾都没有数据
+	// 场景2：stop信号无新数据 - 已有完整数据，stop事件不带新数据
 
-	// 🔥 新增：检测输入是否为空或仅为空对象
-	// 某些工具调用可能只发送stop信号而不带新数据
-	if inputStr == "" || inputStr == "{}" {
-		// 仅处理stop信号，不涉及数据聚合
-		if evt.Stop {
-			logger.Debug("收到无参数的stop信号，直接完成工具调用",
-				logger.String("toolUseId", evt.ToolUseId),
-				logger.String("name", evt.Name))
+	if evt.Stop {
+		// 收到stop信号，需要完成聚合
+		// 🔥 关键：只传递空字符串，不传递"{}"，避免污染buffer
+		complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, "", evt.Stop, -1)
+
+		if complete {
+			// 聚合完成，更新工具参数
+			if fullInput != "" && fullInput != "{}" {
+				var testArgs map[string]any
+				if err := utils.FastUnmarshal([]byte(fullInput), &testArgs); err != nil {
+					logger.Warn("聚合后的工具调用参数JSON格式无效",
+						logger.String("toolUseId", evt.ToolUseId),
+						logger.String("fullInput", fullInput),
+						logger.Err(err))
+				} else {
+					h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
+				}
+			}
 
 			// 处理工具完成
 			result := ToolCallResult{
@@ -559,14 +574,15 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 			}
 			return h.toolManager.HandleToolCallResult(result), nil
 		}
-		// 无数据且非stop，返回空事件
+	}
+
+	// 如果是空数据但不是stop，返回空事件
+	if inputStr == "" || inputStr == "{}" {
 		return []SSEEvent{}, nil
 	}
 
-	// 🔥 关键修复：使用聚合器处理流式JSON片段
-	// 注意：convertInputToString已经处理了类型转换，但聚合器期望原始input对象
-	// 因此我们传递evt.Input的原始字符串形式供聚合器拼接
-	complete, fullInput := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, inputStr, evt.Stop, -1)
+	// 🔥 使用聚合器处理流式JSON片段
+	complete, _ := h.aggregator.ProcessToolData(evt.ToolUseId, evt.Name, inputStr, evt.Stop, -1)
 
 	// 处理未完整数据时发送增量事件
 	if !complete {
@@ -606,31 +622,6 @@ func (h *LegacyToolUseEventHandler) handleToolCallEvent(message *EventStreamMess
 		return []SSEEvent{}, nil
 	}
 
-	// 第三步：聚合完成，验证和更新工具参数
-	if fullInput != "" {
-		// 验证聚合后的完整JSON格式
-		var testArgs map[string]any
-		if err := utils.FastUnmarshal([]byte(fullInput), &testArgs); err != nil {
-			logger.Warn("聚合后的工具调用参数JSON格式仍然无效",
-				logger.String("toolUseId", evt.ToolUseId),
-				logger.String("fullInput", fullInput),
-				logger.Err(err))
-		} else {
-			// 聚合后的JSON格式正确，更新工具参数
-			h.toolManager.UpdateToolArguments(evt.ToolUseId, testArgs)
-		}
-	}
-
-	// 第四步：如果是完成事件，处理工具调用结果
-	var events []SSEEvent
-	if evt.Stop {
-		result := ToolCallResult{
-			ToolCallID: evt.ToolUseId,
-			Result:     "Tool execution completed via toolUseEvent",
-		}
-		resultEvents := h.toolManager.HandleToolCallResult(result)
-		events = append(events, resultEvents...)
-	}
-
-	return events, nil
+	// 非stop事件的流式片段处理完成，返回空事件
+	return []SSEEvent{}, nil
 }
