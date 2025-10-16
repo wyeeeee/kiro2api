@@ -6,15 +6,26 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - AWS_REFRESHTOKEN=${AWS_REFRESHTOKEN}
+      # Token配置 (JSON格式，支持多账号池和双认证方式)
+      - KIRO_AUTH_TOKEN=${KIRO_AUTH_TOKEN}
+      # 客户端认证Token
       - KIRO_CLIENT_TOKEN=${KIRO_CLIENT_TOKEN:-123456}
+      # 服务配置
       - PORT=${PORT:-8080}
       - GIN_MODE=${GIN_MODE:-release}
+      # 日志配置
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_CONSOLE=${LOG_CONSOLE:-true}
+      - LOG_FILE=${LOG_FILE:-}
     volumes:
       - aws_sso_cache:/home/appuser/.aws/sso/cache
-
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/v1/models"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 volumes:
   aws_sso_cache:
