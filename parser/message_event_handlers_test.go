@@ -251,3 +251,89 @@ func TestConvertInputToString(t *testing.T) {
 
 	t.Log("✅ convertInputToString函数测试通过")
 }
+
+// TestLegacyToolUseEventHandler_MemoryLeakPrevention 测试内存泄漏预防
+// 场景：工具已注册，收到空数据+stop信号，确保聚合器状态被清理
+// TestLegacyToolUseEventHandler_MemoryLeakPrevention 测试内存泄漏预防
+// 场景：工具已注册，收到空数据+stop信号，确保聚合器状态被清理
+func TestLegacyToolUseEventHandler_MemoryLeakPrevention(t *testing.T) {
+	toolManager := NewToolLifecycleManager()
+	aggregator := NewSonicStreamingJSONAggregatorWithCallback(func(toolUseId string, fullParams string) {
+		toolManager.UpdateToolArgumentsFromJSON(toolUseId, fullParams)
+	})
+
+	handler := &LegacyToolUseEventHandler{
+		toolManager: toolManager,
+		aggregator:  aggregator,
+	}
+
+	toolUseId := "test-tool-leak"
+	toolName := "test_tool"
+
+	// 步骤1：首次注册工具（空对象，stop=false，说明后续有数据）
+	evt1 := toolUseEvent{
+		Name:      toolName,
+		ToolUseId: toolUseId,
+		Input:     map[string]any{}, // 空对象
+		Stop:      false,
+	}
+
+	payload1, _ := utils.FastMarshal(evt1)
+	message1 := &EventStreamMessage{Payload: payload1}
+
+	_, err := handler.handleToolCallEvent(message1)
+	assert.NoError(t, err)
+
+	// 步骤2：发送第一个数据片段（字符串片段）
+	evt2 := toolUseEvent{
+		Name:      toolName,
+		ToolUseId: toolUseId,
+		Input:     `{"initial":"data"`, // 不完整的JSON字符串片段
+		Stop:      false,
+	}
+
+	payload2, _ := utils.FastMarshal(evt2)
+	message2 := &EventStreamMessage{Payload: payload2}
+
+	_, err = handler.handleToolCallEvent(message2)
+	assert.NoError(t, err)
+
+	// 验证聚合器中已创建streamer
+	aggregator.mu.Lock()
+	_, streamerExists := aggregator.activeStreamers[toolUseId]
+	aggregator.mu.Unlock()
+	assert.True(t, streamerExists, "聚合器应该已创建streamer")
+
+	// 步骤3：发送最后一个片段+stop信号
+	evt3 := toolUseEvent{
+		Name:      toolName,
+		ToolUseId: toolUseId,
+		Input:     `}`, // 完成JSON
+		Stop:      true, // stop信号
+	}
+
+	payload3, _ := utils.FastMarshal(evt3)
+	message3 := &EventStreamMessage{Payload: payload3}
+
+	_, err = handler.handleToolCallEvent(message3)
+	assert.NoError(t, err)
+
+	// 🔥 关键验证：聚合器中的streamer应该已被清理
+	aggregator.mu.Lock()
+	_, streamerStillExists := aggregator.activeStreamers[toolUseId]
+	aggregator.mu.Unlock()
+	assert.False(t, streamerStillExists, "聚合器应该已清理streamer，避免内存泄漏")
+
+	// 验证工具已完成
+	completedTools := toolManager.GetCompletedTools()
+	var found bool
+	for _, completed := range completedTools {
+		if completed.ID == toolUseId {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "工具应该已标记为完成")
+
+	t.Log("✅ 内存泄漏预防测试通过")
+}
