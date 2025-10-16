@@ -19,9 +19,6 @@ const (
 	// MessageIDTimeFormat 消息ID时间格式
 	MessageIDTimeFormat = "20060102150405"
 
-	// ParseTimeout 解析超时时间
-	ParseTimeout = 10 * time.Second
-
 	// RetryDelay 重试延迟
 	RetryDelay = 100 * time.Millisecond
 
@@ -43,32 +40,8 @@ const (
 
 // HTTP客户端常量
 const (
-	// MaxConnsPerHost 每个主机的最大连接数
-	MaxConnsPerHost = 100
-
-	// ExpectContinueTimeout Expect: 100-continue 超时时间
-	ExpectContinueTimeout = 2 * time.Second
-
 	// ResponseHeaderTimeout 响应头超时时间
 	ResponseHeaderTimeout = 5 * time.Minute
-
-	// StreamResponseTimeout 流式响应超时时间
-	StreamResponseTimeout = 10 * time.Minute
-
-	// SimpleRequestTimeout 简单请求超时时间
-	SimpleRequestTimeout = 2 * time.Minute
-)
-
-// 对象池常量
-const (
-	// MapPoolInitialCapacity Map池初始容量
-	MapPoolInitialCapacity = 16
-
-	// MapPoolMaxSize Map池最大大小
-	MapPoolMaxSize = 100
-
-	// StringBuilderMaxSize StringBuilder最大大小
-	StringBuilderMaxSize = 100
 )
 
 // EventStream解析器常量
@@ -78,9 +51,6 @@ const (
 
 	// EventStreamMaxMessageSize AWS EventStream最大消息长度（16MB）
 	EventStreamMaxMessageSize = 16 * 1024 * 1024
-
-	// EventStreamPreludeSize Prelude大小（totalLength + headerLength + preludeCRC）
-	EventStreamPreludeSize = 12
 )
 
 // Token计算常量
@@ -93,10 +63,4 @@ const (
 
 	// MinOutputTokens 最小输出token数
 	MinOutputTokens = 1
-)
-
-// 文本处理常量
-const (
-	// MinTextLength 最小文本长度（用于去重）
-	MinTextLength = 2
 )

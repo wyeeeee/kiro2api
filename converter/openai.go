@@ -1,12 +1,9 @@
 package converter
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
-	"kiro2api/config"
-	"kiro2api/logger"
 	"kiro2api/types"
 	"kiro2api/utils"
 )
@@ -44,13 +41,6 @@ func ConvertOpenAIToAnthropic(openaiReq types.OpenAIRequest) types.AnthropicRequ
 	stream := false
 	if openaiReq.Stream != nil {
 		stream = *openaiReq.Stream
-	}
-
-	// 如果环境变量禁用了流式传输，则强制设置为false
-	if config.IsStreamDisabled() {
-		logger.Debug("DISABLE_STREAM=true，OpenAI转换器强制禁用流式响应",
-			logger.String("original_stream", fmt.Sprintf("%v", stream)))
-		stream = false
 	}
 
 	anthropicReq := types.AnthropicRequest{

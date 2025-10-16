@@ -22,7 +22,7 @@ func TestLegacyToolUseEventHandler_OneShotCompleteData(t *testing.T) {
 
 	// 构造完整的工具调用事件（一次性发送）
 	input := map[string]any{
-		"query":    "测试查询",
+		"query":      "测试查询",
 		"maxResults": 10,
 		"filters": map[string]any{
 			"category": "技术",
@@ -120,7 +120,7 @@ func TestLegacyToolUseEventHandler_StreamingFragments(t *testing.T) {
 		Name:      toolName,
 		ToolUseId: toolUseId,
 		Input:     `tent":"测试内容"}`, // 完成JSON
-		Stop:      true, // 最后一个片段
+		Stop:      true,            // 最后一个片段
 	}
 
 	payload3, _ := utils.FastMarshal(evt3)
@@ -308,7 +308,7 @@ func TestLegacyToolUseEventHandler_MemoryLeakPrevention(t *testing.T) {
 	evt3 := toolUseEvent{
 		Name:      toolName,
 		ToolUseId: toolUseId,
-		Input:     `}`, // 完成JSON
+		Input:     `}`,  // 完成JSON
 		Stop:      true, // stop信号
 	}
 

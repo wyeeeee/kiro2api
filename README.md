@@ -434,16 +434,6 @@ LOG_FILE=/var/log/kiro2api.log          # 日志文件路径（可选）
 # - response_time: 响应时间
 ```
 
-#### 高级功能配置
-
-```bash
-# === 流式处理优化 ===
-DISABLE_STREAM=false                     # 是否禁用流式响应
-
-# === 调试配置 ===
-SAVE_RAW_DATA=false                      # 是否保存原始EventStream数据用于调试
-```
-
 ## 故障排除
 
 ### 故障诊断

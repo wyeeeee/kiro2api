@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"kiro2api/config"
 	"kiro2api/logger"
@@ -44,9 +43,6 @@ type StreamProcessorContext struct {
 	// 工具调用跟踪
 	toolUseIdByBlockIndex map[int]string
 	completedToolUseIds   map[string]bool // 已完成的工具ID集合（用于stop_reason判断）
-
-	// 原始数据缓冲
-	rawDataBuffer *strings.Builder
 }
 
 // NewStreamProcessorContext 创建流处理上下文
@@ -71,16 +67,12 @@ func NewStreamProcessorContext(
 		compliantParser:       parser.NewCompliantEventStreamParser(false),
 		toolUseIdByBlockIndex: make(map[int]string),
 		completedToolUseIds:   make(map[string]bool),
-		rawDataBuffer:         &strings.Builder{},
 	}
 }
 
 // Cleanup 清理资源
 // 完整清理所有状态，防止内存泄漏
 func (ctx *StreamProcessorContext) Cleanup() {
-	// rawDataBuffer 由 GC 自动回收，无需手动清理
-	ctx.rawDataBuffer = nil
-
 	// 重置解析器状态
 	if ctx.compliantParser != nil {
 		ctx.compliantParser.Reset()
@@ -234,16 +226,16 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 
 	ctx.stopReasonManager.UpdateToolCallStatus(hasActiveTools, hasCompletedTools)
 
-	// 计算输出tokens（使用TokenEstimator统一算法）
-	content := ctx.rawDataBuffer.String()[:utils.IntMin(ctx.totalOutputChars*config.TokenEstimationRatio, ctx.rawDataBuffer.Len())]
-	baseTokens := ctx.tokenEstimator.EstimateTextTokens(content)
+	// 计算输出tokens（基于totalOutputChars直接估算）
+	// 移除rawDataBuffer后，直接使用已统计的字符数进行估算
+	baseTokens := ctx.totalOutputChars / config.TokenEstimationRatio
 
 	// 如果包含工具调用，增加结构化开销
 	outputTokens := baseTokens
 	if len(ctx.toolUseIdByBlockIndex) > 0 {
 		outputTokens = int(float64(baseTokens) * config.ToolCallTokenOverhead)
 	}
-	if outputTokens < config.MinOutputTokens && len(content) > 0 {
+	if outputTokens < config.MinOutputTokens && ctx.totalOutputChars > 0 {
 		outputTokens = config.MinOutputTokens
 	}
 
@@ -267,36 +259,6 @@ func (ctx *StreamProcessorContext) sendFinalEvents() error {
 	}
 
 	return nil
-}
-
-// saveRawDataForReplay 保存原始数据用于调试
-func (ctx *StreamProcessorContext) saveRawDataForReplay() {
-	if !config.IsSaveRawDataEnabled() {
-		return
-	}
-
-	rawData := ctx.rawDataBuffer.String()
-	rawDataBytes := []byte(rawData)
-	requestID := fmt.Sprintf("req_%s_%d", ctx.messageID, time.Now().Unix())
-
-	metadata := utils.Metadata{
-		ClientIP:       ctx.c.ClientIP(),
-		UserAgent:      ctx.c.GetHeader("User-Agent"),
-		RequestHeaders: extractRelevantHeaders(ctx.c),
-		ParseSuccess:   ctx.lastParseErr == nil,
-		EventsCount:    ctx.totalProcessedEvents,
-	}
-
-	if err := utils.SaveRawDataForReplay(rawDataBytes, requestID, ctx.messageID, ctx.req.Model, true, metadata); err != nil {
-		logger.Warn("保存原始数据失败", logger.Err(err))
-	}
-
-	logger.Debug("完整原始数据接收完成",
-		addReqFields(ctx.c,
-			logger.Int("total_bytes", len(rawData)),
-			logger.String("request_id", requestID),
-			logger.String("save_status", "saved_for_replay"),
-		)...)
 }
 
 // 辅助函数
@@ -342,9 +304,6 @@ func (esp *EventStreamProcessor) ProcessEventStream(reader io.Reader) error {
 		esp.ctx.totalReadBytes += n
 
 		if n > 0 {
-			// 写入原始数据缓冲区
-			esp.ctx.rawDataBuffer.Write(buf[:n])
-
 			// 解析事件流
 			events, parseErr := esp.ctx.compliantParser.ParseStream(buf[:n])
 			esp.ctx.lastParseErr = parseErr

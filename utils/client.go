@@ -70,7 +70,6 @@ func init() {
 			WriteBufferSize:       32 * 1024,
 			ReadBufferSize:        32 * 1024,
 			ResponseHeaderTimeout: config.HTTPClientResponseHeaderTimeout,
-			ExpectContinueTimeout: config.HTTPClientExpectContinueTimeout,
 		}
 	}
 

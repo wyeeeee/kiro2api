@@ -116,9 +116,6 @@ func handleGenericStreamRequest(c *gin.Context, anthropicReq types.AnthropicRequ
 		logger.Error("发送结束事件失败", logger.Err(err))
 		return
 	}
-
-	// 保存原始数据用于调试
-	ctx.saveRawDataForReplay()
 }
 
 // createAnthropicStreamEvents 创建Anthropic流式初始事件

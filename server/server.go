@@ -185,13 +185,6 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 			return
 		}
 
-		// 如果环境变量禁用了流式传输，则强制设置为false
-		if config.IsStreamDisabled() {
-			logger.Info("DISABLE_STREAM=true，强制禁用流式响应",
-				logger.String("original_stream", fmt.Sprintf("%v", anthropicReq.Stream)))
-			anthropicReq.Stream = false
-		}
-
 		if anthropicReq.Stream {
 			handleStreamRequest(c, anthropicReq, tokenInfo)
 			return
@@ -237,18 +230,10 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 		// 转换为Anthropic格式
 		anthropicReq := converter.ConvertOpenAIToAnthropic(openaiReq)
 
-		// 如果环境变量禁用了流式传输，则强制设置为false
-		if config.IsStreamDisabled() {
-			logger.Info("DISABLE_STREAM=true，强制禁用流式响应",
-				logger.String("original_stream", fmt.Sprintf("%v", anthropicReq.Stream)))
-			anthropicReq.Stream = false
-		}
-
 		if anthropicReq.Stream {
 			handleOpenAIStreamRequest(c, anthropicReq, tokenInfo)
 			return
 		}
-
 		handleOpenAINonStreamRequest(c, anthropicReq, tokenInfo)
 	})
 
