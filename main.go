@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"time"
 
 	"kiro2api/auth"
 	"kiro2api/logger"
@@ -107,7 +108,7 @@ func main() {
 
 // createTokenUsageProvider 创建Token使用信息提供者
 func createTokenUsageProvider() webconfig.TokenUsageProvider {
-	return func(token webconfig.AuthToken) (userEmail string, userId string, remainingUsage float64, err error) {
+	return func(token webconfig.AuthToken) (userEmail string, userId string, remainingUsage float64, lastUsed *time.Time, err error) {
 		// 构建auth配置
 		authConfig := auth.AuthConfig{
 			AuthType:     token.Auth,
@@ -131,14 +132,14 @@ func createTokenUsageProvider() webconfig.TokenUsageProvider {
 		}
 		
 		if err != nil {
-			return "", "", 0, err
+			return "", "", 0, nil, err
 		}
 		
 		// 检查使用限制
 		checker := auth.NewUsageLimitsChecker()
 		usage, checkErr := checker.CheckUsageLimits(tokenInfo)
 		if checkErr != nil {
-			return "", "", 0, checkErr
+			return "", "", 0, nil, checkErr
 		}
 		
 		// 计算剩余次数
@@ -157,7 +158,10 @@ func createTokenUsageProvider() webconfig.TokenUsageProvider {
 			userId = "未知"
 		}
 		
-		return userEmail, userId, remainingUsage, nil
+		// 使用token配置中的LastUsed（如果有）
+		lastUsed = token.LastUsed
+		
+		return userEmail, userId, remainingUsage, lastUsed, nil
 	}
 }
 

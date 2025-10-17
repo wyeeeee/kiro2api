@@ -12,7 +12,7 @@ import (
 )
 
 // TokenUsageProvider Token使用信息提供者接口
-type TokenUsageProvider func(token AuthToken) (userEmail string, userId string, remainingUsage float64, err error)
+type TokenUsageProvider func(token AuthToken) (userEmail string, userId string, remainingUsage float64, lastUsed *time.Time, err error)
 
 // Manager 配置管理器
 type Manager struct {
@@ -365,10 +365,14 @@ func (m *Manager) RefreshTokenCache() {
 		}
 		
 		// 获取实时使用信息
-		if userEmail, userId, remainingUsage, err := provider(token); err == nil {
+		if userEmail, userId, remainingUsage, lastUsed, err := provider(token); err == nil {
 			tokenInfo.UserEmail = userEmail
 			tokenInfo.UserId = userId
 			tokenInfo.RemainingUsage = remainingUsage
+			// 更新LastUsed字段
+			if lastUsed != nil {
+				tokenInfo.LastUsed = lastUsed
+			}
 		} else {
 			tokenInfo.UserEmail = "获取失败"
 		}
