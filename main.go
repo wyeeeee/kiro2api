@@ -66,6 +66,9 @@ func main() {
 
 	// 注入Token使用信息提供者
 	configManager.SetTokenUsageProvider(createTokenUsageProvider())
+	
+	// 启动时初始化Token缓存（异步）
+	go configManager.RefreshTokenCache()
 
 	// 只有在有Token配置时才创建AuthService
 	tokens := configManager.GetEnabledTokens()

@@ -25,6 +25,10 @@ type Manager struct {
 	callbackMutex sync.RWMutex
 	tokenUsageProvider TokenUsageProvider // Token使用信息提供者
 	providerMutex sync.RWMutex
+	tokenCache map[string]*TokenWithUsageInfo // Token信息缓存
+	cacheTime time.Time // 缓存时间
+	cacheMutex sync.RWMutex
+	minRefreshInterval time.Duration // 最小刷新间隔
 }
 
 // Session 会话信息
@@ -45,6 +49,8 @@ func NewManager() *Manager {
 	m := &Manager{
 		storage:  NewStorage(),
 		sessions: make(map[string]*Session),
+		tokenCache: make(map[string]*TokenWithUsageInfo),
+		minRefreshInterval: 5 * time.Minute, // 最小刷新间隔5分钟
 	}
 
 	// 加载配置
@@ -281,14 +287,65 @@ func (m *Manager) SetTokenUsageProvider(provider TokenUsageProvider) {
 	m.tokenUsageProvider = provider
 }
 
-// GetTokensWithUsageInfo 获取带有实时使用信息的Token列表
+// GetTokensWithUsageInfo 获取带有实时使用信息的Token列表（使用缓存）
 func (m *Manager) GetTokensWithUsageInfo() []TokenWithUsageInfo {
 	config := m.GetConfig()
 	result := make([]TokenWithUsageInfo, 0, len(config.AuthTokens))
 	
+	m.cacheMutex.RLock()
+	cacheExpired := time.Since(m.cacheTime) > m.minRefreshInterval
+	m.cacheMutex.RUnlock()
+	
+	// 如果缓存过期，触发异步刷新
+	if cacheExpired {
+		go m.RefreshTokenCache()
+	}
+	
+	// 返回缓存的数据（如果有）
+	for i, token := range config.AuthTokens {
+		m.cacheMutex.RLock()
+		cachedInfo, exists := m.tokenCache[token.ID]
+		m.cacheMutex.RUnlock()
+		
+		if exists {
+			result = append(result, *cachedInfo)
+		} else {
+			// 如果缓存中没有，返回基本信息
+			tokenInfo := TokenWithUsageInfo{
+				AuthToken:      token,
+				UserEmail:      "加载中...",
+				RemainingUsage: 0,
+				UserId:         fmt.Sprintf("%d", i),
+			}
+			if !token.Enabled {
+				tokenInfo.UserEmail = "已禁用"
+			}
+			result = append(result, tokenInfo)
+		}
+	}
+	
+	return result
+}
+
+// RefreshTokenCache 刷新Token缓存（异步执行）
+func (m *Manager) RefreshTokenCache() {
+	m.cacheMutex.Lock()
+	// 防止并发刷新
+	if time.Since(m.cacheTime) < m.minRefreshInterval {
+		m.cacheMutex.Unlock()
+		return
+	}
+	m.cacheTime = time.Now()
+	m.cacheMutex.Unlock()
+	
+	config := m.GetConfig()
 	m.providerMutex.RLock()
 	provider := m.tokenUsageProvider
 	m.providerMutex.RUnlock()
+	
+	if provider == nil {
+		return
+	}
 	
 	for i, token := range config.AuthTokens {
 		tokenInfo := TokenWithUsageInfo{
@@ -298,28 +355,36 @@ func (m *Manager) GetTokensWithUsageInfo() []TokenWithUsageInfo {
 			UserId:         fmt.Sprintf("%d", i),
 		}
 		
-		// 如果Token被禁用，直接返回基本信息
+		// 如果Token被禁用，直接缓存基本信息
 		if !token.Enabled {
 			tokenInfo.UserEmail = "已禁用"
-			result = append(result, tokenInfo)
+			m.cacheMutex.Lock()
+			m.tokenCache[token.ID] = &tokenInfo
+			m.cacheMutex.Unlock()
 			continue
 		}
 		
-		// 如果有提供者，获取实时使用信息
-		if provider != nil {
-			if userEmail, userId, remainingUsage, err := provider(token); err == nil {
-				tokenInfo.UserEmail = userEmail
-				tokenInfo.UserId = userId
-				tokenInfo.RemainingUsage = remainingUsage
-			} else {
-				tokenInfo.UserEmail = "获取失败"
-			}
+		// 获取实时使用信息
+		if userEmail, userId, remainingUsage, err := provider(token); err == nil {
+			tokenInfo.UserEmail = userEmail
+			tokenInfo.UserId = userId
+			tokenInfo.RemainingUsage = remainingUsage
+		} else {
+			tokenInfo.UserEmail = "获取失败"
 		}
 		
-		result = append(result, tokenInfo)
+		m.cacheMutex.Lock()
+		m.tokenCache[token.ID] = &tokenInfo
+		m.cacheMutex.Unlock()
 	}
-	
-	return result
+}
+
+// ForceRefreshTokenCache 强制刷新Token缓存（手动刷新）
+func (m *Manager) ForceRefreshTokenCache() {
+	m.cacheMutex.Lock()
+	m.cacheTime = time.Time{} // 重置缓存时间，强制刷新
+	m.cacheMutex.Unlock()
+	m.RefreshTokenCache()
 }
 
 // BackupConfig 备份配置

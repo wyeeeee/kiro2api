@@ -74,6 +74,7 @@ function initializeForms() {
     // Token管理
     document.getElementById('addTokenForm').addEventListener('submit', addToken);
     document.getElementById('authType').addEventListener('change', toggleIdcFields);
+    document.getElementById('refreshTokensBtn').addEventListener('click', refreshTokenInfo);
 
     // 备份管理
     document.getElementById('createBackupBtn').addEventListener('click', createBackup);
@@ -457,6 +458,40 @@ async function deleteToken(tokenId) {
         }
     } catch (error) {
         showMessage('Token删除失败: ' + error.message, 'error');
+    }
+}
+
+// 刷新Token信息
+async function refreshTokenInfo() {
+    const btn = document.getElementById('refreshTokensBtn');
+    const originalText = btn.textContent;
+    
+    try {
+        btn.disabled = true;
+        btn.textContent = '🔄 刷新中...';
+        
+        const response = await fetch('/api/tokens/refresh', {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            showMessage('Token信息刷新已启动，请稍候...', 'info');
+            
+            // 等待2秒后重新加载Token列表
+            setTimeout(() => {
+                loadTokens();
+            }, 2000);
+        } else {
+            showMessage('刷新失败: ' + result.error, 'error');
+        }
+    } catch (error) {
+        showMessage('刷新失败: ' + error.message, 'error');
+    } finally {
+        setTimeout(() => {
+            btn.disabled = false;
+            btn.textContent = originalText;
+        }, 2000);
     }
 }
 

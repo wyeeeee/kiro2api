@@ -22,6 +22,7 @@ func (m *Manager) SetupRoutes(r *http.ServeMux) {
 	r.HandleFunc("/config", m.withAuth(m.handleConfig))
 	r.HandleFunc("/api/config", m.withAuth(m.handleAPIConfig))
 	r.HandleFunc("/api/tokens", m.withAuth(m.handleAPITokens))
+	r.HandleFunc("/api/tokens/refresh", m.withAuth(m.handleRefreshTokens))
 	r.HandleFunc("/api/backup", m.withAuth(m.handleBackup))
 	r.HandleFunc("/api/restore", m.withAuth(m.handleRestore))
 
@@ -224,11 +225,27 @@ func (m *Manager) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleRefreshTokens 处理Token刷新请求
+func (m *Manager) handleRefreshTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// 强制刷新Token缓存
+	go m.ForceRefreshTokenCache()
+	
+	m.writeJSONResponse(w, map[string]interface{}{
+		"success": true,
+		"message": "Token刷新已启动",
+	})
+}
+
 // handleAPITokens 处理Token API
 func (m *Manager) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		// 获取带有实时使用信息的Token列表
+		// 获取带有实时使用信息的Token列表（使用缓存）
 		tokens := m.GetTokensWithUsageInfo()
 		m.writeJSONResponse(w, tokens)
 
