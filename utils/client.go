@@ -148,3 +148,31 @@ func DoSmartRequest(httpReq *http.Request, anthropicReq *types.AnthropicRequest)
 }
 
 // GetOptimalClient 获取最优HTTP客户端
+func GetOptimalClient(isStreaming bool, isComplex bool) *http.Client {
+	if isStreaming {
+		return StreamingClient
+	}
+	if isComplex {
+		return LongRequestClient
+	}
+	return SharedHTTPClient
+}
+
+// 动态配置支持函数
+// UpdateTimeouts 更新HTTP客户端超时配置
+func UpdateTimeouts(requestMinutes, simpleRequestMinutes, streamMinutes int) {
+	requestTimeout := time.Duration(requestMinutes) * time.Minute
+	shortTimeout := time.Duration(simpleRequestMinutes) * time.Minute
+	streamTimeout := time.Duration(streamMinutes) * time.Minute
+
+	// 更新现有客户端的超时配置
+	if SharedHTTPClient != nil {
+		SharedHTTPClient.Timeout = shortTimeout
+	}
+	if LongRequestClient != nil {
+		LongRequestClient.Timeout = requestTimeout
+	}
+	if StreamingClient != nil {
+		StreamingClient.Timeout = streamTimeout
+	}
+}

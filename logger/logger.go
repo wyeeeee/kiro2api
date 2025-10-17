@@ -403,3 +403,101 @@ type OptimizationConfig struct {
 type Config struct {
 	Level Level
 }
+
+// 动态配置支持函数
+// SetLogLevel 设置日志级别
+func SetLogLevel(level Level) {
+	atomic.StoreInt64(&defaultLogger.level, int64(level))
+}
+
+// SetJSONFormat 设置JSON格式（默认）
+func SetJSONFormat() {
+	// 目前默认就是JSON格式，此函数为了兼容性保留
+}
+
+// SetTextFormat 设置文本格式
+func SetTextFormat() {
+	// 如果需要支持文本格式，可以在这里实现
+	// 目前保持JSON格式
+}
+
+// SetLogFile 设置日志文件
+func SetLogFile(filename string) {
+	if filename == "" {
+		return
+	}
+
+	// 关闭现有文件
+	if defaultLogger.logFile != nil {
+		defaultLogger.logFile.Close()
+		defaultLogger.logFile = nil
+	}
+
+	// 打开新文件
+	if file, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err == nil {
+		defaultLogger.logFile = file
+
+		// 重新构建写入器
+		var newWriters []io.Writer
+		if len(defaultLogger.writers) > 0 {
+			// 保留控制台输出（如果原来有）
+			for _, writer := range defaultLogger.writers {
+				if writer == os.Stdout {
+					newWriters = append(newWriters, os.Stdout)
+				}
+			}
+		}
+		newWriters = append(newWriters, file)
+		defaultLogger.writers = newWriters
+
+		// 重新创建logger
+		multiWriter := io.MultiWriter(defaultLogger.writers...)
+		defaultLogger.logger = log.New(multiWriter, "", 0)
+	} else {
+		// 如果打开失败，保持原有配置
+		fmt.Fprintf(os.Stderr, "无法打开日志文件 %s: %v\n", filename, err)
+	}
+}
+
+// SetConsoleOutput 设置控制台输出
+func SetConsoleOutput(enabled bool) {
+	// 关闭现有文件
+	if defaultLogger.logFile != nil {
+		defaultLogger.logFile.Close()
+		defaultLogger.logFile = nil
+	}
+
+	// 重新构建写入器
+	var newWriters []io.Writer
+	if enabled {
+		newWriters = append(newWriters, os.Stdout)
+	}
+
+	// 如果有日志文件，添加到写入器
+	// 这里简化处理，实际应该从配置中获取日志文件路径
+
+	defaultLogger.writers = newWriters
+
+	// 重新创建logger
+	if len(newWriters) > 0 {
+		multiWriter := io.MultiWriter(newWriters...)
+		defaultLogger.logger = log.New(multiWriter, "", 0)
+	}
+}
+
+// SetCallerEnabled 设置是否启用调用栈信息
+func SetCallerEnabled(enabled bool) {
+	defaultLogger.enableCaller = enabled
+}
+
+// SetCallerSkip 设置调用栈跳过层数
+func SetCallerSkip(skip int) {
+	if skip > 0 {
+		defaultLogger.callerSkip = skip
+	}
+}
+
+// GetLogLevel 获取当前日志级别
+func GetLogLevel() Level {
+	return Level(atomic.LoadInt64(&defaultLogger.level))
+}

@@ -1,0 +1,458 @@
+package webconfig
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+// SetupRoutes 设置路由
+func (m *Manager) SetupRoutes(r *http.ServeMux) {
+	// 公开路由
+	r.HandleFunc("/", m.handleRoot)
+	r.HandleFunc("/login", m.handleLogin)
+	r.HandleFunc("/api/init", m.handleInit)
+
+	// 需要认证的路由
+	r.HandleFunc("/logout", m.withAuth(m.handleLogout))
+	r.HandleFunc("/config", m.withAuth(m.handleConfig))
+	r.HandleFunc("/api/config", m.withAuth(m.handleAPIConfig))
+	r.HandleFunc("/api/tokens", m.withAuth(m.handleAPITokens))
+	r.HandleFunc("/api/backup", m.withAuth(m.handleBackup))
+	r.HandleFunc("/api/restore", m.withAuth(m.handleRestore))
+
+	// 静态文件服务
+	r.HandleFunc("/static/", m.handleStatic)
+}
+
+// handleRoot 处理根路径
+func (m *Manager) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	if m.IsFirstRun() {
+		http.Redirect(w, r, "/login?init=true", http.StatusSeeOther)
+		return
+	}
+
+	// 检查会话
+	sessionCookie, err := r.Cookie("session_id")
+	if err != nil || !m.ValidateSession(sessionCookie.Value) {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/config", http.StatusSeeOther)
+}
+
+// handleLogin 处理登录页面
+func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		isInit := r.URL.Query().Get("init") == "true"
+		m.renderLoginPage(w, isInit)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// 处理登录
+	if err := r.ParseForm(); err != nil {
+		m.renderError(w, "解析表单失败", http.StatusBadRequest)
+		return
+	}
+
+	password := r.FormValue("password")
+	if password == "" {
+		m.renderError(w, "密码不能为空", http.StatusBadRequest)
+		return
+	}
+
+	// 首次初始化
+	isInit := r.URL.Query().Get("init") == "true"
+	if isInit {
+		clientToken := r.FormValue("clientToken")
+		if clientToken == "" {
+			m.renderError(w, "客户端Token不能为空", http.StatusBadRequest)
+			return
+		}
+
+		if err := m.InitializeFirstRun(password, clientToken); err != nil {
+			m.renderError(w, fmt.Sprintf("初始化失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// 验证密码
+		if !m.VerifyLoginPassword(password) {
+			m.renderLoginPage(w, false, "密码错误")
+			return
+		}
+	}
+
+	// 创建会话
+	session := m.CreateSession()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    session.ID,
+		Path:     "/",
+		Expires:  session.ExpiresAt,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	http.Redirect(w, r, "/config", http.StatusSeeOther)
+}
+
+// handleInit 处理初始化API
+func (m *Manager) handleInit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !m.IsFirstRun() {
+		m.writeJSONError(w, "系统已初始化", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		LoginPassword string `json:"loginPassword"`
+		ClientToken   string `json:"clientToken"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		m.writeJSONError(w, "JSON解析失败", http.StatusBadRequest)
+		return
+	}
+
+	if req.LoginPassword == "" || req.ClientToken == "" {
+		m.writeJSONError(w, "登录密码和客户端Token不能为空", http.StatusBadRequest)
+		return
+	}
+
+	if err := m.InitializeFirstRun(req.LoginPassword, req.ClientToken); err != nil {
+		m.writeJSONError(w, fmt.Sprintf("初始化失败: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// 创建会话
+	session := m.CreateSession()
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    session.ID,
+		Path:     "/",
+		Expires:  session.ExpiresAt,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+
+	m.writeJSONResponse(w, map[string]interface{}{
+		"success": true,
+		"message": "初始化成功",
+		"session": session.ID,
+	})
+}
+
+// handleLogout 处理登出
+func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
+	sessionCookie, err := r.Cookie("session_id")
+	if err == nil {
+		m.InvalidateSession(sessionCookie.Value)
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		HttpOnly: true,
+	})
+
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// handleConfig 处理配置页面
+func (m *Manager) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		m.renderConfigPage(w)
+		return
+	}
+
+	http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+}
+
+// handleAPIConfig 处理配置API
+func (m *Manager) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		config := m.GetConfig()
+		// 不返回密码
+		config.LoginPassword = ""
+		m.writeJSONResponse(w, config)
+
+	case "PUT":
+		var newConfig WebConfig
+		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+			m.writeJSONError(w, "JSON解析失败", http.StatusBadRequest)
+			return
+		}
+
+		// 保持原有的登录密码
+		oldConfig := m.GetConfig()
+		newConfig.LoginPassword = oldConfig.LoginPassword
+
+		if err := m.UpdateConfig(&newConfig); err != nil {
+			m.writeJSONError(w, fmt.Sprintf("更新配置失败: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		m.writeJSONResponse(w, map[string]interface{}{
+			"success": true,
+			"message": "配置更新成功",
+		})
+
+	default:
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPITokens 处理Token API
+func (m *Manager) handleAPITokens(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		tokens := m.GetEnabledTokens()
+		m.writeJSONResponse(w, tokens)
+
+	case "POST":
+		var token AuthToken
+		if err := json.NewDecoder(r.Body).Decode(&token); err != nil {
+			m.writeJSONError(w, "JSON解析失败", http.StatusBadRequest)
+			return
+		}
+
+		if token.Auth == "" || token.RefreshToken == "" {
+			m.writeJSONError(w, "认证方式和刷新Token不能为空", http.StatusBadRequest)
+			return
+		}
+
+		if token.Auth == "IdC" && (token.ClientID == "" || token.ClientSecret == "") {
+			m.writeJSONError(w, "IdC认证需要客户端ID和密钥", http.StatusBadRequest)
+			return
+		}
+
+		// 生成ID
+		token.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+		token.Enabled = true
+
+		config := m.GetConfig()
+		config.AuthTokens = append(config.AuthTokens, token)
+
+		if err := m.UpdateConfig(config); err != nil {
+			m.writeJSONError(w, fmt.Sprintf("添加Token失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		m.writeJSONResponse(w, map[string]interface{}{
+			"success": true,
+			"message": "Token添加成功",
+			"token":   token,
+		})
+
+	case "DELETE":
+		tokenID := r.URL.Query().Get("id")
+		if tokenID == "" {
+			m.writeJSONError(w, "Token ID不能为空", http.StatusBadRequest)
+			return
+		}
+
+		config := m.GetConfig()
+		var updatedTokens []AuthToken
+		found := false
+
+		for _, token := range config.AuthTokens {
+			if token.ID == tokenID {
+				found = true
+				continue
+			}
+			updatedTokens = append(updatedTokens, token)
+		}
+
+		if !found {
+			m.writeJSONError(w, "Token不存在", http.StatusNotFound)
+			return
+		}
+
+		config.AuthTokens = updatedTokens
+		if err := m.UpdateConfig(config); err != nil {
+			m.writeJSONError(w, fmt.Sprintf("删除Token失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		m.writeJSONResponse(w, map[string]interface{}{
+			"success": true,
+			"message": "Token删除成功",
+		})
+
+	default:
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleBackup 处理备份
+func (m *Manager) handleBackup(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		backups, err := m.ListBackups()
+		if err != nil {
+			m.writeJSONError(w, fmt.Sprintf("获取备份列表失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+		// 确保永远不会返回null
+		if backups == nil {
+			backups = []string{}
+		}
+		m.writeJSONResponse(w, backups)
+
+	case "POST":
+		if err := m.BackupConfig(); err != nil {
+			m.writeJSONError(w, fmt.Sprintf("备份失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		m.writeJSONResponse(w, map[string]interface{}{
+			"success": true,
+			"message": "配置备份成功",
+		})
+
+	default:
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleRestore 处理恢复
+func (m *Manager) handleRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		BackupFile string `json:"backupFile"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		m.writeJSONError(w, "JSON解析失败", http.StatusBadRequest)
+		return
+	}
+
+	if req.BackupFile == "" {
+		m.writeJSONError(w, "备份文件名不能为空", http.StatusBadRequest)
+		return
+	}
+
+	if err := m.RestoreFromBackup(req.BackupFile); err != nil {
+		m.writeJSONError(w, fmt.Sprintf("恢复失败: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	m.writeJSONResponse(w, map[string]interface{}{
+		"success": true,
+		"message": "配置恢复成功",
+	})
+}
+
+// handleStatic 处理静态文件
+func (m *Manager) handleStatic(w http.ResponseWriter, r *http.Request) {
+	filePath := filepath.Join("webconfig", "static", strings.TrimPrefix(r.URL.Path, "/static"))
+	http.ServeFile(w, r, filePath)
+}
+
+// withAuth 认证中间件
+func (m *Manager) withAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sessionCookie, err := r.Cookie("session_id")
+		if err != nil || !m.ValidateSession(sessionCookie.Value) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		handler(w, r)
+	}
+}
+
+// writeJSONResponse 写入JSON响应
+func (m *Manager) writeJSONResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		http.Error(w, "JSON编码失败", http.StatusInternalServerError)
+	}
+}
+
+// writeJSONError 写入JSON错误响应
+func (m *Manager) writeJSONError(w http.ResponseWriter, message string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": false,
+		"error":   message,
+	})
+}
+
+// renderError 渲染错误页面
+func (m *Manager) renderError(w http.ResponseWriter, message string, code int) {
+	w.WriteHeader(code)
+	tmpl := template.Must(template.New("error").Parse(`
+<!DOCTYPE html>
+<html>
+<head>
+    <title>错误</title>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 50px; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1 class="error">错误</h1>
+    <p>{{.Message}}</p>
+    <p><a href="/login">返回登录</a></p>
+</body>
+</html>
+`))
+	tmpl.Execute(w, map[string]string{"Message": message})
+}
+
+// renderLoginPage 渲染登录页面
+func (m *Manager) renderLoginPage(w http.ResponseWriter, isInit bool, errorMsg ...string) {
+	tmpl := template.Must(template.ParseFiles(filepath.Join("webconfig", "static", "login.html")))
+
+	data := map[string]interface{}{
+		"IsInit": isInit,
+	}
+
+	if len(errorMsg) > 0 && errorMsg[0] != "" {
+		data["Error"] = errorMsg[0]
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.Execute(w, data); err != nil {
+		http.Error(w, "渲染页面失败", http.StatusInternalServerError)
+	}
+}
+
+// renderConfigPage 渲染配置页面
+func (m *Manager) renderConfigPage(w http.ResponseWriter) {
+	tmpl := template.Must(template.ParseFiles(filepath.Join("webconfig", "static", "index.html")))
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.Execute(w, nil); err != nil {
+		http.Error(w, "渲染页面失败", http.StatusInternalServerError)
+	}
+}

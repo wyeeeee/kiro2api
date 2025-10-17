@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"kiro2api/logger"
+	"kiro2api/webconfig"
 )
 
 // AuthConfig 简化的认证配置
@@ -150,4 +151,34 @@ func processConfigs(configs []AuthConfig) []AuthConfig {
 	}
 
 	return validConfigs
+}
+
+// loadConfigsFromWebConfig 从Web配置加载认证配置
+func loadConfigsFromWebConfig(configManager *webconfig.Manager) ([]AuthConfig, error) {
+	tokens := configManager.GetEnabledTokens()
+
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("没有配置任何认证Token，请先在Web界面中添加Token")
+	}
+
+	var configs []AuthConfig
+	for _, token := range tokens {
+		config := AuthConfig{
+			AuthType:     token.Auth,
+			RefreshToken: token.RefreshToken,
+			ClientID:     token.ClientID,
+			ClientSecret: token.ClientSecret,
+		}
+		configs = append(configs, config)
+	}
+
+	logger.Info("从Web配置加载认证配置",
+		logger.Int("Token数量", len(configs)))
+
+	return configs, nil
+}
+
+// GetConfigsFromWebConfig 从Web配置获取认证配置的公开函数
+func GetConfigsFromWebConfig(configManager *webconfig.Manager) ([]AuthConfig, error) {
+	return loadConfigsFromWebConfig(configManager)
 }

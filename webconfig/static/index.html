@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kiro2API - 配置管理</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="config-page">
+            <div class="config-header">
+                <div>
+                    <h1>🚀 Kiro2API</h1>
+                    <p>HTTP代理服务器配置管理</p>
+                </div>
+                <div class="config-nav">
+                    <a href="#service" class="nav-link active" data-section="service">⚙️ 服务配置</a>
+                    <a href="#tokens" class="nav-link" data-section="tokens">🔑 Token管理</a>
+                    <a href="#logs" class="nav-link" data-section="logs">📝 日志配置</a>
+                    <a href="#timeouts" class="nav-link" data-section="timeouts">⏱️ 超时配置</a>
+                    <a href="#backup" class="nav-link" data-section="backup">💾 备份管理</a>
+                    <a href="/logout" class="nav-link">🚪 登出</a>
+                </div>
+            </div>
+
+            <div class="config-content">
+                <!-- 消息显示区域 -->
+                <div id="globalMessage" class="message"></div>
+
+                <!-- 服务配置 -->
+                <div id="service-section" class="config-section">
+                    <h2>⚙️ 服务配置</h2>
+                    <form id="serviceForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="port">服务端口</label>
+                                <input type="number" id="port" name="port" min="1" max="65535" required>
+                                <small>HTTP服务监听端口 (1-65535)</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="ginMode">运行模式</label>
+                                <select id="ginMode" name="ginMode">
+                                    <option value="release">Release (生产环境)</option>
+                                    <option value="debug">Debug (调试模式)</option>
+                                    <option value="test">Test (测试模式)</option>
+                                </select>
+                                <small>选择服务运行模式</small>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="clientToken">客户端Token</label>
+                                <input type="text" id="clientToken" name="clientToken" required>
+                                <small>用于验证API请求的Token</small>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Token管理 -->
+                <div id="tokens-section" class="config-section hidden">
+                    <h2>🔑 Token管理</h2>
+
+                    <div class="add-token-form">
+                        <h3>➕ 添加新Token</h3>
+                        <form id="addTokenForm">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="authType">认证方式</label>
+                                    <select id="authType" name="auth" required>
+                                        <option value="">请选择认证方式</option>
+                                        <option value="Social">Social认证</option>
+                                        <option value="IdC">IdC认证</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="refreshToken">刷新Token</label>
+                                    <input type="text" id="refreshToken" name="refreshToken" required>
+                                </div>
+                            </div>
+                            <div id="idcFields" class="form-row hidden">
+                                <div class="form-group">
+                                    <label for="clientId">客户端ID</label>
+                                    <input type="text" id="clientId" name="clientId">
+                                </div>
+                                <div class="form-group">
+                                    <label for="clientSecret">客户端密钥</label>
+                                    <input type="password" id="clientSecret" name="clientSecret">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="tokenDesc">描述</label>
+                                    <input type="text" id="tokenDesc" name="description" placeholder="可选：Token用途描述">
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary">➕ 添加Token</button>
+                        </form>
+                    </div>
+
+                    <div class="token-list" id="tokenList">
+                        <!-- Token列表将动态生成 -->
+                    </div>
+                </div>
+
+                <!-- 日志配置 -->
+                <div id="logs-section" class="config-section hidden">
+                    <h2>📝 日志配置</h2>
+                    <form id="logsForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="logLevel">日志级别</label>
+                                <select id="logLevel" name="level">
+                                    <option value="debug">Debug (详细)</option>
+                                    <option value="info">Info (信息)</option>
+                                    <option value="warn">Warn (警告)</option>
+                                    <option value="error">Error (错误)</option>
+                                    <option value="fatal">Fatal (致命)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="logFormat">日志格式</label>
+                                <select id="logFormat" name="format">
+                                    <option value="json">JSON</option>
+                                    <option value="text">Text</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="logFile">日志文件路径</label>
+                                <input type="text" id="logFile" name="file" placeholder="可选：留空则不输出到文件">
+                            </div>
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="logConsole" name="console" checked>
+                                    控制台输出
+                                </label>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>
+                                    <input type="checkbox" id="logCaller" name="enableCaller">
+                                    启用调用栈信息
+                                </label>
+                            </div>
+                            <div class="form-group">
+                                <label for="callerSkip">调用栈跳过层数</label>
+                                <input type="number" id="callerSkip" name="callerSkip" min="0" max="10" value="3">
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- 超时配置 -->
+                <div id="timeouts-section" class="config-section hidden">
+                    <h2>⏱️ 超时配置</h2>
+                    <form id="timeoutsForm">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="requestTimeout">复杂请求超时 (分钟)</label>
+                                <input type="number" id="requestTimeout" name="requestMinutes" min="1" max="120">
+                                <small>复杂请求的超时时间 (1-120分钟)</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="simpleRequestTimeout">简单请求超时 (分钟)</label>
+                                <input type="number" id="simpleRequestTimeout" name="simpleRequestMinutes" min="1" max="60">
+                                <small>简单请求的超时时间 (1-60分钟)</small>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="streamTimeout">流式请求超时 (分钟)</label>
+                                <input type="number" id="streamTimeout" name="streamMinutes" min="1" max="180">
+                                <small>流式请求的超时时间 (1-180分钟)</small>
+                            </div>
+                            <div class="form-group">
+                                <label for="serverReadTimeout">服务器读取超时 (分钟)</label>
+                                <input type="number" id="serverReadTimeout" name="serverReadMinutes" min="1" max="180">
+                                <small>HTTP服务器读取超时时间</small>
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="serverWriteTimeout">服务器写入超时 (分钟)</label>
+                                <input type="number" id="serverWriteTimeout" name="serverWriteMinutes" min="1" max="180">
+                                <small>HTTP服务器写入超时时间</small>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- 备份管理 -->
+                <div id="backup-section" class="config-section hidden">
+                    <h2>💾 备份管理</h2>
+                    <div class="form-actions">
+                        <button id="createBackupBtn" class="btn btn-primary">💾 创建备份</button>
+                        <button id="refreshBackupsBtn" class="btn btn-secondary">🔄 刷新列表</button>
+                    </div>
+                    <div class="backup-list" id="backupList">
+                        <!-- 备份列表将动态生成 -->
+                    </div>
+                </div>
+
+                <!-- 全局操作按钮 -->
+                <div class="form-actions">
+                    <button id="saveConfigBtn" class="btn btn-primary">💾 保存配置</button>
+                    <button id="reloadConfigBtn" class="btn btn-secondary">🔄 重新加载</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
