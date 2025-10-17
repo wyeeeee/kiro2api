@@ -44,9 +44,9 @@ func main() {
 	if configManager.IsFirstRun() {
 		fmt.Println("🚀 欢迎使用 Kiro2API!")
 		fmt.Println("首次运行需要初始化配置...")
-		fmt.Println("请在浏览器中访问 http://localhost:8083 进行初始化设置")
+		fmt.Println("请在浏览器中访问 http://0.0.0.0:8083 进行初始化设置")
 		fmt.Println("或者在命令行中运行以下命令进行初始化:")
-		fmt.Println("curl -X POST http://localhost:8083/api/init \\")
+		fmt.Println("curl -X POST http://0.0.0.0:8083/api/init \\")
 		fmt.Println("  -H \"Content-Type: application/json\" \\")
 		fmt.Println("  -d '{\"loginPassword\":\"your-admin-password\",\"clientToken\":\"your-api-token\"}'")
 	}

@@ -277,7 +277,7 @@ func StartServer(port string, authToken string, authService *auth.AuthService) {
 
 	// 创建自定义HTTP服务器以支持长时间请求
 	server := &http.Server{
-		Addr:           ":" + port,
+		Addr:           "0.0.0.0:" + port,
 		Handler:        r,
 		ReadTimeout:    readTimeout,              // 读取超时
 		WriteTimeout:   writeTimeout,             // 写入超时
@@ -545,7 +545,7 @@ func StartServerWithConfig(port string, authToken string, authService *auth.Auth
 
 	// 创建自定义HTTP服务器以支持长时间请求
 	server := &http.Server{
-		Addr:           ":" + port,
+		Addr:           "0.0.0.0:" + port,
 		Handler:        r,
 		ReadTimeout:    readTimeout,              // 读取超时
 		WriteTimeout:   writeTimeout,             // 写入超时
