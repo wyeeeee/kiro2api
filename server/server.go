@@ -342,8 +342,8 @@ func StartServerWithConfig(port string, authToken string, authService *auth.Auth
 	// 设置Web配置管理的路由
 	setupWebConfigRoutes(r, configManager)
 
-	// 只对 /v1 开头的端点进行认证
-	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1", "/api/tokens"}))
+	// 只对 /v1 开头的端点进行认证（不包括 /api 路径，因为 /api 路径由 webconfig 自己管理认证）
+	r.Use(PathBasedAuthMiddleware(authToken, []string{"/v1"}))
 
 	// API端点 - 纯数据服务
 	// 注意：不在这里添加 /api/tokens，避免与Web配置路由冲突
@@ -579,6 +579,10 @@ func setupWebConfigRoutes(r *gin.Engine, configManager *webconfig.Manager) {
 	r.Any("/api/init", gin.WrapH(mux))
 	r.Any("/api/config", gin.WrapH(mux))
 	r.Any("/api/tokens", gin.WrapH(mux))
+	r.Any("/api/tokens/refresh", gin.WrapH(mux))
+	r.Any("/api/tokens/refresh-single", gin.WrapH(mux))
+	r.Any("/api/tokens/current", gin.WrapH(mux))
+	r.Any("/api/tokens/switch", gin.WrapH(mux))
 	r.Any("/api/backup", gin.WrapH(mux))
 	r.Any("/api/restore", gin.WrapH(mux))
 	r.Any("/static/*path", gin.WrapH(mux))

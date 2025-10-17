@@ -207,11 +207,24 @@ async function loadTokens() {
         }
 
         const tokens = await response.json();
-        renderTokenList(tokens || []);
+        
+        // 获取当前正在使用的token索引
+        let currentIndex = -1;
+        try {
+            const currentResponse = await fetch('/api/tokens/current');
+            if (currentResponse.ok) {
+                const currentData = await currentResponse.json();
+                currentIndex = currentData.currentIndex;
+            }
+        } catch (e) {
+            console.warn('获取当前token索引失败:', e);
+        }
+        
+        renderTokenList(tokens || [], currentIndex);
         updateStatistics(tokens || []);
     } catch (error) {
         showMessage('加载Token失败: ' + error.message, 'error');
-        renderTokenList([]); // 确保错误情况下也能显示空列表
+        renderTokenList([], -1); // 确保错误情况下也能显示空列表
         updateStatistics([]);
     }
 }
@@ -264,7 +277,7 @@ function updateStatistics(tokens) {
 }
 
 // 渲染Token列表
-function renderTokenList(tokens) {
+function renderTokenList(tokens, currentIndex = -1) {
     const tokenList = document.getElementById('tokenList');
 
     if (!tokens || tokens.length === 0) {
@@ -273,6 +286,7 @@ function renderTokenList(tokens) {
     }
 
     tokenList.innerHTML = tokens.map((token, index) => {
+        const isCurrentToken = index === currentIndex;
         // 格式化剩余次数显示
         let remainingDisplay = '-';
         if (token.remainingUsage !== undefined && token.remainingUsage !== null) {
@@ -286,9 +300,12 @@ function renderTokenList(tokens) {
         }
 
         return `
-        <div class="token-item ${!token.enabled ? 'disabled' : ''}">
+        <div class="token-item ${!token.enabled ? 'disabled' : ''} ${isCurrentToken ? 'current-token' : ''}">
             <div class="token-header">
-                <div class="token-title">${token.description || '未命名Token'}</div>
+                <div class="token-title">
+                    ${token.description || '未命名Token'}
+                    ${isCurrentToken ? '<span class="current-badge">🔥 使用中</span>' : ''}
+                </div>
                 <div class="token-status ${token.enabled ? 'enabled' : 'disabled'}">
                     ${token.enabled ? '启用' : '禁用'}
                 </div>
@@ -334,9 +351,14 @@ function renderTokenList(tokens) {
                 </div>
             </div>
             <div class="token-actions">
-                ${token.enabled ?
-                    `<button class="btn btn-secondary btn-small" onclick="toggleToken('${token.id}', false)">禁用</button>` :
-                    `<button class="btn btn-success btn-small" onclick="toggleToken('${token.id}', true)">启用</button>`
+                <button class="btn btn-info btn-small" onclick="refreshSingleToken('${token.id}', this)" title="刷新此Token信息">🔄</button>
+                ${token.enabled && !isCurrentToken ?
+                    `<button class="btn btn-primary btn-small" onclick="switchToToken(${index})" title="切换到此Token">切换使用</button>` :
+                    ''
+                }
+                ${!token.enabled ?
+                    `<button class="btn btn-success btn-small" onclick="toggleToken('${token.id}', true)">启用</button>` :
+                    `<button class="btn btn-secondary btn-small" onclick="toggleToken('${token.id}', false)">禁用</button>`
                 }
                 <button class="btn btn-danger btn-small" onclick="deleteToken('${token.id}')">删除</button>
             </div>
@@ -438,6 +460,33 @@ async function addToken(e) {
     }
 }
 
+// 切换Token状态
+async function toggleToken(tokenId, enabled) {
+    try {
+        const response = await fetch(`/api/tokens?id=${tokenId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ enabled: enabled })
+        });
+
+        const result = await response.json();
+        if (result.success) {
+            showMessage(`Token已${enabled ? '启用' : '禁用'}`, 'success');
+            // 等待一下再刷新，确保配置已保存
+            setTimeout(() => {
+                loadTokens();
+            }, 500);
+        } else {
+            showMessage('Token状态更新失败: ' + result.error, 'error');
+        }
+    } catch (error) {
+        showMessage('Token状态更新失败: ' + error.message, 'error');
+        console.error('Toggle token error:', error);
+    }
+}
+
 // 删除Token
 async function deleteToken(tokenId) {
     if (!confirm('确定要删除这个Token吗？')) {
@@ -458,6 +507,37 @@ async function deleteToken(tokenId) {
         }
     } catch (error) {
         showMessage('Token删除失败: ' + error.message, 'error');
+    }
+}
+
+// 刷新单个Token信息
+async function refreshSingleToken(tokenId, btnElement) {
+    const originalText = btnElement.textContent;
+    
+    try {
+        btnElement.disabled = true;
+        btnElement.textContent = '🔄';
+        
+        const response = await fetch(`/api/tokens/refresh-single?id=${tokenId}`, {
+            method: 'POST'
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            // 等待1秒后重新加载Token列表
+            setTimeout(() => {
+                loadTokens();
+            }, 1000);
+        } else {
+            showMessage('刷新失败: ' + result.error, 'error');
+        }
+    } catch (error) {
+        showMessage('刷新失败: ' + error.message, 'error');
+    } finally {
+        setTimeout(() => {
+            btnElement.disabled = false;
+            btnElement.textContent = originalText;
+        }, 1000);
     }
 }
 
@@ -547,6 +627,36 @@ function renderBackupList(backups) {
             </div>
         </div>
     `).join('');
+}
+
+// 切换到指定Token
+async function switchToToken(index) {
+    if (!confirm('确定要切换到此Token吗？')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/tokens/switch', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ index: index })
+        });
+        
+        const result = await response.json();
+        if (result.success) {
+            showMessage('Token切换成功', 'success');
+            // 等待一下再刷新，确保切换已生效
+            setTimeout(() => {
+                loadTokens();
+            }, 500);
+        } else {
+            showMessage('Token切换失败: ' + result.error, 'error');
+        }
+    } catch (error) {
+        showMessage('Token切换失败: ' + error.message, 'error');
+    }
 }
 
 // 恢复备份

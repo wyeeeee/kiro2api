@@ -68,6 +68,26 @@ func main() {
 	// 注入Token使用信息提供者
 	configManager.SetTokenUsageProvider(createTokenUsageProvider())
 	
+	// 注入获取当前token索引的回调
+	configManager.SetCurrentTokenIndexProvider(func() int {
+		authServiceMutex.RLock()
+		defer authServiceMutex.RUnlock()
+		if globalAuthService == nil {
+			return -1
+		}
+		return globalAuthService.GetCurrentTokenIndex()
+	})
+	
+	// 注入切换token的回调
+	configManager.SetSwitchTokenProvider(func(index int) error {
+		authServiceMutex.RLock()
+		defer authServiceMutex.RUnlock()
+		if globalAuthService == nil {
+			return fmt.Errorf("AuthService未初始化")
+		}
+		return globalAuthService.SwitchToToken(index)
+	})
+	
 	// 启动时初始化Token缓存（异步）
 	go configManager.RefreshTokenCache()
 

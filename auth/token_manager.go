@@ -18,6 +18,7 @@ type TokenManager struct {
 	configOrder  []string        // 配置顺序
 	currentIndex int             // 当前使用的token索引
 	exhausted    map[string]bool // 已耗尽的token记录
+	lastUsedKey  string          // 最后使用的token key
 }
 
 // SimpleTokenCache 简化的token缓存（纯数据结构，无锁）
@@ -85,6 +86,14 @@ func (tm *TokenManager) getBestToken() (types.TokenInfo, error) {
 	bestToken.LastUsed = time.Now()
 	if bestToken.Available > 0 {
 		bestToken.Available--
+	}
+
+	// 记录最后使用的token key
+	for key, cached := range tm.cache.tokens {
+		if cached == bestToken {
+			tm.lastUsedKey = key
+			break
+		}
 	}
 
 	return bestToken.Token, nil
@@ -255,4 +264,34 @@ func generateConfigOrder(configs []AuthConfig) []string {
 		logger.Any("order", order))
 
 	return order
+}
+
+// GetCurrentTokenKey 获取当前正在使用的token key
+func (tm *TokenManager) GetCurrentTokenKey() string {
+	tm.mutex.RLock()
+	defer tm.mutex.RUnlock()
+	return tm.lastUsedKey
+}
+
+// SwitchToToken 手动切换到指定的token（通过索引）
+func (tm *TokenManager) SwitchToToken(configIndex int) error {
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+
+	if configIndex < 0 || configIndex >= len(tm.configOrder) {
+		return fmt.Errorf("无效的token索引: %d", configIndex)
+	}
+
+	// 更新当前索引
+	tm.currentIndex = configIndex
+	
+	// 清除该token的耗尽标记
+	targetKey := tm.configOrder[configIndex]
+	delete(tm.exhausted, targetKey)
+
+	logger.Info("手动切换token",
+		logger.Int("target_index", configIndex),
+		logger.String("target_key", targetKey))
+
+	return nil
 }

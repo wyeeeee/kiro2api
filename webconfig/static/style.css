@@ -107,6 +107,11 @@ body {
     box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
 }
 
+.btn-small.btn-primary {
+    width: auto;
+    margin-bottom: 0;
+}
+
 .btn-primary:disabled {
     opacity: 0.6;
     cursor: not-allowed;
@@ -125,6 +130,11 @@ body {
 
 .btn-success {
     background: #28a745;
+    color: white;
+}
+
+.btn-info {
+    background: #17a2b8;
     color: white;
 }
 
@@ -322,6 +332,23 @@ body {
     opacity: 0.6;
 }
 
+.token-item.current-token {
+    border: 2px solid #3498db;
+    background: linear-gradient(135deg, #ffffff 0%, #f0f8ff 100%);
+    box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+}
+
+.token-item.current-token::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #3498db, #2ecc71);
+    border-radius: 12px 12px 0 0;
+}
+
 .token-header {
     display: flex;
     justify-content: space-between;
@@ -332,6 +359,31 @@ body {
 .token-title {
     font-weight: 600;
     color: #333;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.current-badge {
+    display: inline-block;
+    background: linear-gradient(135deg, #3498db, #2ecc71);
+    color: white;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.8;
+        transform: scale(1.05);
+    }
 }
 
 .token-status {

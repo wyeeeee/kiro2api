@@ -63,6 +63,36 @@ func (as *AuthService) GetConfigs() []AuthConfig {
 	return as.configs
 }
 
+// GetCurrentTokenIndex 获取当前正在使用的token索引
+func (as *AuthService) GetCurrentTokenIndex() int {
+	if as.tokenManager == nil {
+		return -1
+	}
+	
+	currentKey := as.tokenManager.GetCurrentTokenKey()
+	if currentKey == "" {
+		return -1
+	}
+	
+	// 从key中提取索引（格式为 "token_0", "token_1" 等）
+	var index int
+	_, err := fmt.Sscanf(currentKey, "token_%d", &index)
+	if err != nil {
+		return -1
+	}
+	
+	return index
+}
+
+// SwitchToToken 手动切换到指定索引的token
+func (as *AuthService) SwitchToToken(configIndex int) error {
+	if as.tokenManager == nil {
+		return fmt.Errorf("token管理器未初始化")
+	}
+	
+	return as.tokenManager.SwitchToToken(configIndex)
+}
+
 // ReloadConfigs 重新加载配置
 func (as *AuthService) ReloadConfigs() error {
 	if as.configManager == nil {

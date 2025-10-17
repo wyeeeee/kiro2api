@@ -28,6 +28,7 @@ type AuthToken struct {
 	ClientID      string `json:"clientId,omitempty"` // IdC认证的客户端ID
 	ClientSecret  string `json:"clientSecret,omitempty"` // IdC认证的客户端密钥
 	Enabled       bool   `json:"enabled"`        // 是否启用
+	IsPrimary     bool   `json:"isPrimary"`      // 是否为主要使用的Token
 	LastUsed      *time.Time `json:"lastUsed,omitempty"` // 最后使用时间
 	ErrorCount    int    `json:"errorCount"`     // 错误次数
 	Description   string `json:"description"`    // 描述信息

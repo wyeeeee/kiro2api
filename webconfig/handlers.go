@@ -23,6 +23,9 @@ func (m *Manager) SetupRoutes(r *http.ServeMux) {
 	r.HandleFunc("/api/config", m.withAuth(m.handleAPIConfig))
 	r.HandleFunc("/api/tokens", m.withAuth(m.handleAPITokens))
 	r.HandleFunc("/api/tokens/refresh", m.withAuth(m.handleRefreshTokens))
+	r.HandleFunc("/api/tokens/refresh-single", m.withAuth(m.handleRefreshSingleToken))
+	r.HandleFunc("/api/tokens/current", m.withAuth(m.handleGetCurrentToken))
+	r.HandleFunc("/api/tokens/switch", m.withAuth(m.handleSwitchToken))
 	r.HandleFunc("/api/backup", m.withAuth(m.handleBackup))
 	r.HandleFunc("/api/restore", m.withAuth(m.handleRestore))
 
@@ -225,7 +228,7 @@ func (m *Manager) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleRefreshTokens 处理Token刷新请求
+// handleRefreshTokens 处理Token刷新请求（全部）
 func (m *Manager) handleRefreshTokens(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
@@ -234,6 +237,88 @@ func (m *Manager) handleRefreshTokens(w http.ResponseWriter, r *http.Request) {
 	
 	// 强制刷新Token缓存
 	go m.ForceRefreshTokenCache()
+	
+	m.writeJSONResponse(w, map[string]interface{}{
+		"success": true,
+		"message": "Token刷新已启动",
+	})
+}
+
+// handleRefreshSingleToken 处理单个Token刷新请求
+func (m *Manager) handleRefreshSingleToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	tokenID := r.URL.Query().Get("id")
+	if tokenID == "" {
+		m.writeJSONError(w, "Token ID不能为空", http.StatusBadRequest)
+		return
+	}
+	
+	// 异步刷新单个Token
+	go func() {
+		config := m.GetConfig()
+		m.providerMutex.RLock()
+		provider := m.tokenUsageProvider
+		m.providerMutex.RUnlock()
+		
+		if provider == nil {
+			return
+		}
+		
+		for i, token := range config.AuthTokens {
+			if token.ID == tokenID {
+				tokenInfo := TokenWithUsageInfo{
+					AuthToken:      token,
+					UserEmail:      "未知",
+					RemainingUsage: 0,
+					UserId:         fmt.Sprintf("%d", i),
+				}
+				
+				if !token.Enabled {
+					tokenInfo.UserEmail = "已禁用"
+				} else {
+					// 获取实时使用信息，失败时自动重试2次
+					var err error
+					var userEmail, userId string
+					var remainingUsage float64
+					var lastUsed *time.Time
+					
+					maxRetries := 2
+					for attempt := 0; attempt <= maxRetries; attempt++ {
+						userEmail, userId, remainingUsage, lastUsed, err = provider(token)
+						if err == nil {
+							// 成功获取信息
+							tokenInfo.UserEmail = userEmail
+							tokenInfo.UserId = userId
+							tokenInfo.RemainingUsage = remainingUsage
+							if lastUsed != nil {
+								tokenInfo.LastUsed = lastUsed
+							}
+							break
+						}
+						
+						// 如果不是最后一次尝试，等待一小段时间后重试
+						if attempt < maxRetries {
+							time.Sleep(time.Second * time.Duration(attempt+1)) // 递增等待时间：1秒、2秒
+						}
+					}
+					
+					// 所有重试都失败
+					if err != nil {
+						tokenInfo.UserEmail = "获取失败"
+					}
+				}
+				
+				m.cacheMutex.Lock()
+				m.tokenCache[token.ID] = &tokenInfo
+				m.cacheMutex.Unlock()
+				break
+			}
+		}
+	}()
 	
 	m.writeJSONResponse(w, map[string]interface{}{
 		"success": true,
@@ -282,6 +367,48 @@ func (m *Manager) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 			"success": true,
 			"message": "Token添加成功",
 			"token":   token,
+		})
+
+	case "PUT":
+		// 更新Token状态（启用/禁用）
+		tokenID := r.URL.Query().Get("id")
+		if tokenID == "" {
+			m.writeJSONError(w, "Token ID不能为空", http.StatusBadRequest)
+			return
+		}
+
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			m.writeJSONError(w, "JSON解析失败", http.StatusBadRequest)
+			return
+		}
+
+		config := m.GetConfig()
+		found := false
+
+		for i, token := range config.AuthTokens {
+			if token.ID == tokenID {
+				config.AuthTokens[i].Enabled = req.Enabled
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			m.writeJSONError(w, "Token不存在", http.StatusNotFound)
+			return
+		}
+
+		if err := m.UpdateConfig(config); err != nil {
+			m.writeJSONError(w, fmt.Sprintf("更新Token失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		m.writeJSONResponse(w, map[string]interface{}{
+			"success": true,
+			"message": "Token状态更新成功",
 		})
 
 	case "DELETE":
@@ -463,6 +590,65 @@ func (m *Manager) renderLoginPage(w http.ResponseWriter, isInit bool, errorMsg .
 	if err := tmpl.Execute(w, data); err != nil {
 		http.Error(w, "渲染页面失败", http.StatusInternalServerError)
 	}
+}
+
+// handleGetCurrentToken 获取当前正在使用的token索引
+func (m *Manager) handleGetCurrentToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	// 获取当前token索引（通过回调函数）
+	currentIndex := -1
+	if m.getCurrentTokenIndex != nil {
+		currentIndex = m.getCurrentTokenIndex()
+	}
+	
+	m.writeJSONResponse(w, map[string]interface{}{
+		"currentIndex": currentIndex,
+	})
+}
+
+// handleSwitchToken 手动切换到指定的token
+func (m *Manager) handleSwitchToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "方法不允许", http.StatusMethodNotAllowed)
+		return
+	}
+	
+	var req struct {
+		Index int `json:"index"`
+	}
+	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		m.writeJSONError(w, "JSON解析失败", http.StatusBadRequest)
+		return
+	}
+	
+	// 验证索引有效性
+	config := m.GetConfig()
+	if req.Index < 0 || req.Index >= len(config.AuthTokens) {
+		m.writeJSONError(w, "无效的token索引", http.StatusBadRequest)
+		return
+	}
+	
+	// 调用切换函数（通过回调）
+	if m.switchToToken != nil {
+		if err := m.switchToToken(req.Index); err != nil {
+			m.writeJSONError(w, fmt.Sprintf("切换token失败: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		m.writeJSONError(w, "切换功能未初始化", http.StatusServiceUnavailable)
+		return
+	}
+	
+	m.writeJSONResponse(w, map[string]interface{}{
+		"success": true,
+		"message": "Token切换成功",
+		"index":   req.Index,
+	})
 }
 
 // renderConfigPage 渲染配置页面

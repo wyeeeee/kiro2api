@@ -29,6 +29,8 @@ type Manager struct {
 	cacheTime time.Time // 缓存时间
 	cacheMutex sync.RWMutex
 	minRefreshInterval time.Duration // 最小刷新间隔
+	getCurrentTokenIndex func() int // 获取当前token索引的回调
+	switchToToken func(int) error // 切换token的回调
 }
 
 // Session 会话信息
@@ -287,6 +289,16 @@ func (m *Manager) SetTokenUsageProvider(provider TokenUsageProvider) {
 	m.tokenUsageProvider = provider
 }
 
+// SetCurrentTokenIndexProvider 设置获取当前token索引的回调
+func (m *Manager) SetCurrentTokenIndexProvider(provider func() int) {
+	m.getCurrentTokenIndex = provider
+}
+
+// SetSwitchTokenProvider 设置切换token的回调
+func (m *Manager) SetSwitchTokenProvider(provider func(int) error) {
+	m.switchToToken = provider
+}
+
 // GetTokensWithUsageInfo 获取带有实时使用信息的Token列表（使用缓存）
 func (m *Manager) GetTokensWithUsageInfo() []TokenWithUsageInfo {
 	config := m.GetConfig()
@@ -301,14 +313,22 @@ func (m *Manager) GetTokensWithUsageInfo() []TokenWithUsageInfo {
 		go m.RefreshTokenCache()
 	}
 	
-	// 返回缓存的数据（如果有）
+	// 返回缓存的数据（如果有），但始终使用最新的配置状态
 	for i, token := range config.AuthTokens {
 		m.cacheMutex.RLock()
 		cachedInfo, exists := m.tokenCache[token.ID]
 		m.cacheMutex.RUnlock()
 		
 		if exists {
-			result = append(result, *cachedInfo)
+			// 使用缓存的使用信息，但更新为最新的配置状态
+			tokenInfo := *cachedInfo
+			tokenInfo.AuthToken = token // 使用最新的配置状态（包括 Enabled 字段）
+			
+			// 如果token被禁用，更新用户邮箱显示
+			if !token.Enabled {
+				tokenInfo.UserEmail = "已禁用"
+			}
+			result = append(result, tokenInfo)
 		} else {
 			// 如果缓存中没有，返回基本信息
 			tokenInfo := TokenWithUsageInfo{
@@ -364,16 +384,34 @@ func (m *Manager) RefreshTokenCache() {
 			continue
 		}
 		
-		// 获取实时使用信息
-		if userEmail, userId, remainingUsage, lastUsed, err := provider(token); err == nil {
-			tokenInfo.UserEmail = userEmail
-			tokenInfo.UserId = userId
-			tokenInfo.RemainingUsage = remainingUsage
-			// 更新LastUsed字段
-			if lastUsed != nil {
-				tokenInfo.LastUsed = lastUsed
+		// 获取实时使用信息，失败时自动重试2次
+		var err error
+		var userEmail, userId string
+		var remainingUsage float64
+		var lastUsed *time.Time
+		
+		maxRetries := 2
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			userEmail, userId, remainingUsage, lastUsed, err = provider(token)
+			if err == nil {
+				// 成功获取信息
+				tokenInfo.UserEmail = userEmail
+				tokenInfo.UserId = userId
+				tokenInfo.RemainingUsage = remainingUsage
+				if lastUsed != nil {
+					tokenInfo.LastUsed = lastUsed
+				}
+				break
 			}
-		} else {
+			
+			// 如果不是最后一次尝试，等待一小段时间后重试
+			if attempt < maxRetries {
+				time.Sleep(time.Second * time.Duration(attempt+1)) // 递增等待时间：1秒、2秒
+			}
+		}
+		
+		// 所有重试都失败
+		if err != nil {
 			tokenInfo.UserEmail = "获取失败"
 		}
 		
