@@ -8,6 +8,7 @@ import (
 	"kiro2api/auth"
 	"kiro2api/logger"
 	"kiro2api/server"
+	"kiro2api/types"
 	"kiro2api/webconfig"
 )
 
@@ -63,6 +64,9 @@ func main() {
 	var authService *auth.AuthService
 	var err error
 
+	// 注入Token使用信息提供者
+	configManager.SetTokenUsageProvider(createTokenUsageProvider())
+
 	// 只有在有Token配置时才创建AuthService
 	tokens := configManager.GetEnabledTokens()
 	if len(tokens) > 0 {
@@ -96,6 +100,62 @@ func main() {
 	port := fmt.Sprintf("%d", config.ServiceConfig.Port)
 	clientToken := config.ServiceConfig.ClientToken
 	server.StartServerWithConfig(port, clientToken, authService, configManager)
+}
+
+// createTokenUsageProvider 创建Token使用信息提供者
+func createTokenUsageProvider() webconfig.TokenUsageProvider {
+	return func(token webconfig.AuthToken) (userEmail string, userId string, remainingUsage float64, err error) {
+		// 构建auth配置
+		authConfig := auth.AuthConfig{
+			AuthType:     token.Auth,
+			RefreshToken: token.RefreshToken,
+			ClientID:     token.ClientID,
+			ClientSecret: token.ClientSecret,
+			Disabled:     !token.Enabled,
+		}
+		
+		// 刷新Token获取最新信息
+		var tokenInfo types.TokenInfo
+		
+		switch token.Auth {
+		case "Social":
+			tokenInfo, err = auth.RefreshSocialToken(token.RefreshToken)
+		case "IdC":
+			tokenInfo, err = auth.RefreshIdCToken(authConfig)
+		default:
+			err = fmt.Errorf("不支持的认证类型: %s", token.Auth)
+			return
+		}
+		
+		if err != nil {
+			return "", "", 0, err
+		}
+		
+		// 检查使用限制
+		checker := auth.NewUsageLimitsChecker()
+		usage, checkErr := checker.CheckUsageLimits(tokenInfo)
+		if checkErr != nil {
+			return "", "", 0, checkErr
+		}
+		
+		// 计算剩余次数
+		remainingUsage = auth.CalculateAvailableCount(usage)
+		
+		// 提取用户信息
+		if usage.UserInfo.Email != "" {
+			userEmail = usage.UserInfo.Email
+		} else {
+			userEmail = "未知"
+		}
+		
+		if usage.UserInfo.UserID != "" {
+			userId = usage.UserInfo.UserID
+		} else {
+			userId = "未知"
+		}
+		
+		return userEmail, userId, remainingUsage, nil
+	}
 }
 
 // initializeLogger 使用新配置初始化日志系统

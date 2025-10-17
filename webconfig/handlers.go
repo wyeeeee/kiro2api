@@ -228,7 +228,8 @@ func (m *Manager) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 func (m *Manager) handleAPITokens(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		tokens := m.GetEnabledTokens()
+		// 获取带有实时使用信息的Token列表
+		tokens := m.GetTokensWithUsageInfo()
 		m.writeJSONResponse(w, tokens)
 
 	case "POST":

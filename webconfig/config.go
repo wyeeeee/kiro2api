@@ -11,6 +11,9 @@ import (
 	"time"
 )
 
+// TokenUsageProvider Token使用信息提供者接口
+type TokenUsageProvider func(token AuthToken) (userEmail string, userId string, remainingUsage float64, err error)
+
 // Manager 配置管理器
 type Manager struct {
 	storage  *Storage
@@ -20,6 +23,8 @@ type Manager struct {
 	sessionMutex sync.RWMutex
 	configChangeCallbacks []func() // 配置更新回调函数列表
 	callbackMutex sync.RWMutex
+	tokenUsageProvider TokenUsageProvider // Token使用信息提供者
+	providerMutex sync.RWMutex
 }
 
 // Session 会话信息
@@ -259,6 +264,62 @@ func (m *Manager) GetEnabledTokens() []AuthToken {
 		}
 	}
 	return enabled
+}
+
+// TokenWithUsageInfo Token带使用信息
+type TokenWithUsageInfo struct {
+	AuthToken
+	UserEmail      string  `json:"userEmail"`
+	RemainingUsage float64 `json:"remainingUsage"`
+	UserId         string  `json:"userId"`
+}
+
+// SetTokenUsageProvider 设置Token使用信息提供者
+func (m *Manager) SetTokenUsageProvider(provider TokenUsageProvider) {
+	m.providerMutex.Lock()
+	defer m.providerMutex.Unlock()
+	m.tokenUsageProvider = provider
+}
+
+// GetTokensWithUsageInfo 获取带有实时使用信息的Token列表
+func (m *Manager) GetTokensWithUsageInfo() []TokenWithUsageInfo {
+	config := m.GetConfig()
+	result := make([]TokenWithUsageInfo, 0, len(config.AuthTokens))
+	
+	m.providerMutex.RLock()
+	provider := m.tokenUsageProvider
+	m.providerMutex.RUnlock()
+	
+	for i, token := range config.AuthTokens {
+		tokenInfo := TokenWithUsageInfo{
+			AuthToken:      token,
+			UserEmail:      "未知",
+			RemainingUsage: 0,
+			UserId:         fmt.Sprintf("%d", i),
+		}
+		
+		// 如果Token被禁用，直接返回基本信息
+		if !token.Enabled {
+			tokenInfo.UserEmail = "已禁用"
+			result = append(result, tokenInfo)
+			continue
+		}
+		
+		// 如果有提供者，获取实时使用信息
+		if provider != nil {
+			if userEmail, userId, remainingUsage, err := provider(token); err == nil {
+				tokenInfo.UserEmail = userEmail
+				tokenInfo.UserId = userId
+				tokenInfo.RemainingUsage = remainingUsage
+			} else {
+				tokenInfo.UserEmail = "获取失败"
+			}
+		}
+		
+		result = append(result, tokenInfo)
+	}
+	
+	return result
 }
 
 // BackupConfig 备份配置

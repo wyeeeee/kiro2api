@@ -15,8 +15,8 @@
                     <p>HTTP代理服务器配置管理</p>
                 </div>
                 <div class="config-nav">
-                    <a href="#service" class="nav-link active" data-section="service">⚙️ 服务配置</a>
-                    <a href="#tokens" class="nav-link" data-section="tokens">🔑 Token管理</a>
+                    <a href="#tokens" class="nav-link active" data-section="tokens">🔑 Token管理</a>
+                    <a href="#service" class="nav-link" data-section="service">⚙️ 服务配置</a>
                     <a href="#logs" class="nav-link" data-section="logs">📝 日志配置</a>
                     <a href="#timeouts" class="nav-link" data-section="timeouts">⏱️ 超时配置</a>
                     <a href="#backup" class="nav-link" data-section="backup">💾 备份管理</a>
@@ -29,7 +29,7 @@
                 <div id="globalMessage" class="message"></div>
 
                 <!-- 服务配置 -->
-                <div id="service-section" class="config-section">
+                <div id="service-section" class="config-section hidden">
                     <h2>⚙️ 服务配置</h2>
                     <form id="serviceForm">
                         <div class="form-row">
@@ -59,8 +59,13 @@
                 </div>
 
                 <!-- Token管理 -->
-                <div id="tokens-section" class="config-section hidden">
+                <div id="tokens-section" class="config-section">
                     <h2>🔑 Token管理</h2>
+
+                    <!-- 统计数据卡片 -->
+                    <div id="tokenStats" class="stats-container">
+                        <!-- 统计数据将动态生成 -->
+                    </div>
 
                     <div class="add-token-form">
                         <h3>➕ 添加新Token</h3>
@@ -204,8 +209,8 @@
                     </div>
                 </div>
 
-                <!-- 全局操作按钮 -->
-                <div class="form-actions">
+                <!-- 全局操作按钮（仅在非Token管理页面显示） -->
+                <div class="form-actions" id="globalActions">
                     <button id="saveConfigBtn" class="btn btn-primary">💾 保存配置</button>
                     <button id="reloadConfigBtn" class="btn btn-secondary">🔄 重新加载</button>
                 </div>

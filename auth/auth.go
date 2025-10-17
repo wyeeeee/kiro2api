@@ -9,8 +9,8 @@ import (
 
 // AuthService 认证服务（推荐使用依赖注入方式）
 type AuthService struct {
-	tokenManager *TokenManager
-	configs      []AuthConfig
+	tokenManager  *TokenManager
+	configs       []AuthConfig
 	configManager *webconfig.Manager // 用于动态重载配置
 }
 
@@ -124,8 +124,8 @@ func NewAuthServiceWithConfig(configManager *webconfig.Manager) (*AuthService, e
 	logger.Info("AuthService创建完成", logger.Int("config_count", len(configs)))
 
 	return &AuthService{
-		tokenManager: tokenManager,
-		configs:      configs,
+		tokenManager:  tokenManager,
+		configs:       configs,
 		configManager: configManager, // 保存configManager引用以便重载
 	}, nil
 }

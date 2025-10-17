@@ -18,6 +18,12 @@ document.addEventListener('DOMContentLoaded', function() {
     loadConfig();
     loadTokens();
     loadBackups();
+    
+    // 初始化时隐藏全局操作按钮（因为默认显示Token管理）
+    const globalActions = document.getElementById('globalActions');
+    if (globalActions) {
+        globalActions.classList.add('hidden');
+    }
 });
 
 // 初始化导航
@@ -45,6 +51,17 @@ function showSection(sectionName) {
 
     if (sections[sectionName]) {
         sections[sectionName].classList.remove('hidden');
+    }
+
+    // 控制全局操作按钮的显示
+    const globalActions = document.getElementById('globalActions');
+    if (globalActions) {
+        // Token管理页面隐藏全局操作按钮
+        if (sectionName === 'tokens') {
+            globalActions.classList.add('hidden');
+        } else {
+            globalActions.classList.remove('hidden');
+        }
     }
 }
 
@@ -190,10 +207,59 @@ async function loadTokens() {
 
         const tokens = await response.json();
         renderTokenList(tokens || []);
+        updateStatistics(tokens || []);
     } catch (error) {
         showMessage('加载Token失败: ' + error.message, 'error');
         renderTokenList([]); // 确保错误情况下也能显示空列表
+        updateStatistics([]);
     }
+}
+
+// 更新统计数据
+function updateStatistics(tokens) {
+    const stats = calculateStatistics(tokens);
+    
+    // 更新统计卡片
+    const statsContainer = document.getElementById('tokenStats');
+    if (!statsContainer) return;
+    
+    statsContainer.innerHTML = `
+        <div class="stat-card">
+            <div class="stat-icon">📊</div>
+            <div class="stat-content">
+                <div class="stat-label">总Token数</div>
+                <div class="stat-value">${stats.totalTokens}</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">✅</div>
+            <div class="stat-content">
+                <div class="stat-label">启用中</div>
+                <div class="stat-value">${stats.activeTokens}</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔢</div>
+            <div class="stat-content">
+                <div class="stat-label">总剩余次数</div>
+                <div class="stat-value">${stats.totalRemaining}</div>
+            </div>
+        </div>
+        <div class="stat-card ${stats.lowUsageTokens > 0 ? 'stat-warning' : ''}">
+            <div class="stat-icon">⚠️</div>
+            <div class="stat-content">
+                <div class="stat-label">即将耗尽</div>
+                <div class="stat-value">${stats.lowUsageTokens}</div>
+            </div>
+        </div>
+        <div class="stat-card ${stats.errorTokens > 0 ? 'stat-error' : ''}">
+            <div class="stat-icon">❌</div>
+            <div class="stat-content">
+                <div class="stat-label">有错误</div>
+                <div class="stat-value">${stats.errorTokens}</div>
+            </div>
+        </div>
+    `;
 }
 
 // 渲染Token列表
@@ -205,7 +271,20 @@ function renderTokenList(tokens) {
         return;
     }
 
-    tokenList.innerHTML = tokens.map(token => `
+    tokenList.innerHTML = tokens.map((token, index) => {
+        // 格式化剩余次数显示
+        let remainingDisplay = '-';
+        if (token.remainingUsage !== undefined && token.remainingUsage !== null) {
+            if (token.remainingUsage === 0) {
+                remainingDisplay = '<span style="color: #e74c3c;">0 (已耗尽)</span>';
+            } else if (token.remainingUsage < 10) {
+                remainingDisplay = `<span style="color: #f39c12;">${token.remainingUsage.toFixed(1)} (即将耗尽)</span>`;
+            } else {
+                remainingDisplay = `<span style="color: #27ae60;">${token.remainingUsage.toFixed(1)}</span>`;
+            }
+        }
+
+        return `
         <div class="token-item ${!token.enabled ? 'disabled' : ''}">
             <div class="token-header">
                 <div class="token-title">${token.description || '未命名Token'}</div>
@@ -214,6 +293,14 @@ function renderTokenList(tokens) {
                 </div>
             </div>
             <div class="token-details">
+                <div class="token-detail">
+                    <label>用户ID:</label>
+                    <span>${token.userId || token.id || index}</span>
+                </div>
+                <div class="token-detail">
+                    <label>用户邮箱:</label>
+                    <span>${maskEmail(token.userEmail || '未知')}</span>
+                </div>
                 <div class="token-detail">
                     <label>认证方式:</label>
                     <span>${token.auth}</span>
@@ -233,12 +320,16 @@ function renderTokenList(tokens) {
                     </div>
                 ` : ''}
                 <div class="token-detail">
+                    <label>剩余次数:</label>
+                    <span>${remainingDisplay}</span>
+                </div>
+                <div class="token-detail">
                     <label>最后使用:</label>
-                    <span>${token.lastUsed ? new Date(token.lastUsed).toLocaleString() : '从未使用'}</span>
+                    <span>${token.lastUsed ? new Date(token.lastUsed).toLocaleString('zh-CN') : '从未使用'}</span>
                 </div>
                 <div class="token-detail">
                     <label>错误次数:</label>
-                    <span>${token.errorCount}</span>
+                    <span style="color: ${token.errorCount > 0 ? '#e74c3c' : '#95a5a6'};">${token.errorCount || 0}</span>
                 </div>
             </div>
             <div class="token-actions">
@@ -249,13 +340,62 @@ function renderTokenList(tokens) {
                 <button class="btn btn-danger btn-small" onclick="deleteToken('${token.id}')">删除</button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 // 隐藏Token（只显示前后几位）
 function maskToken(token) {
     if (!token || token.length <= 8) return token;
     return token.substring(0, 4) + '****' + token.substring(token.length - 4);
+}
+
+// 隐藏邮箱（只显示前几位和域名）
+function maskEmail(email) {
+    if (!email || email === '未知' || email === '已禁用' || email === '获取失败') {
+        return email;
+    }
+    const parts = email.split('@');
+    if (parts.length !== 2) return email;
+    
+    const username = parts[0];
+    const domain = parts[1];
+    
+    if (username.length <= 3) {
+        return username[0] + '***@' + domain;
+    }
+    return username.substring(0, 3) + '***@' + domain;
+}
+
+// 计算统计数据
+function calculateStatistics(tokens) {
+    let totalRemaining = 0;
+    let activeCount = 0;
+    let errorCount = 0;
+    let lowUsageCount = 0;
+    
+    tokens.forEach(token => {
+        if (token.enabled) {
+            activeCount++;
+            if (token.remainingUsage !== undefined && token.remainingUsage !== null) {
+                totalRemaining += token.remainingUsage;
+                if (token.remainingUsage > 0 && token.remainingUsage < 10) {
+                    lowUsageCount++;
+                }
+            }
+            if (token.errorCount > 0) {
+                errorCount++;
+            }
+        }
+    });
+    
+    return {
+        totalTokens: tokens.length,
+        activeTokens: activeCount,
+        totalRemaining: totalRemaining.toFixed(1),
+        errorTokens: errorCount,
+        lowUsageTokens: lowUsageCount
+    };
 }
 
 // 添加Token
